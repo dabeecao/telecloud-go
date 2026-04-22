@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[🇻🇳 Tiếng Việt](./README.md) | [🇺🇸 English](./README_en.md)
+[🇻🇳 Tiếng Việt](./readme.md) | [🇺🇸 English](./readme_en.md)
 
 </div>
 

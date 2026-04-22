@@ -6,11 +6,11 @@ before:
     - go mod tidy
 
 builds:
-  - env:
+  - id: nix
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
-      - windows
       - darwin
     goarch:
       - amd64
@@ -20,12 +20,23 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
-archives:
-  - id: default
-    formats: [tar.gz]
+  - id: win
+    env:
+      - CGO_ENABLED=0
     goos:
-      - linux
-      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    binary: telecloud
+    main: .
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - id: nix
+    builds: [nix]
+    formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_
       {{- .Os }}_
@@ -34,10 +45,9 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
 
-  - id: windows
+  - id: win
+    builds: [win]
     formats: [zip]
-    goos:
-      - windows
     name_template: >-
       {{ .ProjectName }}_
       {{- .Os }}_

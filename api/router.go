@@ -53,7 +53,15 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 	// WebDAV Route
 	if cfg.WebdavEnabled {
-		r.Any("/webdav/*path", gin.WrapH(webdav.NewHandler(cfg)))
+		h := gin.WrapH(webdav.NewHandler(cfg))
+		methods := []string{
+			"GET", "POST", "PUT", "PATCH", "HEAD", "OPTIONS", "DELETE", "CONNECT", "TRACE",
+			"PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK",
+		}
+		for _, method := range methods {
+			r.Handle(method, "/webdav", h)
+			r.Handle(method, "/webdav/*path", h)
+		}
 	}
 
 	r.GET("/", func(c *gin.Context) {
@@ -61,6 +69,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		c.HTML(http.StatusOK, "index.html", gin.H{
 			"logged_in":          token == cfg.AdminPassword,
 			"max_upload_size_mb": cfg.MaxUploadSizeMB,
+			"webdav_enabled":     cfg.WebdavEnabled,
+			"webdav_user":        cfg.WebdavUser,
+			"webdav_password":    cfg.WebdavPassword,
 		})
 	})
 

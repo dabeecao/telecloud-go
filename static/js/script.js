@@ -1,7 +1,11 @@
-function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB) {
+function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = false, webdavUser = '', webdavPassword = '') {
     return {
         isLoggedIn: initialIsLoggedIn,
         maxUploadSizeMB: initialMaxUploadSizeMB,
+        webdavEnabled: webdavEnabled,
+        webdavUser: webdavUser,
+        webdavPassword: webdavPassword,
+        currentTab: 'files',
         password: '', 
         isLoading: false, 
         isRefreshing: false,

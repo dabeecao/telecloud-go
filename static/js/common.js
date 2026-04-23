@@ -4,14 +4,15 @@
 
 const TeleCloud = {
     lang: localStorage.getItem('lang') || (navigator.language.startsWith('vi') ? 'vi' : 'en'),
-    
+
     translations: {
         vi: {
-            home: 'Trang chủ',
+            home: 'Quản lý tệp',
             upload: 'Tải lên',
             new_folder: 'Thư mục mới',
             logout: 'Đăng xuất',
             login: 'Đăng nhập',
+            refresh: 'Làm mới',
             search_placeholder: 'Tìm kiếm tập tin hoặc thư mục...',
             empty_folder: 'Thư mục này đang trống',
             no_results: 'Không tìm thấy kết quả phù hợp cho',
@@ -50,6 +51,7 @@ const TeleCloud = {
             syncing_tg: 'Đang đồng bộ với Telegram...',
             done: 'Hoàn tất!',
             cancelled: 'Đã hủy',
+            capcity: 'Dung lượng còn lại',
             upload_progress: 'Tiến trình tải lên',
             upload_done: 'Đã tải lên xong',
             max_size: 'Kích thước tối đa mỗi tệp',
@@ -90,6 +92,15 @@ const TeleCloud = {
             type_archive: 'Tệp nén',
             type_doc: 'Tài liệu',
             type_unknown: 'Tập tin',
+            // WebDAV Guide
+            webdav_guide: 'Hướng dẫn WebDAV',
+            webdav_desc: 'Sử dụng TeleCloud như một ổ đĩa mạng trên máy tính của bạn.',
+            webdav_url: 'Địa chỉ máy chủ',
+            webdav_user: 'Tên đăng nhập',
+            webdav_pass: 'Mật khẩu',
+            webdav_step1: 'Mở ứng dụng hỗ trợ WebDAV (như RaiDrive, Cyberduck, hoặc tính năng Map Network Drive trên Windows/macOS).',
+            webdav_step2: 'Nhập các thông tin dưới đây để kết nối:',
+            webdav_note: 'Lưu ý: Nếu dùng Windows Explorer mặc định, bạn nên sử dụng giao thức HTTP và đảm bảo cổng (port) là chính xác.',
             // share.html specific
             preparing_file: 'Đang chuẩn bị file...',
             wait_tg: 'Kết nối máy chủ Telegram, vui lòng đợi',
@@ -102,11 +113,12 @@ const TeleCloud = {
             file_not_found_msg: 'Tệp không tồn tại hoặc link đã bị thu hồi.'
         },
         en: {
-            home: 'Home',
+            home: 'File Manager',
             upload: 'Upload',
             new_folder: 'New Folder',
             logout: 'Logout',
             login: 'Login',
+            refresh: 'Refresh',
             search_placeholder: 'Search files or folders...',
             empty_folder: 'This folder is empty',
             no_results: 'No matching results for',
@@ -128,6 +140,7 @@ const TeleCloud = {
             copy_direct_link: 'Copy Direct Link',
             file_info: 'File Info',
             size: 'Size',
+            capcity: 'Remaining Capacity',
             date: 'Upload Date',
             status: 'Status',
             public: 'Public',
@@ -185,6 +198,15 @@ const TeleCloud = {
             type_archive: 'Archive',
             type_doc: 'Document',
             type_unknown: 'File',
+            // WebDAV Guide
+            webdav_guide: 'WebDAV Guide',
+            webdav_desc: 'Use TeleCloud as a network drive on your computer.',
+            webdav_url: 'Server Address',
+            webdav_user: 'Username',
+            webdav_pass: 'Password',
+            webdav_step1: 'Open a WebDAV client (like RaiDrive, Cyberduck, or Map Network Drive on Windows/macOS).',
+            webdav_step2: 'Enter the following details to connect:',
+            webdav_note: 'Note: If using default Windows Explorer, ensure you use the correct port and HTTP protocol.',
             // share.html specific
             preparing_file: 'Preparing file...',
             wait_tg: 'Connecting to Telegram, please wait',

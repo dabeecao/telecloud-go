@@ -1,103 +1,134 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>TeleCloud OS</title>
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/static/favicon.ico" type="image/x-icon">
-    
+
     <link rel="stylesheet" href="/static/css/tailwind.css">
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    
+
     <link rel="stylesheet" href="/static/css/style.css">
-    
+
     <script src="/static/js/common.js"></script>
     <script src="/static/js/script.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+
+    <!-- SEO & Social Meta Tags -->
+    <meta name="description" content="TeleCloud OS - Quản lý tệp tin đám mây qua Telegram">
+    <meta property="og:title" content="TeleCloud OS">
+    <meta property="og:description"
+        content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API. Bảo mật, tốc độ cao và không giới hạn.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="/static/favicon.ico">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="TeleCloud OS">
+    <meta name="twitter:description" content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API.">
 </head>
 
-<body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 min-h-[100dvh] relative overflow-hidden flex transition-colors duration-500" 
-      x-data="cloudApp({{ if .logged_in }}true{{ else }}false{{ end }}, {{ .max_upload_size_mb }})" 
-      @dragover.prevent="dragOver = true" 
-      @dragleave.prevent="dragOver = false" 
-      @drop.prevent="handleDrop($event)">
-    
-    <div class="blob-1"></div><div class="blob-2"></div>
+<body
+    class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 min-h-[100dvh] relative overflow-hidden flex transition-colors duration-500"
+    x-data="cloudApp({{ if .logged_in }}true{{ else }}false{{ end }}, {{ .max_upload_size_mb }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}')"
+    @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="handleDrop($event)">
 
-    <div x-show="dragOver" x-cloak class="absolute inset-0 z-[150] flex items-center justify-center bg-blue-600/90 backdrop-blur-md transition-all duration-300">
+    <div class="blob-1"></div>
+    <div class="blob-2"></div>
+
+    <div x-show="dragOver" x-cloak
+        class="absolute inset-0 z-[150] flex items-center justify-center bg-blue-600/90 backdrop-blur-md transition-all duration-300">
         <div class="text-center">
             <i class="fa-solid fa-cloud-arrow-up text-7xl text-white mx-auto mb-4 animate-bounce block"></i>
             <h2 class="text-3xl font-bold text-white shadow-sm" x-text="t('drop_files')"></h2>
-            <p class="text-white/80 mt-2"><span x-text="t('max_limit')"></span>: <span x-text="maxUploadSizeMB"></span> MB</p>
+            <p class="text-white/80 mt-2"><span x-text="t('max_limit')"></span>: <span x-text="maxUploadSizeMB"></span>
+                MB</p>
         </div>
     </div>
 
-    <div x-show="uploadModal" x-cloak class="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm" x-transition.opacity>
-        <div @click.outside="uploadModal = false" class="glass-menu w-[90%] max-w-md rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
+    <div x-show="uploadModal" x-cloak
+        class="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
+        x-transition.opacity>
+        <div @click.outside="uploadModal = false"
+            class="glass-menu w-[90%] max-w-md rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-xl font-bold text-slate-900 dark:text-white" x-text="t('upload')"></h3>
-                <button @click="uploadModal = false" class="text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded-full transition-colors shrink-0">
+                <button @click="uploadModal = false"
+                    class="text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded-full transition-colors shrink-0">
                     <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
 
             <div class="border-2 border-dashed rounded-2xl p-8 text-center transition-colors relative flex flex-col items-center justify-center"
-                 :class="uploadDragOver ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-300 dark:border-slate-600 hover:border-blue-400 dark:hover:border-blue-500 bg-white/50 dark:bg-slate-800/50'"
-                 @dragover.prevent="uploadDragOver = true"
-                 @dragleave.prevent="uploadDragOver = false"
-                 @drop.prevent="handleUploadModalDrop($event)">
-                
-                <i class="fa-solid fa-cloud-arrow-up text-5xl text-blue-500 mb-4 transition-transform duration-300" :class="uploadDragOver ? 'scale-110' : ''"></i>
+                :class="uploadDragOver ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-300 dark:border-slate-600 hover:border-blue-400 dark:hover:border-blue-500 bg-white/50 dark:bg-slate-800/50'"
+                @dragover.prevent="uploadDragOver = true" @dragleave.prevent="uploadDragOver = false"
+                @drop.prevent="handleUploadModalDrop($event)">
+
+                <i class="fa-solid fa-cloud-arrow-up text-5xl text-blue-500 mb-4 transition-transform duration-300"
+                    :class="uploadDragOver ? 'scale-110' : ''"></i>
                 <h4 class="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-1" x-text="t('drop_modal')"></h4>
                 <p class="text-sm text-slate-500 dark:text-slate-400 mb-5" x-text="t('or_click')"></p>
 
                 <input type="file" multiple class="hidden" x-ref="modalFileInput" @change="handleUploadModalSelect">
-                <button @click="$refs.modalFileInput.click()" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-transform active:scale-95 z-10 relative" x-text="t('select_files')">
+                <button @click="$refs.modalFileInput.click()"
+                    class="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-transform active:scale-95 z-10 relative"
+                    x-text="t('select_files')">
                 </button>
             </div>
-            
+
             <div class="mt-4 text-center text-xs text-slate-500 dark:text-slate-400">
-                <span x-text="t('max_size')"></span>: <span class="font-semibold text-slate-700 dark:text-slate-300" x-text="maxUploadSizeMB"></span> MB
+                <span x-text="t('max_size')"></span>: <span class="font-semibold text-slate-700 dark:text-slate-300"
+                    x-text="maxUploadSizeMB"></span> MB
             </div>
         </div>
     </div>
 
-    <div x-show="modal.show" x-cloak class="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm" x-transition.opacity>
-        <div @click.outside="if(modal.type==='alert') closeUIModal(null)" class="glass-menu w-[90%] max-w-sm rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
+    <div x-show="modal.show" x-cloak
+        class="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
+        x-transition.opacity>
+        <div @click.outside="if(modal.type==='alert') closeUIModal(null)"
+            class="glass-menu w-[90%] max-w-sm rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
             <h3 class="text-xl font-bold mb-2 text-slate-900 dark:text-white" x-text="modal.title"></h3>
-            <p class="text-slate-600 dark:text-slate-300 text-sm mb-5" x-text="modal.message" x-show="modal.message"></p>
+            <p class="text-slate-600 dark:text-slate-300 text-sm mb-5" x-text="modal.message" x-show="modal.message">
+            </p>
             <template x-if="modal.type === 'prompt'">
-                <input type="text" x-model="modal.input" x-ref="modalInput" @keydown.enter="closeUIModal(modal.input)" class="w-full p-3 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-5 transition-all">
+                <input type="text" x-model="modal.input" x-ref="modalInput" @keydown.enter="closeUIModal(modal.input)"
+                    class="w-full p-3 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-5 transition-all">
             </template>
             <div class="flex justify-end gap-3 mt-2">
                 <template x-if="modal.type !== 'alert'">
-                    <button @click="closeUIModal(null)" class="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors" x-text="t('cancel')"></button>
+                    <button @click="closeUIModal(null)"
+                        class="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors"
+                        x-text="t('cancel')"></button>
                 </template>
-                <button @click="closeUIModal(modal.type === 'prompt' ? modal.input : true)" 
-                        class="px-5 py-2 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95"
-                        :class="modal.isDanger ? 'bg-red-600 hover:bg-red-500 shadow-red-500/25' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/25'"
-                        x-text="modal.type === 'alert' ? t('close') : t('confirm')"></button>
+                <button @click="closeUIModal(modal.type === 'prompt' ? modal.input : true)"
+                    class="px-5 py-2 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95"
+                    :class="modal.isDanger ? 'bg-red-600 hover:bg-red-500 shadow-red-500/25' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/25'"
+                    x-text="modal.type === 'alert' ? t('close') : t('confirm')"></button>
             </div>
         </div>
     </div>
 
     <div x-show="contextMenu.show" x-cloak @click.outside="closeContextMenu" @contextmenu.prevent="closeContextMenu"
-         :style="`top: ${contextMenu.y}px; left: ${contextMenu.x}px;`"
-         class="fixed glass-menu z-[100] w-52 rounded-2xl p-1.5 text-sm shadow-2xl" x-transition.opacity.duration.200ms>
+        :style="`top: ${contextMenu.y}px; left: ${contextMenu.x}px;`"
+        class="fixed glass-menu z-[100] w-52 rounded-2xl p-1.5 text-sm shadow-2xl" x-transition.opacity.duration.200ms>
         <template x-if="contextMenu.file">
             <div>
                 <template x-if="!contextMenu.file.is_folder">
-                <button @click="startDownload(contextMenu.file.id); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors">
-                    <i class="fa-solid fa-download fa-fw text-slate-400"></i> <span x-text="t('download')"></span>
-                </button>
+                    <button @click="startDownload(contextMenu.file.id); closeContextMenu()"
+                        class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors">
+                        <i class="fa-solid fa-download fa-fw text-slate-400"></i> <span x-text="t('download')"></span>
+                    </button>
                 </template>
 
                 <template x-if="!contextMenu.file.is_folder">
-                    <button @click="toggleShare(contextMenu.file); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors">
+                    <button @click="toggleShare(contextMenu.file); closeContextMenu()"
+                        class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors">
                         <i class="fa-solid fa-link fa-fw text-emerald-500"></i>
                         <span x-text="contextMenu.file.share_token ? t('revoke_link') : t('share_link')"></span>
                     </button>
@@ -105,10 +136,12 @@
 
                 <template x-if="contextMenu.file.share_token">
                     <div class="space-y-1">
-                        <button @click="copyShareLink(contextMenu.file, 'regular'); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-medium transition-colors text-xs">
+                        <button @click="copyShareLink(contextMenu.file, 'regular'); closeContextMenu()"
+                            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-medium transition-colors text-xs">
                             <i class="fa-solid fa-share-nodes fa-fw"></i> <span x-text="t('copy_share_link')"></span>
                         </button>
-                        <button @click="copyShareLink(contextMenu.file, 'direct'); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-medium transition-colors text-xs">
+                        <button @click="copyShareLink(contextMenu.file, 'direct'); closeContextMenu()"
+                            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-medium transition-colors text-xs">
                             <i class="fa-solid fa-copy fa-fw"></i> <span x-text="t('copy_direct_link')"></span>
                         </button>
                     </div>
@@ -116,72 +149,95 @@
 
                 <div class="h-px bg-slate-200 dark:bg-slate-700/50 my-1 mx-2"></div>
 
-                <button @click="renameFile(contextMenu.file); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i class="fa-solid fa-pen fa-fw text-slate-400"></i> <span x-text="t('rename')"></span></button>
-                <button @click="copyToClipboard('move', [contextMenu.file.id]); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i class="fa-solid fa-folder-tree fa-fw text-slate-400"></i> <span x-text="t('move')"></span></button>
-                <button @click="copyToClipboard('copy', [contextMenu.file.id]); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i class="fa-solid fa-copy fa-fw text-slate-400"></i> <span x-text="t('copy')"></span></button>
-                
+                <button @click="renameFile(contextMenu.file); closeContextMenu()"
+                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i
+                        class="fa-solid fa-pen fa-fw text-slate-400"></i> <span x-text="t('rename')"></span></button>
+                <button @click="copyToClipboard('move', [contextMenu.file.id]); closeContextMenu()"
+                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i
+                        class="fa-solid fa-folder-tree fa-fw text-slate-400"></i> <span
+                        x-text="t('move')"></span></button>
+                <button @click="copyToClipboard('copy', [contextMenu.file.id]); closeContextMenu()"
+                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i
+                        class="fa-solid fa-copy fa-fw text-slate-400"></i> <span x-text="t('copy')"></span></button>
+
                 <div class="h-px bg-slate-200 dark:bg-slate-700/50 my-1 mx-2"></div>
-                
-                <button @click="deleteFile(contextMenu.file.id); closeContextMenu()" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600 dark:text-red-400 font-medium transition-colors"><i class="fa-solid fa-trash fa-fw"></i> <span x-text="t('delete')"></span></button>
+
+                <button @click="deleteFile(contextMenu.file.id); closeContextMenu()"
+                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600 dark:text-red-400 font-medium transition-colors"><i
+                        class="fa-solid fa-trash fa-fw"></i> <span x-text="t('delete')"></span></button>
             </div>
         </template>
     </div>
 
-    <div x-show="fileInfoModal.show" x-cloak class="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm" x-transition.opacity>
-        <div @click.outside="closeFileInfoModal()" class="glass-menu w-[90%] max-w-sm max-h-[90vh] overflow-y-auto hide-scrollbar rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
-            
+    <div x-show="fileInfoModal.show" x-cloak
+        class="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
+        x-transition.opacity>
+        <div @click.outside="closeFileInfoModal()"
+            class="glass-menu w-[90%] max-w-sm max-h-[90vh] overflow-y-auto hide-scrollbar rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
+
             <div class="flex items-start gap-4 mb-2">
-                <div class="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner shrink-0 transition-colors overflow-hidden relative" :class="fileInfoModal.bgColor">
+                <div class="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner shrink-0 transition-colors overflow-hidden relative"
+                    :class="fileInfoModal.bgColor">
                     <template x-if="fileInfoModal.file?.has_thumb">
-                        <img :src="`/api/files/${fileInfoModal.file.id}/thumb`" class="w-full h-full object-cover absolute inset-0 z-10">
+                        <img :src="`/api/files/${fileInfoModal.file.id}/thumb`"
+                            class="w-full h-full object-cover absolute inset-0 z-10">
                     </template>
                     <template x-if="!fileInfoModal.file?.has_thumb">
                         <div x-html="fileInfoModal.svgIcon"></div>
                     </template>
                 </div>
                 <div class="flex-1 min-w-0 pt-1">
-                    <h3 class="text-lg font-bold text-slate-900 dark:text-white truncate" 
-                        x-text="fileInfoModal.file?.filename" 
-                        :title="fileInfoModal.file?.filename"></h3>
-                    <p class="text-slate-500 dark:text-slate-400 text-sm font-medium mt-0.5" x-text="fileInfoModal.typeName"></p>
+                    <h3 class="text-lg font-bold text-slate-900 dark:text-white truncate"
+                        x-text="fileInfoModal.file?.filename" :title="fileInfoModal.file?.filename"></h3>
+                    <p class="text-slate-500 dark:text-slate-400 text-sm font-medium mt-0.5"
+                        x-text="fileInfoModal.typeName"></p>
                 </div>
-    
-                <button @click="closeFileInfoModal()" class="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors shrink-0">
+
+                <button @click="closeFileInfoModal()"
+                    class="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors shrink-0">
                     <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
-            
-            <div x-show="fileInfoModal.isMedia" class="w-full mt-4 mb-2 flex flex-col items-center justify-center transition-all" x-html="fileInfoModal.mediaHtml"></div>
 
-            <div class="space-y-3 mt-5 bg-white/50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">
+            <div x-show="fileInfoModal.isMedia"
+                class="w-full mt-4 mb-2 flex flex-col items-center justify-center transition-all"
+                x-html="fileInfoModal.mediaHtml"></div>
+
+            <div
+                class="space-y-3 mt-5 bg-white/50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">
                 <div class="flex justify-between text-sm">
                     <span class="text-slate-500 dark:text-slate-400" x-text="t('size') + ':'"></span>
-                    <span class="font-semibold text-slate-800 dark:text-slate-200" x-text="formatBytes(fileInfoModal.file?.size)"></span>
+                    <span class="font-semibold text-slate-800 dark:text-slate-200"
+                        x-text="formatBytes(fileInfoModal.file?.size)"></span>
                 </div>
                 <div class="flex justify-between text-sm">
                     <span class="text-slate-500 dark:text-slate-400" x-text="t('date') + ':'"></span>
-                    <span class="font-semibold text-slate-800 dark:text-slate-200" x-text="formatDate(fileInfoModal.file?.created_at)"></span>
+                    <span class="font-semibold text-slate-800 dark:text-slate-200"
+                        x-text="formatDate(fileInfoModal.file?.created_at)"></span>
                 </div>
                 <div class="flex justify-between text-sm">
                     <span class="text-slate-500 dark:text-slate-400" x-text="t('status') + ':'"></span>
-                    <span class="font-semibold" 
-                          :class="fileInfoModal.file?.share_token ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-800 dark:text-slate-200'" 
-                          x-text="fileInfoModal.file?.share_token ? t('public') : t('private')"></span>
+                    <span class="font-semibold"
+                        :class="fileInfoModal.file?.share_token ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-800 dark:text-slate-200'"
+                        x-text="fileInfoModal.file?.share_token ? t('public') : t('private')"></span>
                 </div>
             </div>
 
             <div class="mt-4 flex flex-col gap-1.5">
-                <button @click="startDownload(fileInfoModal.file?.id); closeFileInfoModal()" class="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-lg shadow-blue-500/25 transition-transform active:scale-95">
+                <button @click="startDownload(fileInfoModal.file?.id); closeFileInfoModal()"
+                    class="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-lg shadow-blue-500/25 transition-transform active:scale-95">
                     <i class="fa-solid fa-download"></i> <span x-text="t('download')"></span>
                 </button>
 
                 <template x-if="fileInfoModal.file?.share_token">
                     <div class="grid grid-cols-2 gap-2 mt-1">
-                        <button @click="copyShareLink(fileInfoModal.file, 'regular')" class="flex flex-col items-center justify-center gap-1 p-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 text-emerald-600 font-medium transition-colors text-xs">
+                        <button @click="copyShareLink(fileInfoModal.file, 'regular')"
+                            class="flex flex-col items-center justify-center gap-1 p-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 text-emerald-600 font-medium transition-colors text-xs">
                             <i class="fa-solid fa-share-nodes text-base mb-0.5"></i>
                             <span x-text="t('copy_share_link')"></span>
                         </button>
-                        <button @click="copyShareLink(fileInfoModal.file, 'direct')" class="flex flex-col items-center justify-center gap-1 p-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 text-blue-600 font-medium transition-colors text-xs">
+                        <button @click="copyShareLink(fileInfoModal.file, 'direct')"
+                            class="flex flex-col items-center justify-center gap-1 p-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 text-blue-600 font-medium transition-colors text-xs">
                             <i class="fa-solid fa-copy text-base mb-0.5"></i>
                             <span x-text="t('copy_direct_link')"></span>
                         </button>
@@ -189,17 +245,20 @@
                 </template>
 
                 <div class="grid grid-cols-3 gap-2 mt-1">
-                    <button @click="toggleShare(fileInfoModal.file); closeFileInfoModal()" 
-                            class="flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl font-medium transition-colors"
-                            :class="fileInfoModal.file?.share_token ? 'text-red-500 bg-red-50 hover:bg-red-100 dark:bg-red-500/10 dark:hover:bg-red-500/20' : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'">
+                    <button @click="toggleShare(fileInfoModal.file); closeFileInfoModal()"
+                        class="flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl font-medium transition-colors"
+                        :class="fileInfoModal.file?.share_token ? 'text-red-500 bg-red-50 hover:bg-red-100 dark:bg-red-500/10 dark:hover:bg-red-500/20' : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'">
                         <i class="fa-solid fa-link text-base"></i>
-                        <span class="text-[11px] text-center leading-tight" x-text="fileInfoModal.file?.share_token ? t('revoke_link') : t('share_link')"></span>
+                        <span class="text-[11px] text-center leading-tight"
+                            x-text="fileInfoModal.file?.share_token ? t('revoke_link') : t('share_link')"></span>
                     </button>
-                    <button @click="copyToClipboard('move', [fileInfoModal.file?.id]); closeFileInfoModal()" class="flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium transition-colors">
+                    <button @click="copyToClipboard('move', [fileInfoModal.file?.id]); closeFileInfoModal()"
+                        class="flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium transition-colors">
                         <i class="fa-solid fa-folder-tree text-base"></i>
                         <span class="text-[11px]" x-text="t('move')"></span>
                     </button>
-                    <button @click="renameFile(fileInfoModal.file); closeFileInfoModal()" class="flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium transition-colors">
+                    <button @click="renameFile(fileInfoModal.file); closeFileInfoModal()"
+                        class="flex flex-col items-center justify-center gap-1.5 p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium transition-colors">
                         <i class="fa-solid fa-pen text-base"></i>
                         <span class="text-[11px]" x-text="t('rename')"></span>
                     </button>
@@ -208,397 +267,659 @@
         </div>
     </div>
 
-    <div x-show="!isLoggedIn" x-cloak class="w-full h-[100dvh] flex flex-col items-center justify-center p-4 z-10" x-transition.opacity>
+    <div x-show="!isLoggedIn" x-cloak class="w-full h-[100dvh] flex flex-col items-center justify-center p-4 z-10"
+        x-transition.opacity>
         <div class="glass-panel p-8 md:p-10 rounded-[2rem] w-full max-w-md relative overflow-hidden">
-            <button @click="toggleLang" class="absolute top-4 right-4 h-8 px-2 flex items-center gap-1.5 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-lg transition-colors">
+            <button @click="toggleLang"
+                class="absolute top-4 right-4 h-8 px-2 flex items-center gap-1.5 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-lg transition-colors">
                 <i class="fa-solid fa-earth-americas text-xs"></i>
                 <span class="text-[10px] font-bold uppercase" x-text="lang"></span>
             </button>
             <div class="text-center mb-8">
-                <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
+                <div
+                    class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
                     <i class="fa-solid fa-cloud text-3xl text-white"></i>
                 </div>
                 <h2 class="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">TeleCloud OS</h2>
             </div>
             <form @submit.prevent="login">
-                <input type="password" x-model="password" :placeholder="t('access_code')" class="w-full p-4 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-6 backdrop-blur-sm transition-all">
-                <button type="submit" class="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all shadow-lg active:scale-[0.98]" x-text="t('access_system')"></button>
+                <input type="password" x-model="password" :placeholder="t('access_code')"
+                    class="w-full p-4 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-6 backdrop-blur-sm transition-all">
+                <button type="submit"
+                    class="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all shadow-lg active:scale-[0.98]"
+                    x-text="t('access_system')"></button>
             </form>
         </div>
     </div>
 
     <div x-show="isLoggedIn" x-cloak class="flex flex-col w-full h-[100dvh] z-10 p-0 md:p-4 pb-0" x-transition.opacity>
-        <main class="flex-1 flex flex-col h-full glass-panel md:rounded-[2rem] relative overflow-hidden" @contextmenu.prevent="if(event.target === $el) openContextMenu(event, null)">
-            
-            <header class="flex items-center justify-between p-3 md:p-6 border-b border-slate-200 dark:border-white/5 bg-white/30 dark:bg-slate-900/30 gap-2 sm:gap-4 h-[72px] sm:h-auto shrink-0">
+        <main class="flex-1 flex flex-col h-full glass-panel md:rounded-[2rem] relative overflow-hidden"
+            @contextmenu.prevent="if(event.target === $el) openContextMenu(event, null)">
+
+            <header
+                class="flex items-center justify-between p-3 md:p-6 border-b border-slate-200 dark:border-white/5 bg-white/30 dark:bg-slate-900/30 gap-2 sm:gap-4 h-[72px] sm:h-auto shrink-0">
                 <div class="flex items-center gap-1 flex-1 overflow-hidden">
-                    <div class="flex items-center text-sm md:text-base font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-x-auto pb-1 hide-scrollbar w-full">
-                        <button @click="navigateTo('/')" class="hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-1.5 px-2 py-1 rounded-lg shrink-0">
+                    <div
+                        class="flex items-center text-sm md:text-base font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-x-auto hide-scrollbar w-full">
+                        <button @click="navigateTo('/')"
+                            class="hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-1.5 px-2 py-1 rounded-lg shrink-0">
                             <i class="fa-solid fa-house text-base"></i>
                             <span class="hidden sm:inline">TeleCloud</span>
                         </button>
                         <template x-for="(part, index) in getBreadcrumbs()" :key="index">
                             <div class="flex items-center shrink-0">
                                 <i class="fa-solid fa-chevron-right text-[10px] text-slate-400 mx-1"></i>
-                                <button @click="navigateToIndex(index)" class="hover:text-blue-600 dark:hover:text-blue-400 transition px-2 py-1 rounded-lg max-w-[100px] sm:max-w-[150px] truncate" x-text="part"></button>
+                                <button @click="navigateToIndex(index)"
+                                    class="hover:text-blue-600 dark:hover:text-blue-400 transition px-2 py-1 rounded-lg max-w-[100px] sm:max-w-[150px] truncate"
+                                    x-text="part"></button>
                             </div>
                         </template>
                     </div>
                 </div>
                 <div class="flex items-center gap-1.5 sm:gap-3 shrink-0">
-                    <button @click="toggleLang" class="h-9 sm:h-10 px-2 sm:px-3 flex items-center gap-2 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-blue-100 dark:hover:border-blue-900 transition-colors" :title="t('lang_' + (lang === 'vi' ? 'en' : 'vi'))">
+                    <button @click="toggleLang"
+                        class="h-9 sm:h-10 px-2 sm:px-3 flex items-center gap-2 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-blue-100 dark:hover:border-blue-900 transition-colors"
+                        :title="t('lang_' + (lang === 'vi' ? 'en' : 'vi'))">
                         <i class="fa-solid fa-earth-americas text-base sm:text-lg"></i>
                         <span class="text-xs sm:text-sm font-bold uppercase" x-text="lang"></span>
                     </button>
-                    <button @click="createNewFolder" class="hidden sm:flex px-4 py-2 bg-white/50 dark:bg-slate-800 text-slate-700 dark:text-white border border-slate-200 dark:border-slate-700 rounded-xl font-semibold items-center gap-2 transition-colors"><i class="fa-solid fa-folder-plus"></i><span class="hidden lg:inline" x-text="t('new_folder')"></span></button>
-                    <button @click="uploadModal = true" class="px-3 py-2 sm:px-5 sm:py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-lg font-semibold flex items-center gap-2 transition-all"><i class="fa-solid fa-cloud-arrow-up"></i><span class="hidden sm:inline" x-text="t('upload')"></span></button>
-                    <button @click="logout" :title="t('logout')" class="w-9 h-9 sm:w-auto sm:p-2.5 flex items-center justify-center text-slate-500 hover:text-red-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-red-100 dark:hover:border-red-900 transition-colors">
+                    <button x-show="currentTab === 'files'" @click="createNewFolder"
+                        class="hidden sm:flex px-4 py-2 bg-white/50 dark:bg-slate-800 text-slate-700 dark:text-white border border-slate-200 dark:border-slate-700 rounded-xl font-semibold items-center gap-2 transition-colors"><i
+                            class="fa-solid fa-folder-plus"></i><span class="hidden lg:inline"
+                            x-text="t('new_folder')"></span></button>
+                    <button x-show="currentTab === 'files'" @click="uploadModal = true"
+                        class="px-3 py-2 sm:px-5 sm:py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-lg font-semibold flex items-center gap-2 transition-all"><i
+                            class="fa-solid fa-cloud-arrow-up"></i><span class="hidden sm:inline"
+                            x-text="t('upload')"></span></button>
+                    <button @click="fetchFiles()" :title="t('refresh')"
+                        class="h-9 sm:h-10 px-2 sm:px-3 flex items-center justify-center text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-blue-100 dark:hover:border-blue-900 transition-colors"
+                        :class="isRefreshing ? 'animate-spin text-blue-500' : ''">
+                        <i class="fa-solid fa-arrows-rotate text-lg"></i>
+                    </button>
+                    <button @click="logout" :title="t('logout')"
+                        class="w-9 h-9 sm:w-auto sm:p-2.5 flex items-center justify-center text-slate-500 hover:text-red-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-red-100 dark:hover:border-red-900 transition-colors">
                         <i class="fa-solid fa-arrow-right-from-bracket text-lg"></i>
                     </button>
                 </div>
             </header>
 
-            <div x-show="isRefreshing" x-cloak class="h-1 w-full bg-slate-200 dark:bg-slate-800 overflow-hidden absolute z-20">
-                <div class="h-full bg-blue-500 w-1/3 animate-pulse-fast transform translate-x-[-100%] transition-transform duration-1000" style="animation: indeterminate 1.5s infinite linear;"></div>
+            <div x-show="isRefreshing" x-cloak
+                class="h-1 w-full bg-slate-200 dark:bg-slate-800 overflow-hidden absolute z-20">
+                <div class="h-full bg-blue-500 w-1/3 animate-pulse-fast transform translate-x-[-100%] transition-transform duration-1000"
+                    style="animation: indeterminate 1.5s infinite linear;"></div>
+            </div>
+            <div
+                class="flex items-center px-4 md:px-6 pt-2 gap-4 border-b border-slate-200 dark:border-white/5 bg-white/10 dark:bg-slate-900/10">
+                <button @click="currentTab = 'files'"
+                    class="px-4 py-2 text-sm font-bold transition-all border-b-2 relative -bottom-[1px]"
+                    :class="currentTab === 'files' ? 'text-blue-600 border-blue-600' : 'text-slate-500 border-transparent hover:text-slate-700 dark:hover:text-slate-300'">
+                    <i class="fa-solid fa-folder-open mr-2"></i><span x-text="t('home')"></span>
+                </button>
+                <template x-if="webdavEnabled">
+                    <button @click="currentTab = 'webdav'"
+                        class="px-4 py-2 text-sm font-bold transition-all border-b-2 relative -bottom-[1px]"
+                        :class="currentTab === 'webdav' ? 'text-blue-600 border-blue-600' : 'text-slate-500 border-transparent hover:text-slate-700 dark:hover:text-slate-300'">
+                        <i class="fa-solid fa-network-wired mr-2"></i><span x-text="t('webdav_guide')"></span>
+                    </button>
+                </template>
             </div>
 
-            <div class="flex-1 overflow-y-auto p-2 md:p-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6 relative" @click.self="closeContextMenu">
-                
-                <div x-show="isLoading" x-cloak class="space-y-4 w-full h-full p-4 animate-pulse">
-                    <div class="h-12 bg-slate-200 dark:bg-slate-800 rounded-xl w-full"></div>
-                    <div class="h-16 bg-slate-200 dark:bg-slate-800 rounded-2xl w-full"></div>
-                    <div class="h-16 bg-slate-200 dark:bg-slate-800 rounded-2xl w-full"></div>
+            <div class="flex-1 overflow-y-auto p-2 md:p-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6 relative"
+                @click.self="closeContextMenu">
+
+                <div x-show="currentTab === 'webdav' && webdavEnabled" x-cloak
+                    class="max-w-3xl mx-auto py-4 md:py-6 animate-fade-in-up">
+                    <div
+                        class="bg-blue-600 rounded-[1.5rem] p-6 text-white mb-6 shadow-xl shadow-blue-500/20 relative overflow-hidden">
+                        <div class="absolute -right-10 -top-10 opacity-10 rotate-12">
+                            <i class="fa-solid fa-network-wired text-[10rem]"></i>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-2 relative z-10" x-text="t('webdav_guide')"></h2>
+                        <p class="text-sm text-blue-100 relative z-10 max-w-lg" x-text="t('webdav_desc')"></p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="glass-panel p-6 rounded-3xl border border-white/10">
+                            <div class="flex items-center gap-3 mb-6">
+                                <div
+                                    class="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                                    <i class="fa-solid fa-circle-info text-xl"></i>
+                                </div>
+                                <h3 class="text-lg font-bold" x-text="t('webdav_step2')"></h3>
+                            </div>
+
+                            <div class="space-y-4">
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block"
+                                        x-text="t('webdav_url')"></label>
+                                    <div class="flex items-center gap-2 group">
+                                        <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-sm break-all"
+                                            x-text="window.location.origin + '/webdav'"></div>
+                                        <button
+                                            @click="navigator.clipboard.writeText(window.location.origin + '/webdav'); showToast(t('toast_copied', {t: 'URL'}), 'success')"
+                                            class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white transition-all">
+                                            <i class="fa-solid fa-copy"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block"
+                                            x-text="t('webdav_user')"></label>
+                                        <div class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-sm truncate"
+                                            x-text="webdavUser"></div>
+                                    </div>
+                                    <div>
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block"
+                                            x-text="t('webdav_pass')"></label>
+                                        <div class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-sm truncate"
+                                            x-text="webdavPassword"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col gap-6">
+                            <div class="glass-panel p-6 rounded-3xl border border-white/10 flex-1">
+                                <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
+                                    <i class="fa-solid fa-list-check text-blue-500"></i>
+                                    <span>Hệ điều hành hỗ trợ</span>
+                                </h3>
+                                <ul class="space-y-3 text-sm text-slate-600 dark:text-slate-400">
+                                    <li class="flex items-center gap-2">
+                                        <i class="fa-brands fa-windows text-blue-500 w-5"></i>
+                                        <span>Windows (Map Network Drive / RaiDrive)</span>
+                                    </li>
+                                    <li class="flex items-center gap-2">
+                                        <i class="fa-brands fa-apple w-5"></i>
+                                        <span>macOS (Connect to Server / Finder)</span>
+                                    </li>
+                                    <li class="flex items-center gap-2">
+                                        <i class="fa-solid fa-mobile-screen w-5"></i>
+                                        <span>iOS/iPadOS (Files App / Tệp)</span>
+                                    </li>
+                                    <li class="flex items-center gap-2">
+                                        <i class="fa-brands fa-linux text-orange-500 w-5"></i>
+                                        <span>Linux (Nautilus / Dolphin)</span>
+                                    </li>
+                                    <li class="flex items-center gap-2">
+                                        <i class="fa-brands fa-android text-emerald-500 w-5"></i>
+                                        <span>Android (Solid Explorer / Owlfiles)</span>
+                                    </li>
+                                </ul>
+                            </div>
+
+                            <div
+                                class="p-4 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-xs text-amber-700 dark:text-amber-400">
+                                <i class="fa-solid fa-triangle-exclamation mr-1"></i>
+                                <span x-text="t('webdav_note')"></span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <div x-show="!isLoading" x-transition.opacity>
-                    <div class="mb-4 relative group">
-                        <div class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
-                            <i class="fa-solid fa-magnifying-glass text-slate-400 group-focus-within:text-blue-500 transition-colors"></i>
-                        </div>
-                        <input type="text" x-model="searchQuery" @input="currentPage = 1" :placeholder="t('search_placeholder')" class="w-full pl-11 pr-10 py-3 rounded-2xl bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:bg-white dark:focus:bg-slate-800 text-slate-800 dark:text-slate-200 transition-all shadow-sm backdrop-blur-md">
-                        <button x-show="searchQuery" @click="searchQuery = ''; currentPage = 1" class="absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" x-cloak>
-                            <i class="fa-solid fa-circle-xmark text-lg"></i>
-                        </button>
-                    </div>
-                    <div x-show="clipboard.ids.length > 0" x-cloak class="mb-4 p-4 md:p-5 rounded-2xl bg-blue-50 dark:bg-indigo-500/10 border border-blue-200 dark:border-indigo-500/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 backdrop-blur-md" x-transition.scale.origin.top>
-                        <div class="flex items-center gap-3">
-                            <div class="p-2.5 flex items-center justify-center bg-blue-100 dark:bg-indigo-500/20 rounded-lg text-blue-600 dark:text-indigo-400">
-                                <i class="fa-solid fa-clipboard text-xl"></i>
-                            </div>
-                            <span class="text-blue-800 dark:text-indigo-300 font-medium text-sm" x-html="t('pasting_items', {n: clipboard.ids.length, a: (clipboard.action === 'move' ? t('move') : t('copy'))})">
-                            </span>
-                        </div>
-                        <div class="flex gap-2 w-full sm:w-auto">
-                            <button @click="clipboard = {action: null, ids: []}" class="flex-1 sm:flex-none px-4 py-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium transition-colors" x-text="t('cancel')"></button>
-                            <button @click="executePaste" class="flex-1 sm:flex-none px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm shadow-lg shadow-blue-500/25 font-semibold transition-transform active:scale-95" x-text="t('paste_here')"></button>
-                        </div>
+                <div x-show="currentTab === 'files'" x-transition.opacity>
+                    <div x-show="isLoading" x-cloak class="space-y-4 w-full h-full p-4 animate-pulse">
+                        <div class="h-12 bg-slate-200 dark:bg-slate-800 rounded-xl w-full"></div>
+                        <div class="h-16 bg-slate-200 dark:bg-slate-800 rounded-2xl w-full"></div>
+                        <div class="h-16 bg-slate-200 dark:bg-slate-800 rounded-2xl w-full"></div>
                     </div>
 
-                    <div class="w-full text-left border-collapse relative">
-                        <div class="grid grid-cols-12 gap-4 px-4 py-3 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700/50 sticky top-0 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md z-20">
-                            <div class="col-span-8 md:col-span-5 flex items-center gap-3">
-                            <input type="checkbox" class="w-4 h-4 accent-blue-600 cursor-pointer rounded" 
-                                   @change="
-                                       let pageIds = displayedFiles.map(f => f.id); 
-                                       selectedIds = $event.target.checked 
-                                           ? [...new Set([...selectedIds, ...pageIds])] 
-                                           : selectedIds.filter(id => !pageIds.includes(id))
-                                   " 
-                                   :checked="displayedFiles.length > 0 && displayedFiles.every(f => selectedIds.includes(f.id))">
-                                <span x-text="t('name_placeholder')"></span>
+                    <div x-show="!isLoading" x-transition.opacity>
+                        <div class="mb-4 relative group">
+                            <div class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+                                <i
+                                    class="fa-solid fa-magnifying-glass text-slate-400 group-focus-within:text-blue-500 transition-colors"></i>
                             </div>
-                            <div class="col-span-3 hidden md:block" x-text="t('date')"></div>
-                            <div class="col-span-2 hidden md:block" x-text="t('size')"></div>
-                            <div class="col-span-4 md:col-span-2 text-right md:text-center" x-text="t('actions')"></div>
+                            <input type="text" x-model="searchQuery" @input="currentPage = 1"
+                                :placeholder="t('search_placeholder')"
+                                class="w-full pl-11 pr-10 py-3 rounded-2xl bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:bg-white dark:focus:bg-slate-800 text-slate-800 dark:text-slate-200 transition-all shadow-sm backdrop-blur-md">
+                            <button x-show="searchQuery" @click="searchQuery = ''; currentPage = 1"
+                                class="absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                                x-cloak>
+                                <i class="fa-solid fa-circle-xmark text-lg"></i>
+                            </button>
+                        </div>
+                        <div x-show="clipboard.ids.length > 0" x-cloak
+                            class="mb-4 p-4 md:p-5 rounded-2xl bg-blue-50 dark:bg-indigo-500/10 border border-blue-200 dark:border-indigo-500/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 backdrop-blur-md"
+                            x-transition.scale.origin.top>
+                            <div class="flex items-center gap-3">
+                                <div
+                                    class="p-2.5 flex items-center justify-center bg-blue-100 dark:bg-indigo-500/20 rounded-lg text-blue-600 dark:text-indigo-400">
+                                    <i class="fa-solid fa-clipboard text-xl"></i>
+                                </div>
+                                <span class="text-blue-800 dark:text-indigo-300 font-medium text-sm"
+                                    x-html="t('pasting_items', {n: clipboard.ids.length, a: (clipboard.action === 'move' ? t('move') : t('copy'))})">
+                                </span>
+                            </div>
+                            <div class="flex gap-2 w-full sm:w-auto">
+                                <button @click="clipboard = {action: null, ids: []}"
+                                    class="flex-1 sm:flex-none px-4 py-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium transition-colors"
+                                    x-text="t('cancel')"></button>
+                                <button @click="executePaste"
+                                    class="flex-1 sm:flex-none px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm shadow-lg shadow-blue-500/25 font-semibold transition-transform active:scale-95"
+                                    x-text="t('paste_here')"></button>
+                            </div>
                         </div>
 
-                        <div class="space-y-1.5 mt-2">
-                            <template x-for="file in displayedFiles" :key="file.id">
-                                <div class="group relative grid grid-cols-12 gap-4 px-3 md:px-4 py-2 md:py-3 items-center rounded-2xl hover:bg-white/60 dark:hover:bg-slate-800/50 transition-all border border-transparent" 
-                                     :class="selectedIds.includes(file.id) ? 'bg-blue-50/80 dark:bg-blue-900/20 border-blue-200 dark:border-blue-500/30' : ''" 
-                                     @contextmenu.prevent="openContextMenu($event, file)"
-                                     x-transition.opacity.duration.300ms>
-                                    
-                                    <div class="col-span-8 md:col-span-5 flex items-center gap-3 w-full truncate">
-                                        <input type="checkbox" :value="file.id" x-model="selectedIds" class="w-4 h-4 accent-blue-600 cursor-pointer rounded">
-                                        
-                                        <div class="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl shadow-sm shrink-0 cursor-pointer group-hover:scale-105 transition-transform" @click="if(file.is_folder) { navigateToFolder(file.filename) } else { showFileInfo(file) }">
-                                            <template x-if="file.is_folder">
-                                                <i class="fa-solid fa-folder text-amber-400 text-xl md:text-2xl drop-shadow-sm"></i>
-                                            </template>
-                                            <template x-if="!file.is_folder">
-                                                <div class="w-full h-full relative flex items-center justify-center">
-                                                    <template x-if="file.has_thumb">
-                                                        <img :src="`/api/files/${file.id}/thumb`" loading="lazy" alt="thumb" class="w-full h-full object-cover rounded-xl shadow-sm">
-                                                    </template>
-                                                    
-                                                    <template x-if="!file.has_thumb">
-                                                        <div x-html="getFileTypeData(file.filename).i" class="scale-75 opacity-80" :class="getFileTypeData(file.filename).c.split(' ')[1]"></div>
-                                                    </template>
-                                                </div>
-                                            </template>
-                                        </div>
-                                        <div class="truncate flex-1 cursor-pointer flex flex-col" @click="if(file.is_folder) { navigateToFolder(file.filename) } else { showFileInfo(file) }">
-                                            <div class="flex items-center gap-2">
-                                                <p class="text-sm md:text-base font-semibold text-slate-800 dark:text-slate-200 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors" x-text="file.filename"></p>
-                                                <template x-if="file.share_token">
-                                                    <span class="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 text-[9px] font-bold tracking-wider uppercase">Public</span>
+                        <div class="w-full text-left border-collapse relative">
+                            <div
+                                class="grid grid-cols-12 gap-4 px-4 py-3 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700/50 sticky top-0 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md z-20">
+                                <div class="col-span-8 md:col-span-5 flex items-center gap-3">
+                                    <input type="checkbox" class="w-4 h-4 accent-blue-600 cursor-pointer rounded"
+                                        @change="
+                                        let pageIds = displayedFiles.map(f => f.id); 
+                                        selectedIds = $event.target.checked 
+                                            ? [...new Set([...selectedIds, ...pageIds])] 
+                                            : selectedIds.filter(id => !pageIds.includes(id))
+                                    "
+                                        :checked="displayedFiles.length > 0 && displayedFiles.every(f => selectedIds.includes(f.id))">
+                                    <span x-text="t('name_placeholder')"></span>
+                                </div>
+                                <div class="col-span-3 hidden md:block" x-text="t('date')"></div>
+                                <div class="col-span-2 hidden md:block" x-text="t('size')"></div>
+                                <div class="col-span-4 md:col-span-2 text-right md:text-center" x-text="t('actions')">
+                                </div>
+                            </div>
+
+                            <div class="space-y-1.5 mt-2">
+                                <template x-for="file in displayedFiles" :key="file.id">
+                                    <div class="group relative grid grid-cols-12 gap-4 px-3 md:px-4 py-2 md:py-3 items-center rounded-2xl hover:bg-white/60 dark:hover:bg-slate-800/50 transition-all border border-transparent"
+                                        :class="selectedIds.includes(file.id) ? 'bg-blue-50/80 dark:bg-blue-900/20 border-blue-200 dark:border-blue-500/30' : ''"
+                                        @contextmenu.prevent="openContextMenu($event, file)"
+                                        x-transition.opacity.duration.300ms>
+
+                                        <div class="col-span-8 md:col-span-5 flex items-center gap-3 w-full truncate">
+                                            <input type="checkbox" :value="file.id" x-model="selectedIds"
+                                                class="w-4 h-4 accent-blue-600 cursor-pointer rounded">
+
+                                            <div class="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl shadow-sm shrink-0 cursor-pointer group-hover:scale-105 transition-transform"
+                                                @click="if(file.is_folder) { navigateToFolder(file.filename) } else { showFileInfo(file) }">
+                                                <template x-if="file.is_folder">
+                                                    <i
+                                                        class="fa-solid fa-folder text-amber-400 text-xl md:text-2xl drop-shadow-sm"></i>
+                                                </template>
+                                                <template x-if="!file.is_folder">
+                                                    <div
+                                                        class="w-full h-full relative flex items-center justify-center">
+                                                        <template x-if="file.has_thumb">
+                                                            <img :src="`/api/files/${file.id}/thumb`" loading="lazy"
+                                                                alt="thumb"
+                                                                class="w-full h-full object-cover rounded-xl shadow-sm">
+                                                        </template>
+
+                                                        <template x-if="!file.has_thumb">
+                                                            <div x-html="getFileTypeData(file.filename).i"
+                                                                class="scale-75 opacity-80"
+                                                                :class="getFileTypeData(file.filename).c.split(' ')[1]">
+                                                            </div>
+                                                        </template>
+                                                    </div>
                                                 </template>
                                             </div>
-                                            <p class="text-xs text-slate-400 md:hidden mt-0.5" x-text="file.is_folder ? t('folder') : formatBytes(file.size)"></p>
-                                        </div>
-                                    </div>
-
-                                    <div class="hidden md:block col-span-3 text-sm font-medium text-slate-500 dark:text-slate-400" x-text="formatDate(file.created_at)"></div>
-
-                                    <div class="hidden md:block col-span-2 text-sm font-medium text-slate-500 dark:text-slate-400" x-text="file.is_folder ? t('folder') : formatBytes(file.size)"></div>
-
-                                    <div class="col-span-4 md:col-span-2 flex justify-end md:justify-center relative" @click.outside="if (openMenuId === file.id) openMenuId = null">
-                                        <button @click.stop="openMenuId = openMenuId === file.id ? null : file.id" class="px-3 py-2 text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors focus:outline-none">
-                                            <i class="fa-solid fa-ellipsis-vertical text-lg"></i>
-                                        </button>
-                                        <div x-show="openMenuId === file.id" x-cloak x-transition.origin.top.right class="glass-menu absolute right-0 top-10 mt-1 w-52 rounded-2xl p-1.5 z-[60] text-sm text-left">
-                                            <template x-if="file.share_token">
-                                                <div class="space-y-1 mb-1">
-                                                    <button @click="copyShareLink(file, 'regular'); openMenuId = null" class="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium transition-colors text-xs">
-                                                        <i class="fa-solid fa-share-nodes fa-fw"></i> <span x-text="t('copy_share_link')"></span>
-                                                    </button>
-                                                    <button @click="copyShareLink(file, 'direct'); openMenuId = null" class="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium transition-colors text-xs">
-                                                        <i class="fa-solid fa-copy fa-fw"></i> <span x-text="t('copy_direct_link')"></span>
-                                                    </button>
+                                            <div class="truncate flex-1 cursor-pointer flex flex-col"
+                                                @click="if(file.is_folder) { navigateToFolder(file.filename) } else { showFileInfo(file) }">
+                                                <div class="flex items-center gap-2">
+                                                    <p class="text-sm md:text-base font-semibold text-slate-800 dark:text-slate-200 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors"
+                                                        x-text="file.filename"></p>
+                                                    <template x-if="file.share_token">
+                                                        <span
+                                                            class="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 text-[9px] font-bold tracking-wider uppercase">Public</span>
+                                                    </template>
                                                 </div>
-                                            </template>
-                                            <template x-if="!file.is_folder">
-                                                <button @click="toggleShare(file); openMenuId = null" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors">
-                                                    <i class="fa-solid fa-link fa-fw text-emerald-500"></i>
-                                                    <span x-text="file.share_token ? t('revoke_link') : t('share_link')"></span>
-                                                </button>
-                                            </template>
-                                            <div class="h-px bg-slate-200 dark:bg-slate-700/50 my-1 mx-2"></div>
-                                            <button @click="renameFile(file); openMenuId = null" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i class="fa-solid fa-pen fa-fw text-slate-400"></i> <span x-text="t('rename')"></span></button>
-                                            <button @click="copyToClipboard('move', [file.id]); openMenuId = null" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i class="fa-solid fa-folder-tree fa-fw text-slate-400"></i> <span x-text="t('move')"></span></button>
-                                            <button @click="copyToClipboard('copy', [file.id]); openMenuId = null" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i class="fa-solid fa-copy fa-fw text-slate-400"></i> <span x-text="t('copy')"></span></button>
-                                            
-                                            <button @click="deleteFile(file.id); openMenuId = null" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600 dark:text-red-400 font-medium transition-colors"><i class="fa-solid fa-trash fa-fw"></i> <span x-text="t('delete')"></span></button>
+                                                <p class="text-xs text-slate-400 md:hidden mt-0.5"
+                                                    x-text="file.is_folder ? t('folder') : formatBytes(file.size)"></p>
+                                            </div>
+                                        </div>
+
+                                        <div class="hidden md:block col-span-3 text-sm font-medium text-slate-500 dark:text-slate-400"
+                                            x-text="formatDate(file.created_at)"></div>
+
+                                        <div class="hidden md:block col-span-2 text-sm font-medium text-slate-500 dark:text-slate-400"
+                                            x-text="file.is_folder ? t('folder') : formatBytes(file.size)"></div>
+
+                                        <div class="col-span-4 md:col-span-2 flex justify-end md:justify-center relative"
+                                            @click.outside="if (openMenuId === file.id) openMenuId = null">
+                                            <button @click.stop="openMenuId = openMenuId === file.id ? null : file.id"
+                                                class="px-3 py-2 text-slate-400 hover:text-slate-800 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors focus:outline-none">
+                                                <i class="fa-solid fa-ellipsis-vertical text-lg"></i>
+                                            </button>
+                                            <div x-show="openMenuId === file.id" x-cloak x-transition.origin.top.right
+                                                class="glass-menu absolute right-0 top-10 mt-1 w-52 rounded-2xl p-1.5 z-[60] text-sm text-left">
+                                                <template x-if="file.share_token">
+                                                    <div class="space-y-1 mb-1">
+                                                        <button
+                                                            @click="copyShareLink(file, 'regular'); openMenuId = null"
+                                                            class="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium transition-colors text-xs">
+                                                            <i class="fa-solid fa-share-nodes fa-fw"></i> <span
+                                                                x-text="t('copy_share_link')"></span>
+                                                        </button>
+                                                        <button
+                                                            @click="copyShareLink(file, 'direct'); openMenuId = null"
+                                                            class="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium transition-colors text-xs">
+                                                            <i class="fa-solid fa-copy fa-fw"></i> <span
+                                                                x-text="t('copy_direct_link')"></span>
+                                                        </button>
+                                                    </div>
+                                                </template>
+                                                <template x-if="!file.is_folder">
+                                                    <button @click="toggleShare(file); openMenuId = null"
+                                                        class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors">
+                                                        <i class="fa-solid fa-link fa-fw text-emerald-500"></i>
+                                                        <span
+                                                            x-text="file.share_token ? t('revoke_link') : t('share_link')"></span>
+                                                    </button>
+                                                </template>
+                                                <div class="h-px bg-slate-200 dark:bg-slate-700/50 my-1 mx-2"></div>
+                                                <button @click="renameFile(file); openMenuId = null"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i
+                                                        class="fa-solid fa-pen fa-fw text-slate-400"></i> <span
+                                                        x-text="t('rename')"></span></button>
+                                                <button @click="copyToClipboard('move', [file.id]); openMenuId = null"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i
+                                                        class="fa-solid fa-folder-tree fa-fw text-slate-400"></i> <span
+                                                        x-text="t('rename')"></span></button>
+                                                <button @click="copyToClipboard('copy', [file.id]); openMenuId = null"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 font-medium transition-colors"><i
+                                                        class="fa-solid fa-copy fa-fw text-slate-400"></i> <span
+                                                        x-text="t('copy')"></span></button>
+
+                                                <button @click="deleteFile(file.id); openMenuId = null"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600 dark:text-red-400 font-medium transition-colors"><i
+                                                        class="fa-solid fa-trash fa-fw"></i> <span
+                                                        x-text="t('delete')"></span></button>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            </template>
-                            
-                            <template x-if="files.length === 0 && !isLoading && !isRefreshing">
-                                <div class="py-20 text-center flex flex-col items-center" @contextmenu.prevent="openContextMenu($event, null)" x-transition.opacity>
-                                    <div class="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
-                                        <i class="fa-solid fa-folder-open text-5xl text-slate-300 dark:text-slate-600"></i>
-                                    </div>
-                                    <p class="text-slate-500 dark:text-slate-400 font-medium" x-text="t('empty_folder')"></p>
-                                </div>
-                            </template>
+                                </template>
 
-                            <template x-if="files.length > 0 && filteredFiles.length === 0">
-                                <div class="py-16 text-center flex flex-col items-center" x-transition.opacity>
-                                    <div class="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
-                                        <i class="fa-solid fa-magnifying-glass text-4xl text-slate-300 dark:text-slate-600"></i>
+                                <template x-if="files.length === 0 && !isLoading && !isRefreshing">
+                                    <div class="py-20 text-center flex flex-col items-center"
+                                        @contextmenu.prevent="openContextMenu($event, null)" x-transition.opacity>
+                                        <div
+                                            class="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                                            <i
+                                                class="fa-solid fa-folder-open text-5xl text-slate-300 dark:text-slate-600"></i>
+                                        </div>
+                                        <p class="text-slate-500 dark:text-slate-400 font-medium"
+                                            x-text="t('empty_folder')"></p>
                                     </div>
-                                    <p class="text-slate-500 dark:text-slate-400 font-medium" x-html="t('no_results') + ' &quot;<span x-text=&quot;searchQuery&quot; class=&quot;font-bold&quot;></span>&quot;'"></p>
-                                    <button @click="searchQuery = ''; currentPage = 1" class="mt-4 text-blue-600 hover:text-blue-500 text-sm font-semibold" x-text="t('clear_search')"></button>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                    <div x-show="totalPages > 1" class="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 bg-white/50 dark:bg-slate-900/50 rounded-2xl border border-slate-200 dark:border-slate-700/50 backdrop-blur-md" x-cloak>
-                        <div class="text-xs md:text-sm text-slate-500 dark:text-slate-400">
-                            Hiển thị <span class="font-bold text-slate-700 dark:text-slate-200" x-text="(currentPage - 1) * itemsPerPage + 1"></span> - 
-                            <span class="font-bold text-slate-700 dark:text-slate-200" x-text="Math.min(currentPage * itemsPerPage, filteredFiles.length)"></span> 
-                            / <span class="font-bold text-slate-700 dark:text-slate-200" x-text="filteredFiles.length"></span> mục
-                        </div>
+                                </template>
 
-                        <div class="flex items-center gap-2">
-                            <button @click="if(currentPage > 1) { currentPage--; $el.closest('.overflow-y-auto').scrollTo({top: 0, behavior: 'smooth'}); }" :disabled="currentPage === 1" class="w-9 h-9 flex items-center justify-center rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                                <i class="fa-solid fa-chevron-left text-xs"></i>
-                            </button>
-                        
-                            <div class="flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden text-sm">
-                                <input type="number" x-model.number="currentPage" 
-                                       @change="if(currentPage < 1) currentPage = 1; if(currentPage > totalPages) currentPage = totalPages; $el.closest('.overflow-y-auto').scrollTo({top: 0, behavior: 'smooth'});" 
-                                       class="w-12 h-9 bg-transparent text-center focus:outline-none font-semibold text-slate-700 dark:text-slate-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                                       min="1" :max="totalPages">
-                                
-                                <div class="h-9 flex items-center px-3 text-slate-400 font-medium bg-slate-50 dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700">
-                                    / <span x-text="totalPages" class="ml-1"></span>
-                                </div>
+                                <template x-if="files.length > 0 && filteredFiles.length === 0">
+                                    <div class="py-16 text-center flex flex-col items-center" x-transition.opacity>
+                                        <div
+                                            class="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                                            <i
+                                                class="fa-solid fa-magnifying-glass text-4xl text-slate-300 dark:text-slate-600"></i>
+                                        </div>
+                                        <p class="text-slate-500 dark:text-slate-400 font-medium"
+                                            x-html="t('no_results') + ' &quot;<span x-text=&quot;searchQuery&quot; class=&quot;font-bold&quot;></span>&quot;'">
+                                        </p>
+                                        <button @click="searchQuery = ''; currentPage = 1"
+                                            class="mt-4 text-blue-600 hover:text-blue-500 text-sm font-semibold"
+                                            x-text="t('clear_search')"></button>
+                                    </div>
+                                </template>
                             </div>
-                        
-                            <button @click="if(currentPage < totalPages) { currentPage++; $el.closest('.overflow-y-auto').scrollTo({top: 0, behavior: 'smooth'}); }" :disabled="currentPage === totalPages" class="w-9 h-9 flex items-center justify-center rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                                <i class="fa-solid fa-chevron-right text-xs"></i>
-                            </button>
+                        </div>
+                        <div x-show="totalPages > 1"
+                            class="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 bg-white/50 dark:bg-slate-900/50 rounded-2xl border border-slate-200 dark:border-slate-700/50 backdrop-blur-md"
+                            x-cloak>
+                            <div class="text-xs md:text-sm text-slate-500 dark:text-slate-400">
+                                Hiển thị <span class="font-bold text-slate-700 dark:text-slate-200"
+                                    x-text="(currentPage - 1) * itemsPerPage + 1"></span> -
+                                <span class="font-bold text-slate-700 dark:text-slate-200"
+                                    x-text="Math.min(currentPage * itemsPerPage, filteredFiles.length)"></span>
+                                / <span class="font-bold text-slate-700 dark:text-slate-200"
+                                    x-text="filteredFiles.length"></span> mục
+                            </div>
+
+                            <div class="flex items-center gap-2">
+                                <button
+                                    @click="if(currentPage > 1) { currentPage--; $el.closest('.overflow-y-auto').scrollTo({top: 0, behavior: 'smooth'}); }"
+                                    :disabled="currentPage === 1"
+                                    class="w-9 h-9 flex items-center justify-center rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <i class="fa-solid fa-chevron-left text-xs"></i>
+                                </button>
+
+                                <div
+                                    class="flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden text-sm">
+                                    <input type="number" x-model.number="currentPage"
+                                        @change="if(currentPage < 1) currentPage = 1; if(currentPage > totalPages) currentPage = totalPages; $el.closest('.overflow-y-auto').scrollTo({top: 0, behavior: 'smooth'});"
+                                        class="w-12 h-9 bg-transparent text-center focus:outline-none font-semibold text-slate-700 dark:text-slate-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                        min="1" :max="totalPages">
+
+                                    <div
+                                        class="h-9 flex items-center px-3 text-slate-400 font-medium bg-slate-50 dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700">
+                                        / <span x-text="totalPages" class="ml-1"></span>
+                                    </div>
+                                </div>
+
+                                <button
+                                    @click="if(currentPage < totalPages) { currentPage++; $el.closest('.overflow-y-auto').scrollTo({top: 0, behavior: 'smooth'}); }"
+                                    :disabled="currentPage === totalPages"
+                                    class="w-9 h-9 flex items-center justify-center rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <i class="fa-solid fa-chevron-right text-xs"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
-            <footer class="hidden md:flex items-center justify-between p-4 px-6 border-t border-slate-200 dark:border-white/5 bg-white/20 dark:bg-slate-900/20 text-xs text-slate-500 dark:text-slate-400">
-                <div class="flex items-center gap-4">
-                    <div class="flex items-center gap-1.5">
-                        <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                        <span class="font-medium" x-text="t('online')"></span>
+                <footer
+                    class="hidden md:flex items-center justify-between p-4 px-6 border-t border-slate-200 dark:border-white/5 bg-white/20 dark:bg-slate-900/20 text-xs text-slate-500 dark:text-slate-400">
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-1.5">
+                            <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                            <span class="font-medium" x-text="t('online')"></span>
+                        </div>
+                        <span class="opacity-30">|</span>
+                        <span x-text="files.length + ' ' + t('items_count')"></span>
                     </div>
-                    <span class="opacity-30">|</span>
-                    <span x-text="files.length + ' ' + t('items_count')"></span>
-                </div>
-                
-                <div class="flex items-center gap-6">
-                    <div class="flex items-center gap-1.5">
-                        <i class="fa-solid fa-hard-drive"></i>
-                        <span><span x-text="t('size') + ':'"></span> <span class="text-slate-700 dark:text-slate-300 font-semibold" x-text="t('unlimited')"></span></span>
+
+                    <div class="flex items-center gap-6">
+                        <div class="flex items-center gap-1.5">
+                            <i class="fa-solid fa-hard-drive"></i>
+                            <span><span x-text="t('capcity') + ':'"></span> <span
+                                    class="text-slate-700 dark:text-slate-300 font-semibold"
+                                    x-text="t('unlimited')"></span></span>
+                        </div>
+                        <div
+                            class="flex items-center gap-1.5 hover:text-slate-900 dark:hover:text-white transition-colors">
+                            <a href="https://github.com/dabeecao/telecloud-go" target="_blank"
+                                class="flex items-center gap-1.5">
+                                <i class="fa-brands fa-github text-sm"></i>
+                                <span>GitHub</span>
+                            </a>
+                        </div>
+                        <p class="font-medium">&copy; 2026 <span
+                                class="text-blue-600 dark:text-blue-400">@dabeecao</span></p>
                     </div>
-                    <div class="flex items-center gap-1.5">
-                        <i class="fa-solid fa-shield-halved"></i>
-                        <span>Cloud Secured</span>
-                    </div>
-                    <p class="font-medium">&copy; 2026 <span class="text-blue-600 dark:text-blue-400">@dabeecao</span></p>
-                </div>
-            </footer>
+                </footer>
         </main>
 
-        <nav class="md:hidden fixed bottom-0 left-0 w-full glass-menu z-40 border-t border-slate-200 dark:border-white/10 pb-safe rounded-t-[2rem]">
+        <nav
+            class="md:hidden fixed bottom-0 left-0 w-full glass-menu z-40 border-t border-slate-200 dark:border-white/10 pb-safe rounded-t-[2rem]">
             <div class="flex justify-around items-center p-2 relative">
-                
-                <button @click="navigateTo('/')" class="flex-1 flex flex-col items-center gap-1.5 py-2 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-                    <i class="fa-solid fa-house text-xl"></i><span class="text-[10px] font-semibold" x-text="t('home')"></span>
+
+                <button @click="navigateTo('/'); currentTab = 'files'"
+                    class="flex-1 flex flex-col items-center gap-1.5 py-2 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                    <i class="fa-solid fa-house text-xl"></i><span class="text-[10px] font-semibold"
+                        x-text="t('home')"></span>
                 </button>
-                
-                <div class="flex-1 flex justify-center relative -top-6" x-data="{ showMobileAdd: false }" @click.outside="showMobileAdd = false">
-                    
-                    <div x-show="showMobileAdd" 
-                         x-transition.scale.origin.bottom 
-                         class="absolute bottom-16 flex flex-col p-1.5 glass-menu rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_10px_40px_rgba(0,0,0,0.8)] border border-slate-200 dark:border-slate-700/50 w-52 z-50" 
-                         x-cloak>
-                        
-                        <button @click="createNewFolder(); showMobileAdd = false" class="flex items-center gap-3 px-3 py-3 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-xl text-slate-700 dark:text-slate-200 font-medium transition-colors">
-                            <div class="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+
+                <div class="flex-1 flex justify-center relative -top-6" x-data="{ showMobileAdd: false }"
+                    @click.outside="showMobileAdd = false">
+
+                    <div x-show="showMobileAdd" x-transition.scale.origin.bottom
+                        class="absolute bottom-16 flex flex-col p-1.5 glass-menu rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_10px_40px_rgba(0,0,0,0.8)] border border-slate-200 dark:border-slate-700/50 w-52 z-50"
+                        x-cloak>
+
+                        <button @click="createNewFolder(); showMobileAdd = false"
+                            class="flex items-center gap-3 px-3 py-3 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-xl text-slate-700 dark:text-slate-200 font-medium transition-colors">
+                            <div
+                                class="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
                                 <i class="fa-solid fa-folder-plus"></i>
                             </div>
                             <span x-text="t('new_folder')"></span>
                         </button>
-                        
+
                         <div class="h-px bg-slate-200 dark:bg-slate-700/50 my-1 mx-2"></div>
-                        
-                        <button @click="uploadModal = true; showMobileAdd = false" class="flex items-center gap-3 px-3 py-3 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-xl text-slate-700 dark:text-slate-200 font-medium transition-colors">
-                            <div class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center text-blue-500 shrink-0">
+
+                        <button @click="uploadModal = true; showMobileAdd = false"
+                            class="flex items-center gap-3 px-3 py-3 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-xl text-slate-700 dark:text-slate-200 font-medium transition-colors">
+                            <div
+                                class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center text-blue-500 shrink-0">
                                 <i class="fa-solid fa-cloud-arrow-up"></i>
                             </div>
                             <span x-text="t('upload')"></span>
                         </button>
                     </div>
 
-                    <button @click="showMobileAdd = !showMobileAdd" class="flex flex-col items-center gap-1 group z-10 relative">
+                    <button @click="showMobileAdd = !showMobileAdd"
+                        class="flex flex-col items-center gap-1 group z-10 relative">
                         <div class="w-14 h-14 text-white rounded-full flex items-center justify-center border-4 border-slate-50 dark:border-slate-950 transition-all duration-300 shadow-[0_8px_30px_rgba(37,99,235,0.4)]"
-                             :class="showMobileAdd ? 'bg-slate-700 dark:bg-slate-600 rotate-45 shadow-none' : 'bg-blue-600 group-active:scale-95'">
+                            :class="showMobileAdd ? 'bg-slate-700 dark:bg-slate-600 rotate-45 shadow-none' : 'bg-blue-600 group-active:scale-95'">
                             <i class="fa-solid fa-plus text-2xl"></i>
                         </div>
                     </button>
                 </div>
 
-                <button @click="logout" class="flex-1 flex flex-col items-center gap-1.5 py-2 text-slate-500 dark:text-slate-400 hover:text-red-500 transition-colors">
-                    <i class="fa-solid fa-arrow-right-from-bracket text-xl"></i><span class="text-[10px] font-semibold" x-text="t('logout')"></span>
+                <button @click="logout"
+                    class="flex-1 flex flex-col items-center gap-1.5 py-2 text-slate-500 dark:text-slate-400 hover:text-red-500 transition-colors">
+                    <i class="fa-solid fa-arrow-right-from-bracket text-xl"></i><span class="text-[10px] font-semibold"
+                        x-text="t('logout')"></span>
                 </button>
-                
+
             </div>
         </nav>
     </div>
 
-    <div x-show="selectedIds.length > 0" x-cloak class="fixed bottom-28 md:bottom-8 left-1/2 -translate-x-1/2 glass-menu px-3 py-3 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.8)] flex items-center gap-2 md:gap-6 z-50 border border-slate-200 dark:border-slate-700/50" x-transition.scale.origin.bottom>
-        <span class="text-sm font-bold bg-blue-600 text-white px-3 py-1.5 rounded-full shadow-inner" x-text="selectedIds.length"></span>
+    <div x-show="selectedIds.length > 0" x-cloak
+        class="fixed bottom-28 md:bottom-8 left-1/2 -translate-x-1/2 glass-menu px-3 py-3 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.8)] flex items-center gap-2 md:gap-6 z-50 border border-slate-200 dark:border-slate-700/50"
+        x-transition.scale.origin.bottom>
+        <span class="text-sm font-bold bg-blue-600 text-white px-3 py-1.5 rounded-full shadow-inner"
+            x-text="selectedIds.length"></span>
         <div class="h-6 w-px bg-slate-300 dark:bg-slate-600"></div>
-        
+
         <div class="flex items-center gap-1 md:gap-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
-            
-            <button @click="downloadSelectedBatch" :title="t('download')" class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-2">
+
+            <button @click="downloadSelectedBatch" :title="t('download')"
+                class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-2">
                 <i class="fa-solid fa-download text-lg sm:text-base"></i>
                 <span class="hidden sm:block" x-text="t('download')"></span>
             </button>
-            
-            <button @click="copyToClipboard('move', selectedIds)" :title="t('move')" class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-2">
+
+            <button @click="copyToClipboard('move', selectedIds)" :title="t('move')"
+                class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-2">
                 <i class="fa-solid fa-scissors text-lg sm:text-base"></i>
                 <span class="hidden sm:block" x-text="t('move')"></span>
             </button>
-            
-            <button @click="copyToClipboard('copy', selectedIds)" :title="t('copy')" class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-2">
+
+            <button @click="copyToClipboard('copy', selectedIds)" :title="t('copy')"
+                class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-2">
                 <i class="fa-solid fa-copy text-lg sm:text-base"></i>
                 <span class="hidden sm:block" x-text="t('copy')"></span>
             </button>
-            
-            <button @click="deleteBatch" :title="t('delete')" class="p-2.5 sm:px-3 sm:py-2 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 transition flex items-center gap-2">
+
+            <button @click="deleteBatch" :title="t('delete')"
+                class="p-2.5 sm:px-3 sm:py-2 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 transition flex items-center gap-2">
                 <i class="fa-solid fa-trash text-lg sm:text-base"></i>
                 <span class="hidden sm:block" x-text="t('delete')"></span>
             </button>
         </div>
-        <button @click="selectedIds = []" class="ml-1 p-2 w-8 h-8 flex items-center justify-center bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"><i class="fa-solid fa-xmark"></i></button>
+        <button @click="selectedIds = []"
+            class="ml-1 p-2 w-8 h-8 flex items-center justify-center bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-full transition-colors"><i
+                class="fa-solid fa-xmark"></i></button>
     </div>
-    
-    <div x-show="isPreparingDownload" x-cloak class="fixed inset-0 z-[400] flex flex-col items-center justify-center bg-slate-900/60 backdrop-blur-sm" x-transition.opacity>
+
+    <div x-show="isPreparingDownload" x-cloak
+        class="fixed inset-0 z-[400] flex flex-col items-center justify-center bg-slate-900/60 backdrop-blur-sm"
+        x-transition.opacity>
         <i class="fa-solid fa-cloud-arrow-down text-6xl text-blue-400 mb-6 animate-bounce"></i>
         <div class="text-white text-xl font-bold mb-2 text-center px-4" x-text="t('connecting_tg')"></div>
         <div class="text-white/70 text-sm mb-6" x-text="t('wait_msg')"></div>
         <div class="w-48 h-1.5 bg-slate-700 rounded-full overflow-hidden">
-            <div class="h-full bg-blue-500 w-1/3 animate-pulse-fast transform translate-x-[-100%]" style="animation: indeterminate 1.5s infinite linear;"></div>
+            <div class="h-full bg-blue-500 w-1/3 animate-pulse-fast transform translate-x-[-100%]"
+                style="animation: indeterminate 1.5s infinite linear;"></div>
         </div>
     </div>
-    
-<div x-show="toastModal.show" x-cloak class="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" x-transition.opacity>
-    <div @click.outside="toastModal.show = false" class="glass-menu w-full max-w-sm rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20 relative flex flex-col items-center text-center">
-        
-        <div class="w-16 h-16 rounded-full flex items-center justify-center mb-4 shadow-inner" 
-             :class="toastModal.type === 'error' ? 'bg-red-100 text-red-500 dark:bg-red-500/20' : 'bg-emerald-100 text-emerald-500 dark:bg-emerald-500/20'">
-            <i class="fa-solid text-3xl" :class="toastModal.type === 'error' ? 'fa-xmark' : 'fa-check'"></i>
-        </div>
-        
-        <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-2" x-text="toastModal.type === 'error' ? t('failure') : t('success')"></h3>
-        <p class="text-slate-600 dark:text-slate-300 text-sm mb-2" x-text="toastModal.message"></p>
-        
-        <button @click="toastModal.show = false" class="mt-4 w-full py-3 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95"
-                :class="toastModal.type === 'error' ? 'bg-red-600 hover:bg-red-500 shadow-red-500/25' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/25'">
-            OK
-        </button>
-    </div>
-</div>
 
-    <div x-show="uploadQueue.length > 0" x-cloak class="fixed bottom-28 md:bottom-6 right-4 md:right-6 w-[calc(100%-2rem)] md:w-80 glass-menu rounded-2xl z-50 overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-700 transition-all" x-transition.slide.right>
-        <div class="bg-blue-600 px-4 py-3 text-sm font-semibold text-white flex justify-between items-center shadow-md cursor-pointer" @click="if(!isAllUploadsDone) isQueueMinimized = !isQueueMinimized">
+    <div x-show="toastModal.show" x-cloak
+        class="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4"
+        x-transition.opacity>
+        <div @click.outside="toastModal.show = false"
+            class="glass-menu w-full max-w-sm rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20 relative flex flex-col items-center text-center">
+
+            <div class="w-16 h-16 rounded-full flex items-center justify-center mb-4 shadow-inner"
+                :class="toastModal.type === 'error' ? 'bg-red-100 text-red-500 dark:bg-red-500/20' : 'bg-emerald-100 text-emerald-500 dark:bg-emerald-500/20'">
+                <i class="fa-solid text-3xl" :class="toastModal.type === 'error' ? 'fa-xmark' : 'fa-check'"></i>
+            </div>
+
+            <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-2"
+                x-text="toastModal.type === 'error' ? t('failure') : t('success')"></h3>
+            <p class="text-slate-600 dark:text-slate-300 text-sm mb-2" x-text="toastModal.message"></p>
+
+            <button @click="toastModal.show = false"
+                class="mt-4 w-full py-3 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95"
+                :class="toastModal.type === 'error' ? 'bg-red-600 hover:bg-red-500 shadow-red-500/25' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/25'">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <div x-show="uploadQueue.length > 0" x-cloak
+        class="fixed bottom-28 md:bottom-6 right-4 md:right-6 w-[calc(100%-2rem)] md:w-80 glass-menu rounded-2xl z-50 overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-700 transition-all"
+        x-transition.slide.right>
+        <div class="bg-blue-600 px-4 py-3 text-sm font-semibold text-white flex justify-between items-center shadow-md cursor-pointer"
+            @click="if(!isAllUploadsDone) isQueueMinimized = !isQueueMinimized">
             <span class="flex items-center gap-2">
-                <i class="fa-solid" :class="isAllUploadsDone ? 'fa-check-circle text-emerald-300' : 'fa-circle-notch fa-spin'"></i>
+                <i class="fa-solid"
+                    :class="isAllUploadsDone ? 'fa-check-circle text-emerald-300' : 'fa-circle-notch fa-spin'"></i>
                 <span x-text="isAllUploadsDone ? t('upload_done') : t('upload_progress')"></span>
             </span>
             <div class="flex items-center gap-3">
-                <span class="bg-blue-700 px-2 py-0.5 rounded-md text-xs" x-text="uploadQueue.filter(f => f.progress === 100).length + '/' + uploadQueue.length"></span>
-                
-                <button x-show="!isAllUploadsDone" @click.stop="isQueueMinimized = !isQueueMinimized" class="hover:text-blue-200 transition-colors w-6 h-6 flex items-center justify-center">
+                <span class="bg-blue-700 px-2 py-0.5 rounded-md text-xs"
+                    x-text="uploadQueue.filter(f => f.progress === 100).length + '/' + uploadQueue.length"></span>
+
+                <button x-show="!isAllUploadsDone" @click.stop="isQueueMinimized = !isQueueMinimized"
+                    class="hover:text-blue-200 transition-colors w-6 h-6 flex items-center justify-center">
                     <i class="fa-solid" :class="isQueueMinimized ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
                 </button>
 
-                <button x-show="isAllUploadsDone" @click.stop="uploadQueue = []; isQueueMinimized = false" class="hover:text-red-200 transition-colors w-6 h-6 flex items-center justify-center text-lg">
+                <button x-show="isAllUploadsDone" @click.stop="uploadQueue = []; isQueueMinimized = false"
+                    class="hover:text-red-200 transition-colors w-6 h-6 flex items-center justify-center text-lg">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
         </div>
 
-        <div x-show="!isQueueMinimized" x-transition class="max-h-60 overflow-y-auto p-3 space-y-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md">
+        <div x-show="!isQueueMinimized" x-transition
+            class="max-h-60 overflow-y-auto p-3 space-y-3 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md">
             <template x-for="task in uploadQueue" :key="task.id">
-                <div class="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm relative group transition-opacity" :class="task.isCancelled ? 'opacity-60' : ''">
+                <div class="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm relative group transition-opacity"
+                    :class="task.isCancelled ? 'opacity-60' : ''">
                     <div class="flex justify-between items-center text-xs mb-2">
-                        <span class="truncate w-[70%] font-medium text-slate-700 dark:text-slate-300" x-text="task.name" :class="task.isCancelled ? 'line-through' : ''"></span> 
-                        <span class="font-bold" :class="task.isCancelled ? 'text-red-500' : (task.progress === 100 ? 'text-emerald-500' : 'text-blue-600 dark:text-blue-400')" x-text="task.isCancelled ? 'Đã hủy' : task.progress + '%'"></span>
+                        <span class="truncate w-[70%] font-medium text-slate-700 dark:text-slate-300" x-text="task.name"
+                            :class="task.isCancelled ? 'line-through' : ''"></span>
+                        <span class="font-bold"
+                            :class="task.isCancelled ? 'text-red-500' : (task.progress === 100 ? 'text-emerald-500' : 'text-blue-600 dark:text-blue-400')"
+                            x-text="task.isCancelled ? 'Đã hủy' : task.progress + '%'"></span>
                     </div>
                     <div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
-                        <div class="h-1.5 rounded-full transition-all duration-300 ease-out" 
-                             :class="task.isCancelled ? 'bg-red-400' : (task.progress === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500')" 
-                             :style="`width: ${task.progress}%`"></div>
+                        <div class="h-1.5 rounded-full transition-all duration-300 ease-out"
+                            :class="task.isCancelled ? 'bg-red-400' : (task.progress === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500')"
+                            :style="`width: ${task.progress}%`"></div>
                     </div>
                     <div class="flex justify-between items-center mt-1.5">
-                        <div class="text-[10px] text-slate-400" x-text="task.statusText" :class="task.isCancelled ? 'text-red-400' : ''"></div>
-                        
-                        <button x-show="task.progress < 100 && !task.isCancelled" 
-                                @click="cancelUpload(task.id)" 
-                                class="text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 -mr-1 -mb-1">
+                        <div class="text-[10px] text-slate-400" x-text="task.statusText"
+                            :class="task.isCancelled ? 'text-red-400' : ''"></div>
+
+                        <button x-show="task.progress < 100 && !task.isCancelled" @click="cancelUpload(task.id)"
+                            class="text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 -mr-1 -mb-1">
                             <i class="fa-solid fa-circle-xmark text-sm"></i>
                         </button>
                     </div>
@@ -606,6 +927,7 @@
             </template>
         </div>
     </div>
-    
+
 </body>
+
 </html>

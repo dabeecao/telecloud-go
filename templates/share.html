@@ -16,6 +16,19 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+
+    <!-- SEO & Social Meta Tags -->
+    <meta name="description" content="Tải xuống tệp {{ .filename }} từ TeleCloud OS">
+    <meta property="og:title" content="{{ .filename }} - TeleCloud">
+    <meta property="og:description" content="Kích thước: {{ .size }} - Ngày tạo: {{ .created_at }}">
+    <meta property="og:type" content="website">
+    {{ if .has_thumb }}
+    <meta property="og:image" content="/s/{{ .token }}/thumb">
+    <meta name="twitter:card" content="summary_large_image">
+    {{ else }}
+    <meta property="og:image" content="/static/favicon.ico">
+    <meta name="twitter:card" content="summary">
+    {{ end }}
 </head>
 
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 relative overflow-x-hidden transition-colors duration-500" 
@@ -101,7 +114,12 @@
             </div>
 
             <footer class="mt-10 text-center relative z-10 opacity-60 hover:opacity-100 transition-opacity">
-                <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">Powered by <span class="font-bold text-blue-500">TeleCloud OS</span></p>
+                <div class="flex items-center justify-center gap-4 mb-2">
+                    <a href="https://github.com/dabeecao/telecloud-go" target="_blank" class="text-slate-500 hover:text-blue-500 transition-colors">
+                        <i class="fa-brands fa-github text-lg"></i>
+                    </a>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">Powered by <span class="font-bold text-blue-500">TeleCloud OS</span> &copy; 2026 <span class="text-blue-600 dark:text-blue-400">@dabeecao</span></p>
             </footer>
         </main>
     </div>

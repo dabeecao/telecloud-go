@@ -30,6 +30,7 @@ import (
 	"telecloud/database"
 	"telecloud/tgclient"
 	"telecloud/utils"
+	"telecloud/webdav"
 )
 
 //go:embed templates/* static/css/* static/js/* static/favicon.ico
@@ -65,6 +66,10 @@ func main() {
 	ctx := context.Background()
 
 	log.Println("Starting Telecloud on port " + cfg.Port + "...")
+
+	if cfg.WebdavEnabled {
+		go webdav.StartServer(cfg)
+	}
 
 	// Start telegram client run loop in the background and block on router.Run()
 	err := tgclient.Run(ctx, cfg, func(ctx context.Context) error {

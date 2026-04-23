@@ -17,6 +17,10 @@ type Config struct {
 	ThumbsDir       string
 	LogGroupID      string
 	Port            string
+	WebdavEnabled   bool
+	WebdavPort      string
+	WebdavUser      string
+	WebdavPassword  string
 }
 
 func Load() *Config {
@@ -45,6 +49,10 @@ func Load() *Config {
 		ThumbsDir:       getEnv("THUMBS_DIR", "static/thumbs"),
 		LogGroupID:      logGroupID,
 		Port:            getEnv("PORT", "8091"),
+		WebdavEnabled:   getEnv("WEBDAV_ENABLED", "false") == "true",
+		WebdavPort:      getEnv("WEBDAV_PORT", "8080"),
+		WebdavUser:      getEnv("WEBDAV_USER", "admin"),
+		WebdavPassword:  getEnv("WEBDAV_PASSWORD", "your_secure_password"),
 	}
 }
 

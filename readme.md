@@ -35,6 +35,7 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * ⬆️ Upload song song (Multi-threading) tốc độ cao
 * 📦 Upload chia nhỏ (chunk) để tối ưu tốc độ và ổn định
 * 👤 Hỗ trợ **Userbot** với **MTProto** mạnh mẽ (tải lên file lớn đến 2GB/4GB)
+* 📂 Hỗ trợ **WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ tiếng Việt và tiếng Anh ở giao diện sử dụng
 
 ---
@@ -72,6 +73,10 @@ Nội dung chính trong tệp `.env`:
 *   `MAX_UPLOAD_SIZE_MB`: Kích thước file tối đa được phép upload (nếu tài khoản Telegram của bạn là Premium thì có thể nâng lên 4096).
 *   `DATABASE_PATH`: Đường dẫn tới file database.
 *   `THUMBS_DIR`: Đường dẫn tới thư mục chứa ảnh thumbnail.
+*   `WEBDAV_ENABLED`: Bật/Tắt server WebDAV (`true` hoặc `false`).
+*   `WEBDAV_PORT`: Cổng chạy server WebDAV (ví dụ: `8080`).
+*   `WEBDAV_USER`: Tên đăng nhập WebDAV.
+*   `WEBDAV_PASSWORD`: Mật khẩu WebDAV.
 
 
 #### 🔑 Lấy API_ID và API_HASH

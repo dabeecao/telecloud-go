@@ -138,7 +138,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			chunkIndex, _ := strconv.Atoi(c.PostForm("chunk_index"))
 			totalChunks, _ := strconv.Atoi(c.PostForm("total_chunks"))
 
-			tempDir := filepath.Join(os.TempDir(), "telecloud_chunks")
+			tempDir := filepath.Join(os.TempDir(), "telecloud_temp_chunks")
 			os.MkdirAll(tempDir, os.ModePerm)
 			tempFilePath := filepath.Join(tempDir, taskID+"_"+filename)
 
@@ -147,9 +147,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			io.Copy(out, file)
+			_, err = io.Copy(out, file)
 			out.Close()
 
+			if totalChunks == 0 {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "totalChunks is 0"})
+				return
+			}
 			serverPercent := int((float64(chunkIndex+1) / float64(totalChunks)) * 100)
 			tgclient.UpdateTask(taskID, "uploading_to_server", serverPercent, "")
 

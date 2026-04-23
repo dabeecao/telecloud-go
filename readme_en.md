@@ -37,6 +37,7 @@ This project has been **completely rewritten in Golang** from the original proje
 * ⬆️ High-speed parallel uploads (multi-threading)
 * 📦 Chunked uploads for better speed and stability
 * 👤 Supports **Userbot** with powerful **MTProto** (upload files up to 2GB/4GB)
+* 📂 **WebDAV** Support: Mount TeleCloud as a network drive on your computer (Windows, macOS, Linux).
 * 🌐 **Multi-language**: Supports Vietnamese and English UI
 
 ---
@@ -81,6 +82,10 @@ Main fields in `.env`:
 * `MAX_UPLOAD_SIZE_MB`: Maximum upload file size (Premium accounts can go up to 4096MB)
 * `DATABASE_PATH`: Path to the database file
 * `THUMBS_DIR`: Directory for storing thumbnails
+* `WEBDAV_ENABLED`: Enable/Disable WebDAV server (`true` or `false`)
+* `WEBDAV_PORT`: Port for the WebDAV server (e.g., `8080`)
+* `WEBDAV_USER`: WebDAV username
+* `WEBDAV_PASSWORD`: WebDAV password
 
 ---
 

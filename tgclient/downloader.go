@@ -84,10 +84,20 @@ func (r *tgFileReader) Seek(offset int64, whence int) (int64, error) {
 
 func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filename string, size int64, cfg *config.Config) error {
 	ctx := c.Context()
+	reader, err := GetTelegramFileReader(ctx, msgID, size, cfg)
+	if err != nil {
+		return err
+	}
+
+	http.ServeContent(w, c, filename, time.Time{}, reader)
+	return nil
+}
+
+func GetTelegramFileReader(ctx context.Context, msgID int, size int64, cfg *config.Config) (io.ReadSeeker, error) {
 	api := Client.API()
 	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var msgs tg.MessageClassArray
@@ -101,7 +111,7 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filena
 			ID:      []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}},
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if m, ok := res.(*tg.MessagesChannelMessages); ok {
 			msgs = m.Messages
@@ -109,7 +119,7 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filena
 	} else {
 		res, err := api.MessagesGetMessages(ctx, []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if m, ok := res.(*tg.MessagesMessages); ok {
 			msgs = m.Messages
@@ -119,22 +129,22 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filena
 	}
 
 	if len(msgs) == 0 {
-		return fmt.Errorf("message not found")
+		return nil, fmt.Errorf("message not found")
 	}
 
 	msg, ok := msgs[0].(*tg.Message)
 	if !ok || msg.Media == nil {
-		return fmt.Errorf("message has no media")
+		return nil, fmt.Errorf("message has no media")
 	}
 
 	docMedia, ok := msg.Media.(*tg.MessageMediaDocument)
 	if !ok {
-		return fmt.Errorf("media is not a document")
+		return nil, fmt.Errorf("media is not a document")
 	}
 
 	doc, ok := docMedia.Document.(*tg.Document)
 	if !ok {
-		return fmt.Errorf("document is empty")
+		return nil, fmt.Errorf("document is empty")
 	}
 
 	loc := doc.AsInputDocumentFileLocation()
@@ -146,6 +156,5 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filena
 		size: size,
 	}
 
-	http.ServeContent(w, c, filename, time.Time{}, reader)
-	return nil
+	return reader, nil
 }

@@ -26,13 +26,19 @@ func Load() *Config {
 	}
 
 	apiID, _ := strconv.Atoi(os.Getenv("API_ID"))
+	apiHash := os.Getenv("API_HASH")
+
+	if apiID == 0 || apiHash == "" {
+		log.Fatal("Error: API_ID and API_HASH must be set in .env. Please get them from https://my.telegram.org")
+	}
+
 	maxUploadSizeMB, _ := strconv.Atoi(getEnv("MAX_UPLOAD_SIZE_MB", "2048"))
 
 	logGroupID := os.Getenv("LOG_GROUP_ID")
 
 	return &Config{
 		APIID:           apiID,
-		APIHash:         os.Getenv("API_HASH"),
+		APIHash:         apiHash,
 		AdminPassword:   getEnv("ADMIN_PASSWORD", "telecloud_secret"),
 		MaxUploadSizeMB: maxUploadSizeMB,
 		DatabasePath:    getEnv("DATABASE_PATH", "database.db"),

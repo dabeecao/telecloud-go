@@ -171,13 +171,23 @@ git clone https://github.com/dabeecao/telecloud-go.git
 go mod tidy
 ```
 
-5. Run:
+5. Build UI (Tailwind CSS):
+
+```bash
+curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
+chmod +x tailwindcss-linux-x64
+mv tailwindcss-linux-x64 tailwindcss
+chmod +x build-css.sh
+./build-css.sh
+```
+
+6. Run:
 
 ```bash
 go run .
 ```
 
-6. Or build binary:
+7. Or build binary:
 
 ```bash
 go build -o telecloud

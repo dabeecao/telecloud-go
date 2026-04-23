@@ -7,33 +7,8 @@
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/static/favicon.ico" type="image/x-icon">
     
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'media',
-            theme: {
-                extend: {
-                    fontFamily: { sans: ['Nunito', 'sans-serif'] },
-                    animation: { 
-                        'toast-in': 'toastEnter 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
-                        'modal-in': 'modalEnter 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
-                        'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite'
-                    },
-                    keyframes: {
-                        toastEnter: {
-                            '0%': { transform: 'translate(-50%, -150%) scale(0.5)', opacity: '0' },
-                            '100%': { transform: 'translate(-50%, 0) scale(1)', opacity: '1' }
-                        },
-                        modalEnter: {
-                            '0%': { transform: 'scale(0.95)', opacity: '0' },
-                            '100%': { transform: 'scale(1)', opacity: '1' }
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    
+    <link rel="stylesheet" href="/static/css/tailwind.css">
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     
     <link rel="stylesheet" href="/static/css/style.css">

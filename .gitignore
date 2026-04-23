@@ -37,10 +37,10 @@ Thumbs.db
 *.swp
 *.swo
 
-# Go dependencies and temporary files
+# Go dependencies
 vendor/
-go.sum
-# Note: It's generally recommended to keep go.sum, but some prefer to ignore it. 
-# In this project, we'll keep go.sum for stability. 
-# Removing go.sum from ignore list:
-#!go.sum
+
+# Tailwind & Frontend
+tailwindcss
+static/css/tailwind.css
+node_modules/

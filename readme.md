@@ -140,11 +140,20 @@ Nếu bạn muốn tự biên dịch dự án, hãy làm theo các bước sau:
 
 3.  Cấu hình `.env` như hướng dẫn trên.
 
-4. Chạy lệnh ``` go mod tidy``` để tải về các thư viện cần thiết.
+4. Chạy lệnh `go mod tidy` để tải về các thư viện cần thiết.
 
-5.  Chạy trực tiếp: ```go run .```
+5. Build giao diện (Tailwind CSS):
+   ```bash
+   curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
+   chmod +x tailwindcss-linux-x64
+   mv tailwindcss-linux-x64 tailwindcss
+   chmod +x build-css.sh
+   ./build-css.sh
+   ```
 
-6.  Hoặc build binary: ```go build -o telecloud```
+6.  Chạy trực tiếp: `go run .`
+
+7.  Hoặc build binary: `go build -o telecloud`
 
 ---
 

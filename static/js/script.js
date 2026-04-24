@@ -117,6 +117,12 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             if (task && task.progress < 100) {
                 task.isCancelled = true;
                 task.statusText = this.t('cancelled');
+                
+                // Notify backend to cancel the task and clean up temporary files
+                let fd = new FormData();
+                fd.append('task_id', taskId);
+                fd.append('filename', task.name);
+                fetch('/api/cancel_upload', { method: 'POST', body: fd }).catch(e => console.error("Cancel failed:", e));
             }
         },
         toastModal: { show: false, message: '', type: 'success' },
@@ -125,7 +131,26 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         fileInfoModal: { show: false, file: null, typeName: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '' },
         modal: { show: false, type: 'alert', title: '', message: '', input: '', resolve: null, isDanger: false },
         contextMenu: { show: false, x: 0, y: 0, file: null },
-        init() { if (this.isLoggedIn) this.fetchFiles(false); },
+        init() { 
+            if (this.isLoggedIn) {
+                this.fetchFiles(false);
+                this.checkUpdate();
+            }
+        },
+        async checkUpdate() {
+            try {
+                const res = await fetch('https://api.github.com/repos/dabeecao/telecloud-go/releases/latest');
+                if (res.ok) {
+                    const data = await res.json();
+                    const latestVersion = data.tag_name;
+                    const currentVersion = TeleCloud.version || 'v1.0.0';
+                    if (latestVersion && latestVersion !== currentVersion) {
+                        const confirmed = await this.customConfirm(this.t('update_title'), this.t('update_msg') + ` (${latestVersion})`, false);
+                        if (confirmed) window.open(data.html_url, '_blank');
+                    }
+                }
+            } catch (e) { console.error('Failed to check for updates', e); }
+        },
         showUIModal(type, title, message = '', defaultValue = '', isDanger = false) {
             return new Promise((resolve) => {
                 this.modal = { show: true, type, title, message, input: defaultValue, resolve, isDanger };
@@ -316,7 +341,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac'];
             const mimeTypes = { 'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg', 'mov': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac', 'm4a': 'audio/mp4' };
             let isMedia = false; let mediaHtml = ''; let playerTarget = null;
-            const streamUrl = `/download/${file.id}`;
+            const streamUrl = `/api/files/${file.id}/stream`;
             const thumbUrl = `/api/files/${file.id}/thumb`;
             if (imgExts.includes(ext)) { mediaHtml = '<img src="' + streamUrl + '" alt="' + file.filename + '" class="max-h-64 object-contain rounded-[1rem] w-full shadow-md">'; isMedia = true; } 
             else if (videoExts.includes(ext)) {

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="vi" class="h-full">
 
 <head>
     <meta charset="UTF-8">
@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="/static/css/style.css">
 
     <script src="/static/js/common.js"></script>
+    <script>TeleCloud.version = '{{ .version }}';</script>
     <script src="/static/js/script.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
@@ -34,7 +35,7 @@
 </head>
 
 <body
-    class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 min-h-[100dvh] relative overflow-hidden flex transition-colors duration-500"
+    class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 h-full relative overflow-hidden flex flex-col transition-colors duration-500"
     x-data="cloudApp({{ if .logged_in }}true{{ else }}false{{ end }}, {{ .max_upload_size_mb }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}')"
     @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="handleDrop($event)">
 
@@ -292,79 +293,111 @@
         </div>
     </div>
 
-    <div x-show="isLoggedIn" x-cloak class="flex flex-col w-full h-[100dvh] z-10 p-0 md:p-4 pb-0" x-transition.opacity>
-        <main class="flex-1 flex flex-col h-full glass-panel md:rounded-[2rem] relative overflow-hidden"
+    <div x-show="isLoggedIn" x-cloak class="fixed inset-0 flex flex-col w-full z-10 p-0 md:p-4 md:pb-0 overflow-hidden" x-transition.opacity>
+        <main class="flex-1 flex flex-col h-full min-h-0 glass-panel md:rounded-[2rem] relative overflow-hidden"
             @contextmenu.prevent="if(event.target === $el) openContextMenu(event, null)">
-
             <header
-                class="flex items-center justify-between p-3 md:p-6 border-b border-slate-200 dark:border-white/5 bg-white/30 dark:bg-slate-900/30 gap-2 sm:gap-4 h-[72px] sm:h-auto shrink-0">
-                <div class="flex items-center gap-1 flex-1 overflow-hidden">
-                    <div
-                        class="flex items-center text-sm md:text-base font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap overflow-x-auto hide-scrollbar w-full">
-                        <button @click="navigateTo('/')"
-                            class="hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-1.5 px-2 py-1 rounded-lg shrink-0">
-                            <i class="fa-solid fa-house text-base"></i>
-                            <span class="hidden sm:inline">TeleCloud</span>
+                class="flex items-center justify-between p-3 md:px-6 md:py-4 border-b border-slate-200 dark:border-white/5 bg-white/30 dark:bg-slate-900/30 gap-4 shrink-0">
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-cloud text-blue-600 dark:text-blue-400 text-2xl"></i>
+                            <span class="font-bold text-lg hidden sm:block">TeleCloud</span>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-1 bg-slate-200/50 dark:bg-slate-800/50 p-1 rounded-xl">
+                            <button @click="currentTab = 'files'" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all" :class="currentTab === 'files' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'">
+                                <i class="fa-solid fa-folder-open mr-1.5"></i><span x-text="t('home')"></span>
+                            </button>
+                            <template x-if="webdavEnabled">
+                                <button @click="currentTab = 'webdav'" class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all" :class="currentTab === 'webdav' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'">
+                                    <i class="fa-solid fa-network-wired mr-1.5"></i><span x-text="t('webdav_guide')"></span>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+                        <button @click="toggleLang"
+                            class="h-9 sm:h-10 px-2 sm:px-3 flex items-center gap-2 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-blue-100 dark:hover:border-blue-900 transition-colors"
+                            :title="t('lang_' + (lang === 'vi' ? 'en' : 'vi'))">
+                            <i class="fa-solid fa-earth-americas text-base sm:text-lg"></i>
+                            <span class="text-xs sm:text-sm font-bold uppercase" x-text="lang"></span>
+                        </button>
+                        <button @click="logout" :title="t('logout')"
+                            class="w-9 h-9 sm:w-auto sm:p-2.5 flex items-center justify-center text-slate-500 hover:text-red-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-red-100 dark:hover:border-red-900 transition-colors">
+                            <i class="fa-solid fa-arrow-right-from-bracket text-lg"></i>
+                        </button>
+                    </div>
+                </header>
+                <div x-show="currentTab === 'files'" class="flex items-center justify-between px-3 md:px-6 py-2 border-b border-slate-200 dark:border-white/5 bg-white/10 dark:bg-slate-900/10 gap-2 overflow-x-auto hide-scrollbar shrink-0">
+                    <div class="flex items-center text-sm font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        <button @click="navigateTo('/')" class="hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-1.5 px-2 py-1 rounded-lg">
+                            <i class="fa-solid fa-house"></i>
                         </button>
                         <template x-for="(part, index) in getBreadcrumbs()" :key="index">
-                            <div class="flex items-center shrink-0">
+                            <div class="flex items-center">
                                 <i class="fa-solid fa-chevron-right text-[10px] text-slate-400 mx-1"></i>
-                                <button @click="navigateToIndex(index)"
-                                    class="hover:text-blue-600 dark:hover:text-blue-400 transition px-2 py-1 rounded-lg max-w-[100px] sm:max-w-[150px] truncate"
-                                    x-text="part"></button>
+                                <button @click="navigateToIndex(index)" class="hover:text-blue-600 dark:hover:text-blue-400 transition px-2 py-1 rounded-lg max-w-[100px] sm:max-w-[150px] truncate" x-text="part"></button>
                             </div>
                         </template>
                     </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button @click="fetchFiles()" :title="t('refresh')"
+                            class="h-8 w-8 flex items-center justify-center text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-lg transition-colors"
+                            :class="isRefreshing ? 'animate-spin text-blue-500' : ''">
+                            <i class="fa-solid fa-arrows-rotate"></i>
+                        </button>
+                        <button @click="createNewFolder"
+                            class="hidden sm:flex px-3 py-1.5 bg-white/50 dark:bg-slate-800 text-slate-700 dark:text-white border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-semibold items-center gap-2 transition-colors">
+                            <i class="fa-solid fa-folder-plus"></i><span class="hidden lg:inline" x-text="t('new_folder')"></span>
+                        </button>
+                        <button @click="uploadModal = true"
+                            class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm shadow-md shadow-blue-500/25 font-semibold flex items-center gap-2 transition-all">
+                            <i class="fa-solid fa-cloud-arrow-up"></i><span class="hidden sm:inline" x-text="t('upload')"></span>
+                        </button>
+                    </div>
                 </div>
-                <div class="flex items-center gap-1.5 sm:gap-3 shrink-0">
-                    <button @click="toggleLang"
-                        class="h-9 sm:h-10 px-2 sm:px-3 flex items-center gap-2 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-blue-100 dark:hover:border-blue-900 transition-colors"
-                        :title="t('lang_' + (lang === 'vi' ? 'en' : 'vi'))">
-                        <i class="fa-solid fa-earth-americas text-base sm:text-lg"></i>
-                        <span class="text-xs sm:text-sm font-bold uppercase" x-text="lang"></span>
-                    </button>
-                    <button x-show="currentTab === 'files'" @click="createNewFolder"
-                        class="hidden sm:flex px-4 py-2 bg-white/50 dark:bg-slate-800 text-slate-700 dark:text-white border border-slate-200 dark:border-slate-700 rounded-xl font-semibold items-center gap-2 transition-colors"><i
-                            class="fa-solid fa-folder-plus"></i><span class="hidden lg:inline"
-                            x-text="t('new_folder')"></span></button>
-                    <button x-show="currentTab === 'files'" @click="uploadModal = true"
-                        class="px-3 py-2 sm:px-5 sm:py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-lg font-semibold flex items-center gap-2 transition-all"><i
-                            class="fa-solid fa-cloud-arrow-up"></i><span class="hidden sm:inline"
-                            x-text="t('upload')"></span></button>
-                    <button @click="fetchFiles()" :title="t('refresh')"
-                        class="h-9 sm:h-10 px-2 sm:px-3 flex items-center justify-center text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-blue-100 dark:hover:border-blue-900 transition-colors"
-                        :class="isRefreshing ? 'animate-spin text-blue-500' : ''">
-                        <i class="fa-solid fa-arrows-rotate text-lg"></i>
-                    </button>
-                    <button @click="logout" :title="t('logout')"
-                        class="w-9 h-9 sm:w-auto sm:p-2.5 flex items-center justify-center text-slate-500 hover:text-red-500 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-transparent hover:border-red-100 dark:hover:border-red-900 transition-colors">
-                        <i class="fa-solid fa-arrow-right-from-bracket text-lg"></i>
-                    </button>
+                <div x-show="isRefreshing" x-cloak
+                    class="h-1 w-full bg-slate-200 dark:bg-slate-800 overflow-hidden absolute z-20">
+                    <div class="h-full bg-blue-500 w-1/3 animate-pulse-fast transform translate-x-[-100%] transition-transform duration-1000"
+                        style="animation: indeterminate 1.5s infinite linear;"></div>
                 </div>
-            </header>
 
-            <div x-show="isRefreshing" x-cloak
-                class="h-1 w-full bg-slate-200 dark:bg-slate-800 overflow-hidden absolute z-20">
-                <div class="h-full bg-blue-500 w-1/3 animate-pulse-fast transform translate-x-[-100%] transition-transform duration-1000"
-                    style="animation: indeterminate 1.5s infinite linear;"></div>
-            </div>
-            <div
-                class="flex items-center px-4 md:px-6 pt-2 gap-4 border-b border-slate-200 dark:border-white/5 bg-white/10 dark:bg-slate-900/10">
-                <button @click="currentTab = 'files'"
-                    class="px-4 py-2 text-sm font-bold transition-all border-b-2 relative -bottom-[1px]"
-                    :class="currentTab === 'files' ? 'text-blue-600 border-blue-600' : 'text-slate-500 border-transparent hover:text-slate-700 dark:hover:text-slate-300'">
-                    <i class="fa-solid fa-folder-open mr-2"></i><span x-text="t('home')"></span>
-                </button>
-                <template x-if="webdavEnabled">
-                    <button @click="currentTab = 'webdav'"
-                        class="px-4 py-2 text-sm font-bold transition-all border-b-2 relative -bottom-[1px]"
-                        :class="currentTab === 'webdav' ? 'text-blue-600 border-blue-600' : 'text-slate-500 border-transparent hover:text-slate-700 dark:hover:text-slate-300'">
-                        <i class="fa-solid fa-network-wired mr-2"></i><span x-text="t('webdav_guide')"></span>
-                    </button>
-                </template>
-            </div>
+                <div x-show="currentTab === 'files'" class="flex flex-col shrink-0 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-white/5 z-30">
+                    <!-- Search Bar -->
+                    <div class="px-3 md:px-6 py-3">
+                        <div class="relative group">
+                            <div class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+                                <i class="fa-solid fa-magnifying-glass text-slate-400 group-focus-within:text-blue-500 transition-colors"></i>
+                            </div>
+                            <input type="text" x-model="searchQuery" @input="currentPage = 1"
+                                :placeholder="t('search_placeholder')"
+                                class="w-full pl-11 pr-10 py-2.5 rounded-xl bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:bg-white dark:focus:bg-slate-800 text-slate-800 dark:text-slate-200 transition-all shadow-sm text-sm">
+                            <button x-show="searchQuery" @click="searchQuery = ''; currentPage = 1"
+                                class="absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                                x-cloak>
+                                <i class="fa-solid fa-circle-xmark text-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Unified Table Header -->
+                    <div x-show="files.length > 0 && !isLoading" class="grid grid-cols-12 gap-4 px-4 md:px-10 py-3 text-[10px] md:text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-t border-slate-200/50 dark:border-white/5">
+                        <div class="col-span-8 md:col-span-5 flex items-center gap-3">
+                            <input type="checkbox" class="w-4 h-4 accent-blue-600 cursor-pointer rounded"
+                                @change="
+                                let pageIds = displayedFiles.map(f => f.id); 
+                                selectedIds = $event.target.checked 
+                                    ? [...new Set([...selectedIds, ...pageIds])] 
+                                    : selectedIds.filter(id => !pageIds.includes(id))
+                            "
+                                :checked="displayedFiles.length > 0 && displayedFiles.every(f => selectedIds.includes(f.id))">
+                            <span x-text="t('name_placeholder')"></span>
+                        </div>
+                        <div class="col-span-3 hidden md:block" x-text="t('date')"></div>
+                        <div class="col-span-2 hidden md:block" x-text="t('size')"></div>
+                        <div class="col-span-4 md:col-span-2 text-right md:text-center" x-text="t('actions')"></div>
+                    </div>
+                </div>
 
-            <div class="flex-1 overflow-y-auto p-2 md:p-6 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6 relative"
+            <div class="flex-1 min-h-0 overflow-y-auto p-2 md:p-6 md:pt-2 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-6 relative"
                 @click.self="closeContextMenu">
 
                 <div x-show="currentTab === 'webdav' && webdavEnabled" x-cloak
@@ -405,18 +438,22 @@
                                 </div>
                                 <div class="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label
-                                            class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block"
-                                            x-text="t('webdav_user')"></label>
-                                        <div class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-sm truncate"
-                                            x-text="webdavUser"></div>
+                                        <label class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block" x-text="t('webdav_user')"></label>
+                                        <div class="flex items-center gap-2 group">
+                                            <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-sm truncate" x-text="webdavUser"></div>
+                                            <button @click="navigator.clipboard.writeText(webdavUser); showToast(t('toast_copied', {t: 'Username'}), 'success')" class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white transition-all shrink-0">
+                                                <i class="fa-solid fa-copy"></i>
+                                            </button>
+                                        </div>
                                     </div>
                                     <div>
-                                        <label
-                                            class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block"
-                                            x-text="t('webdav_pass')"></label>
-                                        <div class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-sm truncate"
-                                            x-text="webdavPassword"></div>
+                                        <label class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block" x-text="t('webdav_pass')"></label>
+                                        <div class="flex items-center gap-2 group">
+                                            <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-sm truncate" x-text="webdavPassword"></div>
+                                            <button @click="navigator.clipboard.writeText(webdavPassword); showToast(t('toast_copied', {t: 'Password'}), 'success')" class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white transition-all shrink-0">
+                                                <i class="fa-solid fa-copy"></i>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -426,28 +463,28 @@
                             <div class="glass-panel p-6 rounded-3xl border border-white/10 flex-1">
                                 <h3 class="text-lg font-bold mb-4 flex items-center gap-2">
                                     <i class="fa-solid fa-list-check text-blue-500"></i>
-                                    <span>Hệ điều hành hỗ trợ</span>
+                                    <span x-text="t('webdav_os_support')"></span>
                                 </h3>
                                 <ul class="space-y-3 text-sm text-slate-600 dark:text-slate-400">
                                     <li class="flex items-center gap-2">
                                         <i class="fa-brands fa-windows text-blue-500 w-5"></i>
-                                        <span>Windows (Map Network Drive / RaiDrive)</span>
+                                        <span x-text="t('webdav_win')"></span>
                                     </li>
                                     <li class="flex items-center gap-2">
                                         <i class="fa-brands fa-apple w-5"></i>
-                                        <span>macOS (Connect to Server / Finder)</span>
+                                        <span x-text="t('webdav_mac')"></span>
                                     </li>
                                     <li class="flex items-center gap-2">
                                         <i class="fa-solid fa-mobile-screen w-5"></i>
-                                        <span>iOS/iPadOS (Files App / Tệp)</span>
+                                        <span x-text="t('webdav_ios')"></span>
                                     </li>
                                     <li class="flex items-center gap-2">
                                         <i class="fa-brands fa-linux text-orange-500 w-5"></i>
-                                        <span>Linux (Nautilus / Dolphin)</span>
+                                        <span x-text="t('webdav_linux')"></span>
                                     </li>
                                     <li class="flex items-center gap-2">
                                         <i class="fa-brands fa-android text-emerald-500 w-5"></i>
-                                        <span>Android (Solid Explorer / Owlfiles)</span>
+                                        <span x-text="t('webdav_android')"></span>
                                     </li>
                                 </ul>
                             </div>
@@ -469,20 +506,7 @@
                     </div>
 
                     <div x-show="!isLoading" x-transition.opacity>
-                        <div class="mb-4 relative group">
-                            <div class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
-                                <i
-                                    class="fa-solid fa-magnifying-glass text-slate-400 group-focus-within:text-blue-500 transition-colors"></i>
-                            </div>
-                            <input type="text" x-model="searchQuery" @input="currentPage = 1"
-                                :placeholder="t('search_placeholder')"
-                                class="w-full pl-11 pr-10 py-3 rounded-2xl bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:bg-white dark:focus:bg-slate-800 text-slate-800 dark:text-slate-200 transition-all shadow-sm backdrop-blur-md">
-                            <button x-show="searchQuery" @click="searchQuery = ''; currentPage = 1"
-                                class="absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                                x-cloak>
-                                <i class="fa-solid fa-circle-xmark text-lg"></i>
-                            </button>
-                        </div>
+
                         <div x-show="clipboard.ids.length > 0" x-cloak
                             class="mb-4 p-4 md:p-5 rounded-2xl bg-blue-50 dark:bg-indigo-500/10 border border-blue-200 dark:border-indigo-500/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 backdrop-blur-md"
                             x-transition.scale.origin.top>
@@ -506,25 +530,6 @@
                         </div>
 
                         <div class="w-full text-left border-collapse relative">
-                            <div
-                                class="grid grid-cols-12 gap-4 px-4 py-3 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700/50 sticky top-0 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md z-20">
-                                <div class="col-span-8 md:col-span-5 flex items-center gap-3">
-                                    <input type="checkbox" class="w-4 h-4 accent-blue-600 cursor-pointer rounded"
-                                        @change="
-                                        let pageIds = displayedFiles.map(f => f.id); 
-                                        selectedIds = $event.target.checked 
-                                            ? [...new Set([...selectedIds, ...pageIds])] 
-                                            : selectedIds.filter(id => !pageIds.includes(id))
-                                    "
-                                        :checked="displayedFiles.length > 0 && displayedFiles.every(f => selectedIds.includes(f.id))">
-                                    <span x-text="t('name_placeholder')"></span>
-                                </div>
-                                <div class="col-span-3 hidden md:block" x-text="t('date')"></div>
-                                <div class="col-span-2 hidden md:block" x-text="t('size')"></div>
-                                <div class="col-span-4 md:col-span-2 text-right md:text-center" x-text="t('actions')">
-                                </div>
-                            </div>
-
                             <div class="space-y-1.5 mt-2">
                                 <template x-for="file in displayedFiles" :key="file.id">
                                     <div class="group relative grid grid-cols-12 gap-4 px-3 md:px-4 py-2 md:py-3 items-center rounded-2xl hover:bg-white/60 dark:hover:bg-slate-800/50 transition-all border border-transparent"
@@ -709,8 +714,9 @@
                         </div>
                     </div>
                 </div>
-                <footer
-                    class="hidden md:flex items-center justify-between p-4 px-6 border-t border-slate-200 dark:border-white/5 bg-white/20 dark:bg-slate-900/20 text-xs text-slate-500 dark:text-slate-400">
+            </div>
+            <footer
+                    class="hidden md:flex items-center justify-between p-3 px-6 border-t border-slate-200 dark:border-white/5 bg-white/20 dark:bg-slate-900/20 text-xs text-slate-500 dark:text-slate-400 mt-auto shrink-0">
                     <div class="flex items-center gap-4">
                         <div class="flex items-center gap-1.5">
                             <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
@@ -735,21 +741,32 @@
                                 <span>GitHub</span>
                             </a>
                         </div>
-                        <p class="font-medium">&copy; 2026 <span
+                        <p class="font-medium">TeleCloud <span class="font-bold text-slate-700 dark:text-slate-300" x-text="TeleCloud.version"></span> &copy; 2026 <span
                                 class="text-blue-600 dark:text-blue-400">@dabeecao</span></p>
                     </div>
                 </footer>
-        </main>
+            </main>
+    </div>
 
         <nav
             class="md:hidden fixed bottom-0 left-0 w-full glass-menu z-40 border-t border-slate-200 dark:border-white/10 pb-safe rounded-t-[2rem]">
             <div class="flex justify-around items-center p-2 relative">
 
                 <button @click="navigateTo('/'); currentTab = 'files'"
-                    class="flex-1 flex flex-col items-center gap-1.5 py-2 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                    class="flex-1 flex flex-col items-center gap-1.5 py-2 transition-colors"
+                    :class="currentTab === 'files' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'">
                     <i class="fa-solid fa-house text-xl"></i><span class="text-[10px] font-semibold"
                         x-text="t('home')"></span>
                 </button>
+
+                <template x-if="webdavEnabled">
+                    <button @click="currentTab = 'webdav'"
+                        class="flex-1 flex flex-col items-center gap-1.5 py-2 transition-colors"
+                        :class="currentTab === 'webdav' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'">
+                        <i class="fa-solid fa-network-wired text-xl"></i><span class="text-[10px] font-semibold"
+                            x-text="t('webdav_guide')"></span>
+                    </button>
+                </template>
 
                 <div class="flex-1 flex justify-center relative -top-6" x-data="{ showMobileAdd: false }"
                     @click.outside="showMobileAdd = false">

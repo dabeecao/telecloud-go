@@ -20,7 +20,12 @@ import (
 
 var (
 	UploadTasks = make(map[string]*UploadStatus)
+	TaskCancels = make(map[string]context.CancelFunc)
 	taskMutex   sync.Mutex
+
+	resolvedPeer   tg.InputPeerClass
+	resolvedPeerID string
+	resolvedPeerMu sync.RWMutex
 )
 
 type UploadStatus struct {
@@ -48,55 +53,99 @@ func GetTask(taskID string) *UploadStatus {
 	return &UploadStatus{Status: "pending", Percent: 0}
 }
 
+func CancelTask(taskID string) {
+	taskMutex.Lock()
+	defer taskMutex.Unlock()
+	if cancel, ok := TaskCancels[taskID]; ok {
+		cancel()
+		delete(TaskCancels, taskID)
+	}
+	if task, ok := UploadTasks[taskID]; ok {
+		task.Status = "error"
+		task.Message = "Upload cancelled"
+	}
+}
+
 func resolveLogGroup(ctx context.Context, api *tg.Client, logGroupIDStr string) (tg.InputPeerClass, error) {
+	resolvedPeerMu.RLock()
+	if resolvedPeerID == logGroupIDStr && resolvedPeer != nil {
+		p := resolvedPeer
+		resolvedPeerMu.RUnlock()
+		return p, nil
+	}
+	resolvedPeerMu.RUnlock()
+
+	resolvedPeerMu.Lock()
+	defer resolvedPeerMu.Unlock()
+
+	// Double check
+	if resolvedPeerID == logGroupIDStr && resolvedPeer != nil {
+		return resolvedPeer, nil
+	}
+
+	var peer tg.InputPeerClass
+	var err error
+
 	if logGroupIDStr == "me" || logGroupIDStr == "self" {
-		return &tg.InputPeerSelf{}, nil
-	}
+		peer = &tg.InputPeerSelf{}
+	} else {
+		logGroupID, errParse := strconv.ParseInt(logGroupIDStr, 10, 64)
+		if errParse != nil {
+			return nil, fmt.Errorf("invalid LOG_GROUP_ID: %v", errParse)
+		}
 
-	logGroupID, err := strconv.ParseInt(logGroupIDStr, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid LOG_GROUP_ID: %v", err)
-	}
-
-	if logGroupID < 0 {
-		strID := strconv.FormatInt(logGroupID, 10)
-		if strings.HasPrefix(strID, "-100") {
-			channelID, _ := strconv.ParseInt(strID[4:], 10, 64)
-			dialogs, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-				OffsetPeer: &tg.InputPeerEmpty{},
-				Limit:      100,
-			})
-			if err == nil {
-				switch d := dialogs.(type) {
-				case *tg.MessagesDialogs:
-					for _, chat := range d.Chats {
-						if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
-							return &tg.InputPeerChannel{
-								ChannelID:  c.ID,
-								AccessHash: c.AccessHash,
-							}, nil
+		if logGroupID < 0 {
+			strID := strconv.FormatInt(logGroupID, 10)
+			if strings.HasPrefix(strID, "-100") {
+				channelID, _ := strconv.ParseInt(strID[4:], 10, 64)
+				dialogs, errDlg := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+					OffsetPeer: &tg.InputPeerEmpty{},
+					Limit:      100,
+				})
+				if errDlg == nil {
+					switch d := dialogs.(type) {
+					case *tg.MessagesDialogs:
+						for _, chat := range d.Chats {
+							if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
+								peer = &tg.InputPeerChannel{
+									ChannelID:  c.ID,
+									AccessHash: c.AccessHash,
+								}
+								break
+							}
+						}
+					case *tg.MessagesDialogsSlice:
+						for _, chat := range d.Chats {
+							if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
+								peer = &tg.InputPeerChannel{
+									ChannelID:  c.ID,
+									AccessHash: c.AccessHash,
+								}
+								break
+							}
 						}
 					}
-				case *tg.MessagesDialogsSlice:
-					for _, chat := range d.Chats {
-						if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
-							return &tg.InputPeerChannel{
-								ChannelID:  c.ID,
-								AccessHash: c.AccessHash,
-							}, nil
-						}
-					}
+				} else {
+					err = errDlg
 				}
+			} else {
+				peer = &tg.InputPeerChat{ChatID: -logGroupID}
 			}
 		} else {
-			chatID := -logGroupID
-			return &tg.InputPeerChat{ChatID: chatID}, nil
+			peer = &tg.InputPeerUser{UserID: logGroupID}
 		}
-	} else {
-		return &tg.InputPeerUser{UserID: logGroupID}, nil
 	}
-	
-	return nil, fmt.Errorf("could not resolve peer for ID %s", logGroupIDStr)
+
+	if err != nil {
+		return nil, err
+	}
+	if peer == nil {
+		return nil, fmt.Errorf("could not resolve peer for ID %s", logGroupIDStr)
+	}
+
+	resolvedPeer = peer
+	resolvedPeerID = logGroupIDStr
+	return peer, nil
 }
 
 type uploadProgress struct {
@@ -112,6 +161,18 @@ func (p uploadProgress) Chunk(ctx context.Context, state uploader.ProgressState)
 }
 
 func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config) {
+	ctx, cancel := context.WithCancel(ctx)
+	taskMutex.Lock()
+	TaskCancels[taskID] = cancel
+	taskMutex.Unlock()
+
+	defer func() {
+		taskMutex.Lock()
+		delete(TaskCancels, taskID)
+		taskMutex.Unlock()
+		cancel()
+	}()
+
 	UpdateTask(taskID, "telegram", 0, "")
 
 	api := Client.API()

@@ -5,12 +5,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"telecloud/config"
 
 	"github.com/gotd/td/tg"
 )
+
+var (
+	locationCache = make(map[int]*cachedLocation)
+	cacheMutex    sync.RWMutex
+)
+
+type cachedLocation struct {
+	loc       *tg.InputDocumentFileLocation
+	expiresAt time.Time
+}
 
 type tgFileReader struct {
 	ctx         context.Context
@@ -84,16 +95,39 @@ func (r *tgFileReader) Seek(offset int64, whence int) (int64, error) {
 
 func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filename string, size int64, cfg *config.Config) error {
 	ctx := c.Context()
+	
+	// Add some logging for debugging Range requests
+	if rangeHeader := c.Header.Get("Range"); rangeHeader != "" {
+		fmt.Printf("[Stream] Range request for %s: %s\n", filename, rangeHeader)
+	}
+
 	reader, err := GetTelegramFileReader(ctx, msgID, size, cfg)
 	if err != nil {
 		return err
 	}
 
+	// Set Accept-Ranges explicitly just in case
+	w.Header().Set("Accept-Ranges", "bytes")
+	
 	http.ServeContent(w, c, filename, time.Time{}, reader)
 	return nil
 }
 
 func GetTelegramFileReader(ctx context.Context, msgID int, size int64, cfg *config.Config) (io.ReadSeeker, error) {
+	// Check cache first
+	cacheMutex.RLock()
+	cached, ok := locationCache[msgID]
+	cacheMutex.RUnlock()
+
+	if ok && time.Now().Before(cached.expiresAt) {
+		return &tgFileReader{
+			ctx:  ctx,
+			api:  Client.API(),
+			loc:  cached.loc,
+			size: size,
+		}, nil
+	}
+
 	api := Client.API()
 	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
 	if err != nil {
@@ -149,6 +183,14 @@ func GetTelegramFileReader(ctx context.Context, msgID int, size int64, cfg *conf
 
 	loc := doc.AsInputDocumentFileLocation()
 	
+	// Cache the location for 1 hour
+	cacheMutex.Lock()
+	locationCache[msgID] = &cachedLocation{
+		loc:       loc,
+		expiresAt: time.Now().Add(1 * time.Hour),
+	}
+	cacheMutex.Unlock()
+
 	reader := &tgFileReader{
 		ctx:  ctx,
 		api:  api,

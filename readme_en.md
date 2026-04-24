@@ -82,6 +82,7 @@ Main fields in `.env`:
 * `MAX_UPLOAD_SIZE_MB`: Maximum upload file size (Premium accounts can go up to 4096MB)
 * `DATABASE_PATH`: Path to the database file
 * `THUMBS_DIR`: Directory for storing thumbnails
+* `TEMP_DIR`: Path to the temporary directory for storing file chunks during the upload process
 * `WEBDAV_ENABLED`: Enable/Disable WebDAV server (`true` or `false`)
 * `WEBDAV_USER`: WebDAV username
 * `WEBDAV_PASSWORD`: WebDAV password

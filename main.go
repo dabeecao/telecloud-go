@@ -24,6 +24,7 @@ import (
 	"embed"
 	"flag"
 	"log"
+	"os"
 
 	"telecloud/api"
 	"telecloud/config"
@@ -36,7 +37,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "dev"
+	version = "v1.2.0"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -52,7 +53,11 @@ func main() {
 	}
 
 	cfg := config.Load()
+	cfg.Version = version
 	database.InitDB(cfg.DatabasePath)
+	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
+		log.Printf("Warning: Could not create TempDir: %v\n", err)
+	}
 	utils.InitCrypto(cfg.AdminPassword)
 	utils.InitMedia(cfg.ThumbsDir)
 

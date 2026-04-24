@@ -30,10 +30,15 @@ var DB *sqlx.DB
 
 func InitDB(dbPath string) {
 	var err error
-	DB, err = sqlx.Connect("sqlite", dbPath)
+	// Add PRAGMA settings to improve concurrency and prevent SQLITE_BUSY errors
+	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", dbPath)
+	DB, err = sqlx.Connect("sqlite", dsn)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
+
+	// SQLite requires writes to be serialized
+	DB.SetMaxOpenConns(1)
 
 	schema := `
 	CREATE TABLE IF NOT EXISTS files (

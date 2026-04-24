@@ -73,6 +73,7 @@ Nội dung chính trong tệp `.env`:
 *   `MAX_UPLOAD_SIZE_MB`: Kích thước file tối đa được phép upload (nếu tài khoản Telegram của bạn là Premium thì có thể nâng lên 4096).
 *   `DATABASE_PATH`: Đường dẫn tới file database.
 *   `THUMBS_DIR`: Đường dẫn tới thư mục chứa ảnh thumbnail.
+*   `TEMP_DIR`: Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên.
 *   `WEBDAV_ENABLED`: Bật/Tắt server WebDAV (`true` hoặc `false`).
 *   `WEBDAV_USER`: Tên đăng nhập WebDAV.
 *   `WEBDAV_PASSWORD`: Mật khẩu WebDAV.

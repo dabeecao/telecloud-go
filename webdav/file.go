@@ -134,7 +134,7 @@ type fileWriter struct {
 
 func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string) *fileWriter {
 	taskID := uuid.New().String()
-	tempDir := filepath.Join(os.TempDir(), "telecloud_webdav")
+	tempDir := filepath.Join(cfg.TempDir, "webdav")
 	os.MkdirAll(tempDir, os.ModePerm)
 	tempPath := filepath.Join(tempDir, taskID+"_"+filename)
 

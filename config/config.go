@@ -21,6 +21,8 @@ type Config struct {
 	WebdavPort      string
 	WebdavUser      string
 	WebdavPassword  string
+	TempDir         string
+	Version         string
 }
 
 func Load() *Config {
@@ -53,6 +55,7 @@ func Load() *Config {
 		WebdavPort:      getEnv("WEBDAV_PORT", "8080"),
 		WebdavUser:      getEnv("WEBDAV_USER", "admin"),
 		WebdavPassword:  getEnv("WEBDAV_PASSWORD", "your_secure_password"),
+		TempDir:         getEnv("TEMP_DIR", os.TempDir()+"/telecloud_temp_chunks"),
 	}
 }
 

@@ -72,6 +72,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			"webdav_enabled":     cfg.WebdavEnabled,
 			"webdav_user":        cfg.WebdavUser,
 			"webdav_password":    cfg.WebdavPassword,
+			"version":            cfg.Version,
 		})
 	})
 
@@ -155,7 +156,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			chunkIndex, _ := strconv.Atoi(c.PostForm("chunk_index"))
 			totalChunks, _ := strconv.Atoi(c.PostForm("total_chunks"))
 
-			tempDir := filepath.Join(os.TempDir(), "telecloud_temp_chunks")
+			tempDir := cfg.TempDir
 			os.MkdirAll(tempDir, os.ModePerm)
 			tempFilePath := filepath.Join(tempDir, taskID+"_"+filename)
 
@@ -191,6 +192,24 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			c.JSON(http.StatusOK, gin.H{"status": "chunk_received", "chunk": chunkIndex})
+		})
+
+		api.POST("/cancel_upload", func(c *gin.Context) {
+			taskID := c.PostForm("task_id")
+			filename := c.PostForm("filename")
+
+			// 1. Cancel the telegram upload if it's currently syncing
+			if taskID != "" {
+				tgclient.CancelTask(taskID)
+			}
+
+			// 2. Delete the temporary file if it's partially uploaded
+			if taskID != "" && filename != "" {
+				tempFilePath := filepath.Join(cfg.TempDir, taskID+"_"+filename)
+				os.Remove(tempFilePath)
+			}
+
+			c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
 		})
 
 		api.POST("/actions/paste", func(c *gin.Context) {
@@ -369,6 +388,19 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			c.File(*item.ThumbPath)
+		})
+
+		api.GET("/files/:id/stream", func(c *gin.Context) {
+			id, _ := strconv.Atoi(c.Param("id"))
+			var item database.File
+			if err := database.DB.Get(&item, "SELECT message_id, filename, mime_type, size FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+				c.AbortWithStatus(http.StatusNotFound)
+				return
+			}
+			if item.MimeType != nil {
+				c.Header("Content-Type", *item.MimeType)
+			}
+			tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
 		})
 	}
 

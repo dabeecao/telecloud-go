@@ -3,6 +3,7 @@
  */
 
 const TeleCloud = {
+    version: 'dev',
     lang: localStorage.getItem('lang') || (navigator.language.startsWith('vi') ? 'vi' : 'en'),
 
     translations: {
@@ -93,7 +94,7 @@ const TeleCloud = {
             type_doc: 'Tài liệu',
             type_unknown: 'Tập tin',
             // WebDAV Guide
-            webdav_guide: 'Hướng dẫn WebDAV',
+            webdav_guide: 'WebDAV',
             webdav_desc: 'Sử dụng TeleCloud như một ổ đĩa mạng trên máy tính của bạn.',
             webdav_url: 'Địa chỉ máy chủ',
             webdav_user: 'Tên đăng nhập',
@@ -101,6 +102,12 @@ const TeleCloud = {
             webdav_step1: 'Mở ứng dụng hỗ trợ WebDAV (như RaiDrive, Cyberduck, hoặc tính năng Map Network Drive trên Windows/macOS).',
             webdav_step2: 'Nhập các thông tin dưới đây để kết nối:',
             webdav_note: 'Lưu ý: Nếu dùng Windows Explorer mặc định, bạn nên sử dụng giao thức HTTP và đảm bảo cổng (port) là chính xác.',
+            webdav_os_support: 'Hệ điều hành hỗ trợ',
+            webdav_win: 'Windows (Map Network Drive / RaiDrive)',
+            webdav_mac: 'macOS (Connect to Server / Finder)',
+            webdav_ios: 'iOS/iPadOS (Files App / Tệp)',
+            webdav_linux: 'Linux (Nautilus / Dolphin)',
+            webdav_android: 'Android (Solid Explorer / Owlfiles)',
             // share.html specific
             preparing_file: 'Đang chuẩn bị file...',
             wait_tg: 'Kết nối máy chủ Telegram, vui lòng đợi',
@@ -110,7 +117,9 @@ const TeleCloud = {
             at_time: 'lúc',
             back_home: 'Quay lại trang chủ',
             access_failed: 'Truy cập thất bại',
-            file_not_found_msg: 'Tệp không tồn tại hoặc link đã bị thu hồi.'
+            file_not_found_msg: 'Tệp không tồn tại hoặc link đã bị thu hồi.',
+            update_title: 'Cập nhật TeleCloud',
+            update_msg: 'Có phiên bản mới trên GitHub. Bạn có muốn xem không?'
         },
         en: {
             home: 'File Manager',
@@ -199,7 +208,7 @@ const TeleCloud = {
             type_doc: 'Document',
             type_unknown: 'File',
             // WebDAV Guide
-            webdav_guide: 'WebDAV Guide',
+            webdav_guide: 'WebDAV',
             webdav_desc: 'Use TeleCloud as a network drive on your computer.',
             webdav_url: 'Server Address',
             webdav_user: 'Username',
@@ -207,6 +216,12 @@ const TeleCloud = {
             webdav_step1: 'Open a WebDAV client (like RaiDrive, Cyberduck, or Map Network Drive on Windows/macOS).',
             webdav_step2: 'Enter the following details to connect:',
             webdav_note: 'Note: If using default Windows Explorer, ensure you use the correct port and HTTP protocol.',
+            webdav_os_support: 'Supported OS',
+            webdav_win: 'Windows (Map Network Drive / RaiDrive)',
+            webdav_mac: 'macOS (Connect to Server / Finder)',
+            webdav_ios: 'iOS/iPadOS (Files App)',
+            webdav_linux: 'Linux (Nautilus / Dolphin)',
+            webdav_android: 'Android (Solid Explorer / Owlfiles)',
             // share.html specific
             preparing_file: 'Preparing file...',
             wait_tg: 'Connecting to Telegram, please wait',
@@ -216,7 +231,9 @@ const TeleCloud = {
             at_time: 'at',
             back_home: 'Back to Home',
             access_failed: 'Access Failed',
-            file_not_found_msg: 'File not found or link has been revoked.'
+            file_not_found_msg: 'File not found or link has been revoked.',
+            update_title: 'TeleCloud Update',
+            update_msg: 'A new version is available on GitHub. Do you want to check it out?'
         }
     },
 

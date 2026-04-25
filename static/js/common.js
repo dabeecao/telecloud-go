@@ -131,6 +131,9 @@ const TeleCloud = {
             toast_pass_changed: 'Đổi mật khẩu thành công!',
             err_incorrect_old_password: 'Mật khẩu cũ không chính xác!',
             err_failed_to_hash_password: 'Lỗi mã hóa mật khẩu!',
+            err_too_many_requests: 'Quá nhiều yêu cầu, vui lòng thử lại sau!',
+            err_ip_blocked: 'Bạn đã bị chặn vì nhập sai mật khẩu quá nhiều lần!',
+            setup_confirm_password: 'Xác nhận mật khẩu',
             // share.html specific
             preparing_file: 'Đang chuẩn bị file...',
             wait_tg: 'Kết nối máy chủ Telegram, vui lòng đợi',
@@ -268,6 +271,9 @@ const TeleCloud = {
             toast_pass_changed: 'Password changed successfully!',
             err_incorrect_old_password: 'Incorrect old password!',
             err_failed_to_hash_password: 'Failed to hash password!',
+            err_too_many_requests: 'Too many requests, please try again later!',
+            err_ip_blocked: 'You have been blocked due to too many failed attempts!',
+            setup_confirm_password: 'Confirm Password',
             // share.html specific
             preparing_file: 'Preparing file...',
             wait_tg: 'Connecting to Telegram, please wait',

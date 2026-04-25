@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"telecloud/config"
 	"telecloud/database"
 	"telecloud/tgclient"
 	"telecloud/utils"
 	"telecloud/webdav"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,6 +28,13 @@ type PasteRequest struct {
 	Action      string `json:"action"`
 	ItemIDs     []int  `json:"item_ids"`
 	Destination string `json:"destination"`
+}
+
+var loginAttempts sync.Map
+
+type loginAttempt struct {
+	count int
+	last  time.Time
 }
 
 func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
@@ -162,6 +171,17 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	})
 
 	r.POST("/login", func(c *gin.Context) {
+		ip := c.ClientIP()
+		val, _ := loginAttempts.Load(ip)
+		var att loginAttempt
+		if val != nil {
+			att = val.(loginAttempt)
+			if att.count >= 5 && time.Since(att.last) < 15*time.Minute {
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_requests"})
+				return
+			}
+		}
+
 		username := c.PostForm("username")
 		password := c.PostForm("password")
 
@@ -169,13 +189,27 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		dbHash := database.GetSetting("admin_password_hash")
 
 		if username == dbUser && bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(password)) == nil {
+			loginAttempts.Delete(ip) // Reset on success
 			sessionToken := uuid.New().String()
 			database.SetSetting("session_token", sessionToken)
 			c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 			return
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+
+		// On failure
+		att.count++
+		att.last = time.Now()
+		loginAttempts.Store(ip, att)
+
+		// Artificial delay to thwart fast scripts
+		time.Sleep(1 * time.Second)
+
+		if att.count >= 5 {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "ip_blocked"})
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		}
 	})
 
 	r.POST("/logout", func(c *gin.Context) {

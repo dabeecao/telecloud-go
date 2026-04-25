@@ -8,6 +8,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         currentTab: 'files',
         username: '',
         password: '', 
+        confirmPassword: '',
         settingsForm: { oldPassword: '', newPassword: '', confirmPassword: '' },
         isLoading: false, 
         isRefreshing: false,
@@ -15,6 +16,10 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         lang: TeleCloud.lang,
         t(key, params) { return TeleCloud.t(key, params, this.lang); },
         async setupAdmin() {
+            if (this.password !== this.confirmPassword) {
+                this.showToast(this.t('toast_pass_mismatch'), 'error');
+                return;
+            }
             let fd = new FormData();
             fd.append('username', this.username);
             fd.append('password', this.password);
@@ -249,7 +254,14 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             fd.append('username', this.username);
             fd.append('password', this.password);
             const res = await fetch('/login', { method: 'POST', body: fd });
-            if (res.ok) { window.location.href = '/'; } else this.showToast(this.t('toast_login_fail'), 'error');
+            if (res.ok) { 
+                window.location.href = '/'; 
+            } else {
+                const data = await res.json();
+                const errorKey = data.error === 'too_many_requests' ? 'err_too_many_requests' : 
+                                 data.error === 'ip_blocked' ? 'err_ip_blocked' : 'toast_login_fail';
+                this.showToast(this.t(errorKey), 'error');
+            }
         },
         async logout() { await fetch('/logout', { method: 'POST' }); window.location.href = '/login'; },
         getBreadcrumbs() { return this.currentPath === '/' ? [] : this.currentPath.split('/').filter(Boolean); },

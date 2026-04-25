@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="vi" class="h-full">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>TeleCloud OS - Login</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <link rel="shortcut icon" href="/static/favicon.ico" type="image/x-icon">
+
+    <link rel="stylesheet" href="/static/css/tailwind.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+
+    <script src="/static/js/common.js"></script>
+    <script>TeleCloud.version = '{{ .version }}';</script>
+    <script src="/static/js/script.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- SEO & Social Meta Tags -->
+    <meta name="description" content="TeleCloud OS - Quản lý tệp tin đám mây qua Telegram">
+    <meta property="og:title" content="TeleCloud OS">
+    <meta property="og:description"
+        content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API. Bảo mật, tốc độ cao và không giới hạn.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="/static/favicon.ico">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="TeleCloud OS">
+    <meta name="twitter:description" content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API.">
+</head>
+
+<body
+    class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 h-full relative overflow-hidden flex flex-col transition-colors duration-500"
+    x-data="cloudApp(false, {{ .max_upload_size_mb }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}')">
+    <div class="blob-1"></div>
+    <div class="blob-2"></div>
+
+    <div x-show="modal.show" x-cloak
+        class="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
+        x-transition.opacity>
+        <div @click.outside="if(modal.type==='alert') closeUIModal(null)"
+            class="glass-menu w-[90%] max-w-sm rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
+            <h3 class="text-xl font-bold mb-2 text-slate-900 dark:text-white" x-text="modal.title"></h3>
+            <p class="text-slate-600 dark:text-slate-300 text-sm mb-5" x-text="modal.message" x-show="modal.message">
+            </p>
+            <div class="flex justify-end gap-3 mt-2">
+                <button @click="closeUIModal(true)"
+                    class="px-5 py-2 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95 bg-blue-600 hover:bg-blue-500 shadow-blue-500/25"
+                    x-text="modal.type === 'alert' ? t('close') : t('confirm')"></button>
+            </div>
+        </div>
+    </div>
+
+    <div class="w-full h-[100dvh] flex flex-col items-center justify-center p-4 z-10">
+        <div class="glass-panel p-8 md:p-10 rounded-[2rem] w-full max-w-md relative overflow-hidden">
+            <button @click="toggleLang"
+                class="absolute top-4 right-4 h-8 px-2 flex items-center gap-1.5 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-lg transition-colors">
+                <i class="fa-solid fa-earth-americas text-xs"></i>
+                <span class="text-[10px] font-bold uppercase" x-text="lang"></span>
+            </button>
+            <div class="text-center mb-8">
+                <div
+                    class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
+                    <i class="fa-solid fa-cloud text-3xl text-white"></i>
+                </div>
+                <h2 class="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">TeleCloud OS</h2>
+            </div>
+            <form @submit.prevent="login">
+                <input type="password" autocomplete="current-password" x-model="password"
+                    :placeholder="t('access_code')"
+                    class="w-full p-4 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-6 backdrop-blur-sm transition-all">
+                <button type="submit"
+                    class="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all shadow-lg active:scale-[0.98]"
+                    x-text="t('access_system')"></button>
+            </form>
+        </div>
+    </div>
+</body>
+
+</html>

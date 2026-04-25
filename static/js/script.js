@@ -193,9 +193,9 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         async login() {
             const fd = new FormData(); fd.append('password', this.password);
             const res = await fetch('/login', { method: 'POST', body: fd });
-            if (res.ok) { this.isLoggedIn = true; this.fetchFiles(); } else this.showToast(this.t('toast_login_fail'), 'error');
+            if (res.ok) { window.location.href = '/'; } else this.showToast(this.t('toast_login_fail'), 'error');
         },
-        async logout() { await fetch('/logout', { method: 'POST' }); window.location.reload(); },
+        async logout() { await fetch('/logout', { method: 'POST' }); window.location.href = '/login'; },
         getBreadcrumbs() { return this.currentPath === '/' ? [] : this.currentPath.split('/').filter(Boolean); },
         navigateToFolder(folderName) { this.currentPath = this.currentPath === '/' ? '/' + folderName : this.currentPath + '/' + folderName; this.fetchFiles(); },
         navigateToIndex(index) { this.currentPath = '/' + this.getBreadcrumbs().slice(0, index + 1).join('/'); this.fetchFiles(); },

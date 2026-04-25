@@ -67,8 +67,26 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 	r.GET("/", func(c *gin.Context) {
 		token, _ := c.Cookie("session_token")
+		if token != cfg.AdminPassword {
+			c.Redirect(http.StatusFound, "/login")
+			return
+		}
 		c.HTML(http.StatusOK, "index.html", gin.H{
-			"logged_in":          token == cfg.AdminPassword,
+			"max_upload_size_mb": cfg.MaxUploadSizeMB,
+			"webdav_enabled":     cfg.WebdavEnabled,
+			"webdav_user":        cfg.WebdavUser,
+			"webdav_password":    cfg.WebdavPassword,
+			"version":            cfg.Version,
+		})
+	})
+
+	r.GET("/login", func(c *gin.Context) {
+		token, _ := c.Cookie("session_token")
+		if token == cfg.AdminPassword {
+			c.Redirect(http.StatusFound, "/")
+			return
+		}
+		c.HTML(http.StatusOK, "login.html", gin.H{
 			"max_upload_size_mb": cfg.MaxUploadSizeMB,
 			"webdav_enabled":     cfg.WebdavEnabled,
 			"webdav_user":        cfg.WebdavUser,

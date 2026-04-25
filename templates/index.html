@@ -36,7 +36,7 @@
 
 <body
     class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 h-full relative overflow-hidden flex flex-col transition-colors duration-500"
-    x-data="cloudApp({{ if .logged_in }}true{{ else }}false{{ end }}, {{ .max_upload_size_mb }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}')"
+    x-data="cloudApp(true, {{ .max_upload_size_mb }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}')"
     @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="handleDrop($event)">
 
     <div class="blob-1"></div>
@@ -268,32 +268,7 @@
         </div>
     </div>
 
-    <div x-show="!isLoggedIn" x-cloak class="w-full h-[100dvh] flex flex-col items-center justify-center p-4 z-10"
-        x-transition.opacity>
-        <div class="glass-panel p-8 md:p-10 rounded-[2rem] w-full max-w-md relative overflow-hidden">
-            <button @click="toggleLang"
-                class="absolute top-4 right-4 h-8 px-2 flex items-center gap-1.5 text-slate-500 hover:text-blue-500 bg-white/50 dark:bg-slate-800/50 rounded-lg transition-colors">
-                <i class="fa-solid fa-earth-americas text-xs"></i>
-                <span class="text-[10px] font-bold uppercase" x-text="lang"></span>
-            </button>
-            <div class="text-center mb-8">
-                <div
-                    class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
-                    <i class="fa-solid fa-cloud text-3xl text-white"></i>
-                </div>
-                <h2 class="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">TeleCloud OS</h2>
-            </div>
-            <form @submit.prevent="login">
-                <input type="password" x-model="password" :placeholder="t('access_code')"
-                    class="w-full p-4 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-6 backdrop-blur-sm transition-all">
-                <button type="submit"
-                    class="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all shadow-lg active:scale-[0.98]"
-                    x-text="t('access_system')"></button>
-            </form>
-        </div>
-    </div>
-
-    <div x-show="isLoggedIn" x-cloak class="fixed inset-0 flex flex-col w-full z-10 p-0 md:p-4 md:pb-0 overflow-hidden" x-transition.opacity>
+    <div class="fixed inset-0 flex flex-col w-full z-10 p-0 md:p-4 md:pb-0 overflow-hidden">
         <main class="flex-1 flex flex-col h-full min-h-0 glass-panel md:rounded-[2rem] relative overflow-hidden"
             @contextmenu.prevent="if(event.target === $el) openContextMenu(event, null)">
             <header
@@ -493,6 +468,14 @@
                                 class="p-4 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-xs text-amber-700 dark:text-amber-400">
                                 <i class="fa-solid fa-triangle-exclamation mr-1"></i>
                                 <span x-text="t('webdav_note')"></span>
+                            </div>
+
+                            <div class="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
+                                <a href="https://github.com/dabeecao/telecloud-go" target="_blank" class="flex items-center gap-1.5 hover:text-slate-900 dark:hover:text-white transition-colors">
+                                    <i class="fa-brands fa-github text-sm"></i>
+                                    <span class="font-bold">GitHub</span>
+                                </a>
+                                <p class="font-medium text-center">TeleCloud <span class="font-bold text-slate-700 dark:text-slate-300" x-text="TeleCloud.version"></span> &copy; 2026 <span class="text-blue-600 dark:text-blue-400 font-bold">@dabeecao</span></p>
                             </div>
                         </div>
                     </div>
@@ -759,15 +742,6 @@
                         x-text="t('home')"></span>
                 </button>
 
-                <template x-if="webdavEnabled">
-                    <button @click="currentTab = 'webdav'"
-                        class="flex-1 flex flex-col items-center gap-1.5 py-2 transition-colors"
-                        :class="currentTab === 'webdav' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'">
-                        <i class="fa-solid fa-network-wired text-xl"></i><span class="text-[10px] font-semibold"
-                            x-text="t('webdav_guide')"></span>
-                    </button>
-                </template>
-
                 <div class="flex-1 flex justify-center relative -top-6" x-data="{ showMobileAdd: false }"
                     @click.outside="showMobileAdd = false">
 
@@ -805,11 +779,14 @@
                     </button>
                 </div>
 
-                <button @click="logout"
-                    class="flex-1 flex flex-col items-center gap-1.5 py-2 text-slate-500 dark:text-slate-400 hover:text-red-500 transition-colors">
-                    <i class="fa-solid fa-arrow-right-from-bracket text-xl"></i><span class="text-[10px] font-semibold"
-                        x-text="t('logout')"></span>
-                </button>
+                <template x-if="webdavEnabled">
+                    <button @click="currentTab = 'webdav'"
+                        class="flex-1 flex flex-col items-center gap-1.5 py-2 transition-colors"
+                        :class="currentTab === 'webdav' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'">
+                        <i class="fa-solid fa-network-wired text-xl"></i><span class="text-[10px] font-semibold"
+                            x-text="t('webdav_guide')"></span>
+                    </button>
+                </template>
 
             </div>
         </nav>

@@ -98,16 +98,39 @@ const TeleCloud = {
             webdav_desc: 'Sử dụng TeleCloud như một ổ đĩa mạng trên máy tính của bạn.',
             webdav_url: 'Địa chỉ máy chủ',
             webdav_user: 'Tên đăng nhập',
-            webdav_pass: 'Mật khẩu',
-            webdav_step1: 'Mở ứng dụng hỗ trợ WebDAV (như RaiDrive, Cyberduck, hoặc tính năng Map Network Drive trên Windows/macOS).',
-            webdav_step2: 'Nhập các thông tin dưới đây để kết nối:',
-            webdav_note: 'Lưu ý: Nếu dùng Windows Explorer mặc định, bạn nên sử dụng giao thức HTTP và đảm bảo cổng (port) là chính xác.',
-            webdav_os_support: 'Hệ điều hành hỗ trợ',
-            webdav_win: 'Windows (Map Network Drive / RaiDrive)',
-            webdav_mac: 'macOS (Connect to Server / Finder)',
-            webdav_ios: 'iOS/iPadOS (Files App / Tệp)',
-            webdav_linux: 'Linux (Nautilus / Dolphin)',
-            webdav_android: 'Android (Solid Explorer / Owlfiles)',
+            webdav_note: 'Sử dụng tài khoản/mật khẩu quản trị để kết nối. Host: địa chỉ web, Giao thức: HTTP/HTTPS, Port: port của ứng dụng, Path: /webdav',
+            webdav_setup_title: 'Hướng dẫn cấu hình',
+            webdav_setup_guide: `<p class="mb-2">Cách điền phụ thuộc vào ứng dụng WebDAV bạn đang dùng:</p>
+<div class="space-y-2 mb-2 pl-1.5 border-l-2 border-slate-200 dark:border-slate-700">
+  <div><span class="font-bold text-slate-700 dark:text-slate-300">1. Có ô Port riêng (VD: RaiDrive)</span></div>
+  <ul class="list-disc pl-5 space-y-1 text-slate-500 dark:text-slate-400">
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Host:</span> IP/Tên miền của bạn (không kèm http hay port)</li>
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Port:</span> Điền đúng số port web đang chạy</li>
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Path:</span> /webdav</li>
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Giao thức:</span> HTTP (hoặc HTTPS nếu có SSL)</li>
+  </ul>
+  <div class="mt-2.5"><span class="font-bold text-slate-700 dark:text-slate-300">2. Chỉ có 1 ô URL (VD: Windows Map Network Drive)</span></div>
+  <ul class="list-disc pl-5 space-y-1 text-slate-500 dark:text-slate-400">
+    <li>Bạn điền cả cụm: <span class="font-mono bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-700 dark:text-slate-300">http(s)://[IP]:[Port]/webdav</span></li>
+  </ul>
+</div>
+<p class="text-[11px] italic opacity-80 mt-3 border-t border-slate-200 dark:border-slate-700 pt-2"><i class="fa-solid fa-lightbulb text-amber-500 mr-1"></i>Tóm lại: Nếu hỏi Port riêng, tách port ra. Nếu chỉ hỏi URL, gộp cả port vào URL.</p>`,
+            settings: 'Cài đặt',
+            settings_desc: 'Quản lý tài khoản và tùy chọn của bạn.',
+            change_password: 'Đổi mật khẩu',
+            old_password: 'Mật khẩu cũ',
+            new_password: 'Mật khẩu mới',
+            confirm_password: 'Xác nhận mật khẩu mới',
+            save_changes: 'Lưu thay đổi',
+            username: 'Tài khoản',
+            password: 'Mật khẩu',
+            setup_title: 'Chào mừng',
+            setup_desc: 'Tạo tài khoản quản trị viên để tiếp tục',
+            create_account: 'Tạo tài khoản',
+            toast_pass_mismatch: 'Mật khẩu mới không khớp!',
+            toast_pass_changed: 'Đổi mật khẩu thành công!',
+            err_incorrect_old_password: 'Mật khẩu cũ không chính xác!',
+            err_failed_to_hash_password: 'Lỗi mã hóa mật khẩu!',
             // share.html specific
             preparing_file: 'Đang chuẩn bị file...',
             wait_tg: 'Kết nối máy chủ Telegram, vui lòng đợi',
@@ -212,16 +235,39 @@ const TeleCloud = {
             webdav_desc: 'Use TeleCloud as a network drive on your computer.',
             webdav_url: 'Server Address',
             webdav_user: 'Username',
-            webdav_pass: 'Password',
-            webdav_step1: 'Open a WebDAV client (like RaiDrive, Cyberduck, or Map Network Drive on Windows/macOS).',
-            webdav_step2: 'Enter the following details to connect:',
-            webdav_note: 'Note: If using default Windows Explorer, ensure you use the correct port and HTTP protocol.',
-            webdav_os_support: 'Supported OS',
-            webdav_win: 'Windows (Map Network Drive / RaiDrive)',
-            webdav_mac: 'macOS (Connect to Server / Finder)',
-            webdav_ios: 'iOS/iPadOS (Files App)',
-            webdav_linux: 'Linux (Nautilus / Dolphin)',
-            webdav_android: 'Android (Solid Explorer / Owlfiles)',
+            webdav_note: 'Use the administrator account/password to connect. Host: web address, Protocol: HTTP/HTTPS, Port: application port, Path: /webdav',
+            webdav_setup_title: 'Configuration Guide',
+            webdav_setup_guide: `<p class="mb-2">Configuration depends on your WebDAV client:</p>
+<div class="space-y-2 mb-2 pl-1.5 border-l-2 border-slate-200 dark:border-slate-700">
+  <div><span class="font-bold text-slate-700 dark:text-slate-300">1. Separate Port field (e.g., RaiDrive)</span></div>
+  <ul class="list-disc pl-5 space-y-1 text-slate-500 dark:text-slate-400">
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Host:</span> Your IP/Domain (without http or port)</li>
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Port:</span> The running web port</li>
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Path:</span> /webdav</li>
+    <li><span class="font-medium text-slate-700 dark:text-slate-300">Protocol:</span> HTTP (or HTTPS if SSL is enabled)</li>
+  </ul>
+  <div class="mt-2.5"><span class="font-bold text-slate-700 dark:text-slate-300">2. Single URL field (e.g., Windows Map Network Drive)</span></div>
+  <ul class="list-disc pl-5 space-y-1 text-slate-500 dark:text-slate-400">
+    <li>Enter the full URL: <span class="font-mono bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-700 dark:text-slate-300">http(s)://[IP]:[Port]/webdav</span></li>
+  </ul>
+</div>
+<p class="text-[11px] italic opacity-80 mt-3 border-t border-slate-200 dark:border-slate-700 pt-2"><i class="fa-solid fa-lightbulb text-amber-500 mr-1"></i>Summary: If asked for a Port separately, extract it. Otherwise, include it in the URL.</p>`,
+            settings: 'Settings',
+            settings_desc: 'Manage your account and preferences.',
+            change_password: 'Change Password',
+            old_password: 'Old Password',
+            new_password: 'New Password',
+            confirm_password: 'Confirm New Password',
+            save_changes: 'Save Changes',
+            username: 'Username',
+            password: 'Password',
+            setup_title: 'Welcome',
+            setup_desc: 'Create an admin account to continue',
+            create_account: 'Create Account',
+            toast_pass_mismatch: 'New passwords do not match!',
+            toast_pass_changed: 'Password changed successfully!',
+            err_incorrect_old_password: 'Incorrect old password!',
+            err_failed_to_hash_password: 'Failed to hash password!',
             // share.html specific
             preparing_file: 'Preparing file...',
             wait_tg: 'Connecting to Telegram, please wait',

@@ -26,6 +26,8 @@ import (
 	"log"
 	"os"
 
+	"github.com/google/uuid"
+
 	"telecloud/api"
 	"telecloud/config"
 	"telecloud/database"
@@ -37,7 +39,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v1.2.3"
+	version = "v2.0.0"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -58,7 +60,12 @@ func main() {
 	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
 		log.Printf("Warning: Could not create TempDir: %v\n", err)
 	}
-	utils.InitCrypto(cfg.AdminPassword)
+	cryptoSecret := database.GetSetting("crypto_secret")
+	if cryptoSecret == "" {
+		cryptoSecret = uuid.New().String()
+		database.SetSetting("crypto_secret", cryptoSecret)
+	}
+	utils.InitCrypto(cryptoSecret)
 	utils.InitMedia(cfg.ThumbsDir)
 
 	if err := tgclient.InitClient(cfg, *authFlag); err != nil {

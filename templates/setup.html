@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>TeleCloud OS - Login</title>
+    <title>TeleCloud OS - Setup</title>
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <link rel="shortcut icon" href="/static/favicon.ico" type="image/x-icon">
 
@@ -18,22 +18,11 @@
     <script src="/static/js/script.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-
-    <!-- SEO & Social Meta Tags -->
-    <meta name="description" content="TeleCloud OS - Quản lý tệp tin đám mây qua Telegram">
-    <meta property="og:title" content="TeleCloud OS">
-    <meta property="og:description"
-        content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API. Bảo mật, tốc độ cao và không giới hạn.">
-    <meta property="og:type" content="website">
-    <meta property="og:image" content="/static/favicon.ico">
-    <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="TeleCloud OS">
-    <meta name="twitter:description" content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API.">
 </head>
 
 <body
     class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 h-full relative overflow-hidden flex flex-col transition-colors duration-500"
-    x-data="cloudApp(false, {{ or .max_upload_size_mb 0 }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}')">
+    x-data="cloudApp(false, 0, false, '', '')">
     <div class="blob-1"></div>
     <div class="blob-2"></div>
 
@@ -86,20 +75,21 @@
             <div class="text-center mb-8">
                 <div
                     class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/30 mb-4">
-                    <i class="fa-solid fa-cloud text-3xl text-white"></i>
+                    <i class="fa-solid fa-user-shield text-3xl text-white"></i>
                 </div>
-                <h2 class="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">TeleCloud OS</h2>
+                <h2 class="text-3xl font-bold tracking-tight text-slate-900 dark:text-white" x-text="t('setup_title')">Welcome</h2>
+                <p class="text-sm text-slate-500 mt-2" x-text="t('setup_desc')">Create an admin account to continue</p>
             </div>
-            <form @submit.prevent="login">
+            <form @submit.prevent="setupAdmin">
                 <input type="text" autocomplete="username" x-model="username"
                     :placeholder="t('username')" required
                     class="w-full p-4 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-4 backdrop-blur-sm transition-all">
-                <input type="password" autocomplete="current-password" x-model="password"
+                <input type="password" autocomplete="new-password" x-model="password"
                     :placeholder="t('password')" required
                     class="w-full p-4 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-6 backdrop-blur-sm transition-all">
                 <button type="submit"
                     class="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all shadow-lg active:scale-[0.98]"
-                    x-text="t('access_system')"></button>
+                    x-text="t('create_account')"></button>
             </form>
         </div>
     </div>

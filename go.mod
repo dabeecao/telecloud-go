@@ -8,6 +8,7 @@ require (
 	github.com/gotd/td v0.143.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/joho/godotenv v1.5.1
+	golang.org/x/crypto v0.50.0
 	golang.org/x/image v0.39.0
 	golang.org/x/net v0.52.0
 	golang.org/x/term v0.42.0
@@ -65,7 +66,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090 // indirect
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect

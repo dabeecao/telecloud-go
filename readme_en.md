@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[🇻🇳 Tiếng Việt](./readme.md) | [🇺🇸 English](./readme_en.md)
+[🇻🇳 Tiếng Việt](./readme.md) | 🇺🇸 English
 
 </div>
 
@@ -77,16 +77,12 @@ Main fields in `.env`:
 
 * `API_ID` & `API_HASH`: Get from [https://my.telegram.org](https://my.telegram.org)
 * `LOG_GROUP_ID`: ID of the group/channel storing files or use `me` for Saved Messages
-* `ADMIN_PASSWORD`: Password to access the web interface
 * `PORT`: Port to run the application
 * `MAX_UPLOAD_SIZE_MB`: Maximum upload file size (Premium accounts can go up to 4096MB)
 * `DATABASE_PATH`: (Optional) Path to the database file (default: `database.db`)
 * `THUMBS_DIR`: (Optional) Directory for storing thumbnails (default: `./static/thumbs`)
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process (default: `./temp`)
 * `PROXY_URL`: (Optional) Proxy to connect MTProto, supports HTTP and SOCKS5 (e.g. `socks5://127.0.0.1:1080`)
-* `WEBDAV_ENABLED`: Enable/Disable WebDAV server (`true` or `false`)
-* `WEBDAV_USER`: WebDAV username
-* `WEBDAV_PASSWORD`: WebDAV password
 
 ---
 
@@ -153,6 +149,8 @@ Enter your phone number, OTP, and 2FA password (if any).
 ```
 
 Access the web interface at: `http://localhost:8091`
+- **On first access**, the system will prompt you to create an admin account and password.
+- Other configurations like changing password and configuring **WebDAV** can be done directly in the **Settings** section of the web interface after logging in.
 WebDAV at: `http://localhost:8091/webdav`
 
 ---

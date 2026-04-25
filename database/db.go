@@ -53,11 +53,30 @@ func InitDB(dbPath string) {
 		thumb_path TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
 		log.Fatalf("Failed to create schema: %v", err)
 	}
+}
+
+func GetSetting(key string) string {
+	var value string
+	err := DB.Get(&value, "SELECT value FROM settings WHERE key = ?", key)
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func SetSetting(key string, value string) error {
+	_, err := DB.Exec("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value)
+	return err
 }
 
 func GetUniqueFilename(path, filename string, isFolder bool) string {

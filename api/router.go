@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type PasteRequest struct {
@@ -40,65 +41,137 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		r.StaticFS("/static", http.FS(staticFS))
 	}
 
-	// Middleware for auth
-	authMiddleware := func() gin.HandlerFunc {
+	// Middleware for checking if setup is needed
+	setupCheckMiddleware := func() gin.HandlerFunc {
 		return func(c *gin.Context) {
-			token, err := c.Cookie("session_token")
-			if err != nil || token != cfg.AdminPassword {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			adminUser := database.GetSetting("admin_username")
+			if adminUser == "" && !strings.HasPrefix(c.Request.URL.Path, "/setup") && !strings.HasPrefix(c.Request.URL.Path, "/static") {
+				c.Redirect(http.StatusFound, "/setup")
+				c.Abort()
 				return
 			}
 			c.Next()
 		}
 	}
 
-	// WebDAV Route
-	if cfg.WebdavEnabled {
-		h := gin.WrapH(webdav.NewHandler(cfg))
-		methods := []string{
-			"GET", "POST", "PUT", "PATCH", "HEAD", "OPTIONS", "DELETE", "CONNECT", "TRACE",
-			"PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK",
-		}
-		for _, method := range methods {
-			r.Handle(method, "/webdav", h)
-			r.Handle(method, "/webdav/*path", h)
+	r.Use(setupCheckMiddleware())
+
+	// Middleware for auth
+	authMiddleware := func() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			token, err := c.Cookie("session_token")
+			if err != nil || token == "" {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+				return
+			}
+			
+			dbToken := database.GetSetting("session_token")
+			if dbToken == "" || token != dbToken {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+				return
+			}
+
+			c.Next()
 		}
 	}
 
+	// WebDAV Route (handler will check if enabled internally)
+	h := gin.WrapH(webdav.NewHandler(cfg))
+	methods := []string{
+		"GET", "POST", "PUT", "PATCH", "HEAD", "OPTIONS", "DELETE", "CONNECT", "TRACE",
+		"PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK",
+	}
+	for _, method := range methods {
+		r.Handle(method, "/webdav", h)
+		r.Handle(method, "/webdav/*path", h)
+	}
+
+	r.GET("/setup", func(c *gin.Context) {
+		adminUser := database.GetSetting("admin_username")
+		if adminUser != "" {
+			c.Redirect(http.StatusFound, "/")
+			return
+		}
+		c.HTML(http.StatusOK, "setup.html", gin.H{
+			"version": cfg.Version,
+		})
+	})
+
+	r.POST("/setup", func(c *gin.Context) {
+		adminUser := database.GetSetting("admin_username")
+		if adminUser != "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "already setup"})
+			return
+		}
+
+		username := c.PostForm("username")
+		password := c.PostForm("password")
+
+		if username == "" || password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "username and password required"})
+			return
+		}
+
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+			return
+		}
+
+		database.SetSetting("admin_username", username)
+		database.SetSetting("admin_password_hash", string(hashedPassword))
+		database.SetSetting("webdav_enabled", "false")
+
+		// Create session
+		sessionToken := uuid.New().String()
+		database.SetSetting("session_token", sessionToken)
+		c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
+
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
 	r.GET("/", func(c *gin.Context) {
 		token, _ := c.Cookie("session_token")
-		if token != cfg.AdminPassword {
+		dbToken := database.GetSetting("session_token")
+		if token == "" || dbToken == "" || token != dbToken {
 			c.Redirect(http.StatusFound, "/login")
 			return
 		}
+		
+		webdavEnabled := database.GetSetting("webdav_enabled") == "true"
+		webdavUser := database.GetSetting("admin_username")
+
 		c.HTML(http.StatusOK, "index.html", gin.H{
 			"max_upload_size_mb": cfg.MaxUploadSizeMB,
-			"webdav_enabled":     cfg.WebdavEnabled,
-			"webdav_user":        cfg.WebdavUser,
-			"webdav_password":    cfg.WebdavPassword,
+			"webdav_enabled":     webdavEnabled,
+			"webdav_user":        webdavUser,
 			"version":            cfg.Version,
 		})
 	})
 
 	r.GET("/login", func(c *gin.Context) {
 		token, _ := c.Cookie("session_token")
-		if token == cfg.AdminPassword {
+		dbToken := database.GetSetting("session_token")
+		if token != "" && dbToken != "" && token == dbToken {
 			c.Redirect(http.StatusFound, "/")
 			return
 		}
 		c.HTML(http.StatusOK, "login.html", gin.H{
-			"max_upload_size_mb": cfg.MaxUploadSizeMB,
-			"webdav_enabled":     cfg.WebdavEnabled,
-			"webdav_user":        cfg.WebdavUser,
-			"webdav_password":    cfg.WebdavPassword,
-			"version":            cfg.Version,
+			"version": cfg.Version,
 		})
 	})
 
 	r.POST("/login", func(c *gin.Context) {
+		username := c.PostForm("username")
 		password := c.PostForm("password")
-		if password == cfg.AdminPassword {
-			c.SetCookie("session_token", password, 3600*24*30, "/", "", false, true)
+
+		dbUser := database.GetSetting("admin_username")
+		dbHash := database.GetSetting("admin_password_hash")
+
+		if username == dbUser && bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(password)) == nil {
+			sessionToken := uuid.New().String()
+			database.SetSetting("session_token", sessionToken)
+			c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 			return
 		}
@@ -106,6 +179,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	})
 
 	r.POST("/logout", func(c *gin.Context) {
+		database.SetSetting("session_token", "") // Invalidate session in DB
 		c.SetCookie("session_token", "", -1, "/", "", false, true)
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
@@ -113,6 +187,38 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	api := r.Group("/api")
 	api.Use(authMiddleware())
 	{
+		api.POST("/settings/password", func(c *gin.Context) {
+			oldPassword := c.PostForm("old_password")
+			newPassword := c.PostForm("new_password")
+			
+			dbHash := database.GetSetting("admin_password_hash")
+			if bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(oldPassword)) != nil {
+				c.JSON(http.StatusForbidden, gin.H{"error": "incorrect old password"})
+				return
+			}
+			
+			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+				return
+			}
+			
+			database.SetSetting("admin_password_hash", string(hashedPassword))
+			
+			// Optional: invalidate current sessions or leave as is. We'll leave it to not log them out immediately.
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+		
+		api.POST("/settings/webdav", func(c *gin.Context) {
+			enabled := c.PostForm("enabled")
+			if enabled == "true" {
+				database.SetSetting("webdav_enabled", "true")
+			} else {
+				database.SetSetting("webdav_enabled", "false")
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
 		api.GET("/progress/:task_id", func(c *gin.Context) {
 			taskID := c.Param("task_id")
 			c.JSON(http.StatusOK, tgclient.GetTask(taskID))

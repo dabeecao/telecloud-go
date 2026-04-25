@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"telecloud/config"
+	"telecloud/database"
 
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/net/webdav"
 )
 
@@ -28,8 +30,22 @@ func NewHandler(cfg *config.Config) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if database.GetSetting("webdav_enabled") != "true" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
 		user, pass, ok := r.BasicAuth()
-		if !ok || user != cfg.WebdavUser || pass != cfg.WebdavPassword {
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="TeleCloud WebDAV"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		
+		dbUser := database.GetSetting("admin_username")
+		dbHash := database.GetSetting("admin_password_hash")
+		
+		if user != dbUser || bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(pass)) != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="TeleCloud WebDAV"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return

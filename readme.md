@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[🇻🇳 Tiếng Việt](./readme.md) | [🇺🇸 English](./readme_en.md)
+🇻🇳 Tiếng Việt | [🇺🇸 English](./readme_en.md)
 
 </div>
 
@@ -68,16 +68,12 @@ cp env.example .env
 Nội dung chính trong tệp `.env`:
 *   `API_ID` & `API_HASH`: Lấy tại [my.telegram.org](https://my.telegram.org).
 *   `LOG_GROUP_ID`: ID nhóm/kênh lưu file hoặc điền `me` để lưu vào Saved Messages.
-*   `ADMIN_PASSWORD`: Mật khẩu đăng nhập giao diện web.
 *   `PORT`: Cổng muốn chạy ứng dụng.
 *   `MAX_UPLOAD_SIZE_MB`: Kích thước file tối đa được phép upload (nếu tài khoản Telegram của bạn là Premium thì có thể nâng lên 4096).
 *   `DATABASE_PATH`: (Tùy chọn) Đường dẫn tới file database (mặc định: `database.db`).
 *   `THUMBS_DIR`: (Tùy chọn) Đường dẫn tới thư mục chứa ảnh thumbnail (mặc định: `./static/thumbs`).
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).
 *   `PROXY_URL`: (Tùy chọn) Proxy để kết nối MTProto, hỗ trợ HTTP và SOCKS5 (VD: `socks5://127.0.0.1:1080`).
-*   `WEBDAV_ENABLED`: Bật/Tắt server WebDAV (`true` hoặc `false`).
-*   `WEBDAV_USER`: Tên đăng nhập WebDAV.
-*   `WEBDAV_PASSWORD`: Mật khẩu WebDAV.
 
 
 #### 🔑 Lấy API_ID và API_HASH
@@ -131,6 +127,8 @@ telecloud.exe -auth
 ```
 
 Truy cập giao diện web tại: `http://localhost:8091`
+- **Lần đầu tiên truy cập**, hệ thống sẽ yêu cầu bạn tạo tài khoản và mật khẩu quản trị (Admin).
+- Các cấu hình khác như đổi mật khẩu hay cấu hình **WebDAV** đều có thể được thực hiện trực tiếp trong phần **Cài đặt** của giao diện Web sau khi đăng nhập.
 WebDAV tại: `http://localhost:8091/webdav`
 
 ---

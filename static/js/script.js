@@ -6,12 +6,66 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         webdavUser: webdavUser,
         webdavPassword: webdavPassword,
         currentTab: 'files',
+        username: '',
         password: '', 
+        settingsForm: { oldPassword: '', newPassword: '', confirmPassword: '' },
         isLoading: false, 
         isRefreshing: false,
         isPreparingDownload: false,
         lang: TeleCloud.lang,
         t(key, params) { return TeleCloud.t(key, params, this.lang); },
+        async setupAdmin() {
+            let fd = new FormData();
+            fd.append('username', this.username);
+            fd.append('password', this.password);
+            try {
+                let res = await fetch('/setup', { method: 'POST', body: fd });
+                if (res.ok) window.location.href = '/';
+                else {
+                    let d = await res.json();
+                    this.showToast(d.error || 'Setup failed', 'error');
+                }
+            } catch (e) {
+                this.showToast('Setup error', 'error');
+            }
+        },
+        async changePassword() {
+            if (this.settingsForm.newPassword !== this.settingsForm.confirmPassword) {
+                this.showToast(this.t('toast_pass_mismatch'), 'error');
+                return;
+            }
+            let fd = new FormData();
+            fd.append('old_password', this.settingsForm.oldPassword);
+            fd.append('new_password', this.settingsForm.newPassword);
+            try {
+                let res = await fetch('/api/settings/password', { method: 'POST', body: fd });
+                if (res.ok) {
+                    this.showToast(this.t('toast_pass_changed'), 'success');
+                    this.settingsForm = { oldPassword: '', newPassword: '', confirmPassword: '' };
+                } else {
+                    let d = await res.json();
+                    let errorKey = 'err_' + (d.error || '').toLowerCase().replace(/ /g, '_');
+                    this.showToast(this.t(errorKey), 'error');
+                }
+            } catch (e) {
+                this.showToast(this.t('conn_error'), 'error');
+            }
+        },
+        async toggleWebDAV() {
+            let newState = !this.webdavEnabled;
+            let fd = new FormData();
+            fd.append('enabled', newState);
+            try {
+                let res = await fetch('/api/settings/webdav', { method: 'POST', body: fd });
+                if (res.ok) {
+                    this.webdavEnabled = newState;
+                } else {
+                    this.showToast('Failed to toggle WebDAV', 'error');
+                }
+            } catch(e) {
+                this.showToast('Error', 'error');
+            }
+        },
         toggleLang() { 
             this.lang = TeleCloud.toggleLang();
         },
@@ -191,7 +245,9 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         },
         closeContextMenu() { this.contextMenu.show = false; },
         async login() {
-            const fd = new FormData(); fd.append('password', this.password);
+            const fd = new FormData(); 
+            fd.append('username', this.username);
+            fd.append('password', this.password);
             const res = await fetch('/login', { method: 'POST', body: fd });
             if (res.ok) { window.location.href = '/'; } else this.showToast(this.t('toast_login_fail'), 'error');
         },

@@ -22,13 +22,13 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Build frontend CSS
+      - name: Build frontend and download libraries
         run: |
           curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
           chmod +x tailwindcss-linux-x64
           mv tailwindcss-linux-x64 tailwindcss
-          chmod +x build-css.sh
-          ./build-css.sh
+          chmod +x build-frontend.sh
+          ./build-frontend.sh
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

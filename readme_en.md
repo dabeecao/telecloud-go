@@ -171,17 +171,17 @@ git clone https://github.com/dabeecao/telecloud-go.git
 go mod tidy
 ```
 
-5. Build UI (Tailwind CSS):
+5. Build UI (Tailwind CSS and download libraries):
    * Download the **Tailwind CLI** for your OS from [Tailwind CSS Releases](https://github.com/tailwindlabs/tailwindcss/releases/latest).
    * Rename the downloaded file to `tailwindcss` (or `tailwindcss.exe` on Windows) and place it in the project root.
-   * Run the build command:
+   * Run the build command (this script will automatically download libraries like Alpine.js and Plyr):
      ```bash
      # Linux/macOS
-     chmod +x build-css.sh
-     ./build-css.sh
+     chmod +x build-frontend.sh
+     ./build-frontend.sh
 
      # Windows
-     build-css.bat
+     build-frontend.bat
      ```
 
 6. Run:
@@ -215,6 +215,8 @@ This project uses amazing libraries:
 * [AlpineJS](https://github.com/alpinejs/alpine): Minimal JS framework
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): Utility-first CSS framework
 * [plyr](https://github.com/sampotts/plyr): HTML5 media player
+* [FontAwesome](https://fontawesome.com): The world's most popular icon set.
+* [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): A modern and clean sans-serif typeface.
 
 Thanks to all contributors for their great tools.
 

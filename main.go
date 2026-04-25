@@ -35,7 +35,7 @@ import (
 	"telecloud/utils"
 )
 
-//go:embed templates/* static/css/* static/js/* static/favicon.ico
+//go:embed templates/* static/css/* static/js/* static/fonts/* static/webfonts/* static/favicon.ico
 var contentFS embed.FS
 
 var (

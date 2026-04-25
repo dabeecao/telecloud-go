@@ -145,17 +145,17 @@ Nếu bạn muốn tự biên dịch dự án, hãy làm theo các bước sau:
 
 4. Chạy lệnh `go mod tidy` để tải về các thư viện cần thiết.
 
-5. Build giao diện (Tailwind CSS):
+5. Build giao diện (Tailwind CSS và tải các thư viện):
    * Tải **Tailwind CLI** phù hợp với hệ điều hành của bạn tại [Tailwind CSS Releases](https://github.com/tailwindlabs/tailwindcss/releases/latest).
    * Đổi tên file vừa tải thành `tailwindcss` (hoặc `tailwindcss.exe` trên Windows) và đặt vào thư mục gốc của dự án.
-   * Chạy lệnh build:
+   * Chạy lệnh build (script này sẽ tự động tải các thư viện như Alpine.js và Plyr):
      ```bash
      # Linux/macOS
-     chmod +x build-css.sh
-     ./build-css.sh
+     chmod +x build-frontend.sh
+     ./build-frontend.sh
 
      # Windows
-     build-css.bat
+     build-frontend.bat
      ```
 
 6.  Chạy trực tiếp: `go run .`
@@ -180,6 +180,8 @@ Dự án sử dụng các thư viện tuyệt vời:
 * [AlpineJS](https://github.com/alpinejs/alpine): A rugged, minimal framework for composing JavaScript behavior in your markup.
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): A utility-first CSS framework for rapid UI development.
 * [plyr](https://github.com/sampotts/plyr): A simple HTML5, YouTube and Vimeo player
+* [FontAwesome](https://fontawesome.com): Bộ biểu tượng phổ biến nhất thế giới.
+* [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): Một bộ font chữ sans-serif hiện đại và dễ đọc.
 
 Xin cảm ơn các đội ngũ phát triển đã cung cấp những công cụ hữu ích cho cộng đồng.
 

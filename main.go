@@ -43,7 +43,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v2.1.1"
+	version = "v2.2.1"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -66,8 +66,8 @@ func main() {
 	if *resetPassFlag {
 		database.DeleteSetting("admin_username")
 		database.DeleteSetting("admin_password_hash")
-		database.DeleteSetting("session_token")
-		log.Println("Admin username and password have been reset. Please restart the app and visit the setup page.")
+		database.DB.Exec("DELETE FROM sessions")
+		log.Println("Admin username and password have been reset. All active sessions have been cleared. Please restart the app and visit the setup page.")
 		return
 	}
 	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {

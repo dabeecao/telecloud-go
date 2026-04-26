@@ -119,8 +119,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			
-			dbToken := database.GetSetting("session_token")
-			if dbToken == "" || token != dbToken {
+			var count int
+			err = database.DB.Get(&count, "SELECT COUNT(*) FROM sessions WHERE token = ?", token)
+			if err != nil || count == 0 {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 				return
 			}
@@ -179,7 +180,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		// Create session
 		sessionToken := uuid.New().String()
-		database.SetSetting("session_token", sessionToken)
+		_, err = database.DB.Exec("INSERT INTO sessions (token) VALUES (?)", sessionToken)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
+			return
+		}
 		c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
 
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
@@ -187,8 +192,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 	r.GET("/", func(c *gin.Context) {
 		token, _ := c.Cookie("session_token")
-		dbToken := database.GetSetting("session_token")
-		if token == "" || dbToken == "" || token != dbToken {
+		var count int
+		if token != "" {
+			database.DB.Get(&count, "SELECT COUNT(*) FROM sessions WHERE token = ?", token)
+		}
+		if token == "" || count == 0 {
 			c.Redirect(http.StatusFound, "/login")
 			return
 		}
@@ -207,8 +215,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 	r.GET("/login", func(c *gin.Context) {
 		token, _ := c.Cookie("session_token")
-		dbToken := database.GetSetting("session_token")
-		if token != "" && dbToken != "" && token == dbToken {
+		var count int
+		if token != "" {
+			database.DB.Get(&count, "SELECT COUNT(*) FROM sessions WHERE token = ?", token)
+		}
+		if token != "" && count > 0 {
 			c.Redirect(http.StatusFound, "/")
 			return
 		}
@@ -239,7 +250,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		if username == dbUser && bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(password)) == nil {
 			loginAttempts.Delete(ip) // Reset on success
 			sessionToken := uuid.New().String()
-			database.SetSetting("session_token", sessionToken)
+			_, err = database.DB.Exec("INSERT INTO sessions (token) VALUES (?)", sessionToken)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
+				return
+			}
 			c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 			return
@@ -261,7 +276,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	})
 
 	r.POST("/logout", csrfMiddleware(), func(c *gin.Context) {
-		database.SetSetting("session_token", "") // Invalidate session in DB
+		token, _ := c.Cookie("session_token")
+		if token != "" {
+			database.DB.Exec("DELETE FROM sessions WHERE token = ?", token)
+		}
 		c.SetCookie("session_token", "", -1, "/", "", false, true)
 		c.SetCookie(csrfCookieName, "", -1, "/", "", false, false)
 		c.JSON(http.StatusOK, gin.H{"status": "success"})

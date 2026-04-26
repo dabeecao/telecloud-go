@@ -47,6 +47,7 @@ var (
 func main() {
 	authFlag := flag.Bool("auth", false, "Run the terminal authentication flow for a Userbot session")
 	versionFlag := flag.Bool("version", false, "Show version information")
+	resetPassFlag := flag.Bool("resetpass", false, "Reset admin username and password")
 	flag.Parse()
 
 	if *versionFlag {
@@ -57,6 +58,14 @@ func main() {
 	cfg := config.Load()
 	cfg.Version = version
 	database.InitDB(cfg.DatabasePath)
+
+	if *resetPassFlag {
+		database.DeleteSetting("admin_username")
+		database.DeleteSetting("admin_password_hash")
+		database.DeleteSetting("session_token")
+		log.Println("Admin username and password have been reset. Please restart the app and visit the setup page.")
+		return
+	}
 	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
 		log.Printf("Warning: Could not create TempDir: %v\n", err)
 	}

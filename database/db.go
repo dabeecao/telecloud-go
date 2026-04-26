@@ -79,6 +79,11 @@ func SetSetting(key string, value string) error {
 	return err
 }
 
+func DeleteSetting(key string) error {
+	_, err := DB.Exec("DELETE FROM settings WHERE key = ?", key)
+	return err
+}
+
 func GetUniqueFilename(path, filename string, isFolder bool) string {
 	if filename == "" {
 		return "unnamed"

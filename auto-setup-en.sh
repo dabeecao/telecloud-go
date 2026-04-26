@@ -475,10 +475,10 @@ manage_tunnel() {
             fi
             cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
             rm -f "$BASE_DIR/tunnel.txt" "$BASE_DIR/domain.txt"
-            echo "✅ Tunnel deleted."
+            echo "✅ Tunnel removed."
             echo "------------------------------------------------------"
-            echo "📢 NOTE: Please visit dash.cloudflare.com to"
-            echo "delete the old Tunnel DNS record if you no longer use it!"
+            echo "📢 NOTE: Please visit dash.cloudflare.com to remove"
+            echo "the DNS record for the old Tunnel if no longer used!"
             echo "------------------------------------------------------"
             ;;
         *) return ;;
@@ -487,16 +487,16 @@ manage_tunnel() {
 
 view_logs() {
     echo "=========================================="
-    echo "                 VIEW LOGS                "
+    echo "               SYSTEM LOGS                "
     echo "=========================================="
-    echo "1. View Application Log (Telecloud)"
-    echo "2. View Cloudflare Tunnel Log"
+    echo "1. View App Logs (Telecloud)"
+    echo "2. View Cloudflare Tunnel Logs"
     echo "3. Go back"
-    read -p "Choose log to view (1-3): " log_choice
+    read -p "Choose a log (1-3): " log_choice
 
     if [[ "$log_choice" == "1" || "$log_choice" == "2" ]]; then
         echo "💡 TIP: Press Ctrl+C to exit log view."
-        echo "After exiting, if the menu closes, type 'telecloud' to reopen it."
+        echo "After exiting, if the menu closes, run 'telecloud' again."
         echo "Loading logs..."
         sleep 2
     fi
@@ -513,7 +513,7 @@ view_logs() {
             if [ "$OS_TYPE" == "linux" ]; then
                 journalctl -u telecloud-tunnel.service -f -n 50
             else
-                [ -f "$BASE_DIR/tunnel.log" ] && tail -f -n 50 "$BASE_DIR/tunnel.log" || echo "❌ No tunnel log file found (make sure the tunnel is running)."
+                [ -f "$BASE_DIR/tunnel.log" ] && tail -f -n 50 "$BASE_DIR/tunnel.log" || echo "❌ No tunnel log file found (make sure tunnel is running)."
             fi
             ;;
         *) return ;;
@@ -522,7 +522,7 @@ view_logs() {
 
 edit_env() {
     echo "=========================================="
-    echo "        EDIT CONFIGURATION (.ENV)         "
+    echo "           EDIT CONFIG (.ENV)             "
     echo "=========================================="
     if [ ! -f "$BASE_DIR/.env" ]; then
         echo "❌ .env file not found at $BASE_DIR!"
@@ -534,12 +534,12 @@ edit_env() {
     elif command -v vi >/dev/null 2>&1; then
         vi "$BASE_DIR/.env"
     else
-        echo "❌ nano or vi must be installed to edit!"
+        echo "❌ nano or vi is required to edit the config!"
         return
     fi
 
     echo "✅ Configuration saved!"
-    read -p "Do you want to restart the app to apply changes now? (y/n): " rs
+    read -p "Do you want to restart the app now to apply changes? (y/n): " rs
     if [ "$rs" == "y" ]; then
         stop_app
         start_app
@@ -592,14 +592,32 @@ update_app() {
     echo "✅ Update completed. Please choose Restart."
 }
 
+update_setup_script() {
+    echo "[+] Checking for management script updates..."
+    local SCRIPT_URL="https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup-en.sh"
+    # Download temporary file
+    if wget -qO "$BASE_DIR/auto-setup-en.sh.new" "$SCRIPT_URL"; then
+        mv "$BASE_DIR/auto-setup-en.sh.new" "$BASE_DIR/auto-setup-en.sh"
+        chmod +x "$BASE_DIR/auto-setup-en.sh"
+        echo "✅ Updated auto-setup-en.sh successfully."
+        # Call the script itself to update BIN_DIR
+        bash "$BASE_DIR/auto-setup-en.sh" --update-menu
+        echo "✅ Updated 'telecloud' command menu successfully."
+        echo "[!] Please exit and run 'telecloud' again to apply changes."
+    else
+        echo "❌ Error: Failed to download update from GitHub."
+    fi
+}
+
 telecloud_commands() {
     echo "=========================================="
     echo "            TELECLOUD COMMANDS            "
     echo "=========================================="
     echo "1. Initial Login (-auth)"
     echo "2. Reset Password (-resetpass)"
-    echo "3. Return to Main Menu"
-    read -p "Choose a command (1-3): " cmd_choice
+    echo "3. Update this Setup Script"
+    echo "4. Return to Main Menu"
+    read -p "Choose a command (1-4): " cmd_choice
     
     case $cmd_choice in
         1)
@@ -610,6 +628,9 @@ telecloud_commands() {
             echo "[+] Resetting password..."
             cd "$BASE_DIR" && ./telecloud -resetpass
             ;;
+        3)
+            update_setup_script
+            ;;
         *) return ;;
     esac
 }
@@ -619,15 +640,15 @@ uninstall() {
     read -p "Confirm uninstallation? (y/n): " cf
     if [ "$cf" == "y" ]; then
         stop_app
-        echo "[+] Deleting Tunnel on Cloudflare system..."
+        echo "[+] Deleting Tunnel on Cloudflare..."
         cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
 
         echo "------------------------------------------------------"
         echo "📢 IMPORTANT NOTE:"
-        echo "The script has deleted the Tunnel on the system, but the DNS record"
-        echo "on Cloudflare Dashboard still exists."
-        echo "REMEMBER to visit dash.cloudflare.com to delete"
-        echo "the old DNS record to avoid system clutter."
+        echo "The script has deleted the Tunnel, but the DNS records"
+        echo "on your Cloudflare Dashboard still exist."
+        echo "PLEASE REMEMBER to visit dash.cloudflare.com and"
+        echo "delete the old DNS records to keep your setup clean."
         echo "------------------------------------------------------"
         
         if [ "$OS_TYPE" == "linux" ]; then
@@ -638,7 +659,7 @@ uninstall() {
         fi
         
         rm -rf "$BASE_DIR" "$(command -v telecloud)"
-        echo "✅ Completely uninstalled. Script will exit."
+        echo "✅ Uninstalled successfully. Script will exit."
         exit
     fi
 }
@@ -646,18 +667,18 @@ uninstall() {
 while true; do
     clear
     echo "=========================================="
-    echo "          TELECLOUD MANAGER MENU          "
+    echo "         TELECLOUD MANAGER MENU           "
     echo "=========================================="
     echo "  1. System Status"
     echo "  2. Start App"
     echo "  3. Stop App"
     echo "  4. Restart App"
-    echo "  5. Manage Tunnel (Install/Change Domain/Remove)"
-    echo "  6. View Logs (System Logs)"
+    echo "  5. Manage Tunnel (Install/Route/Remove)"
+    echo "  6. View Logs"
     echo "  7. Edit Config (.env)"
     echo "  8. Telecloud Commands (Auth / Reset Pass)"
     echo "  9. Check for Updates"
-    echo "  10. Uninstall App"
+    echo "  10. Uninstall"
     echo "  11. Exit"
     echo "=========================================="
     read -p "Choose an option (1-11): " c
@@ -673,7 +694,7 @@ while true; do
         9) update_app; pause ;;
         10) uninstall ;;
         11) clear; exit ;;
-        *) echo "[!] Invalid option!"; pause ;;
+        *) echo "[!] Invalid choice!"; pause ;;
     esac
 done
 EOF
@@ -688,6 +709,12 @@ rollback() {
     rm -rf "$BASE_DIR" telecloud.tar.gz 2>/dev/null
     exit 1
 }
+
+# Command-line argument handling
+if [ "$1" == "--update-menu" ]; then
+    create_menu
+    exit 0
+fi
 
 if [ ! -f "$BASE_DIR/telecloud" ]; then
     echo "--- FIRST TIME TELECLOUD INSTALLATION ---"

@@ -40,17 +40,21 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 
 ---
 
-## 🛠️ Cài đặt tự động (Khuyên dùng cho Linux/Termux)
+## 🛠️ Cài đặt tự động (Linux / Termux / macOS / Raspberry Pi)
 
-Đây là cách đơn giản và tự động nhất để cài đặt, cấu hình và quản lý TeleCloud. Script sẽ tự động cài đặt các phụ thuộc (FFmpeg, Tmux, Cloudflared...), cấu hình dịch vụ và cung cấp menu quản lý tiện lợi.
+Đây là cách đơn giản và tự động nhất để cài đặt, cấu hình và quản lý TeleCloud. Script hỗ trợ tốt trên nhiều môi trường như Ubuntu, Debian, CentOS, Arch, macOS (Homebrew), Termux và các dòng chip ARM (Raspberry Pi).
+
+Script sẽ tự động cài đặt các phụ thuộc (FFmpeg, Tmux, Cloudflared...), cấu hình dịch vụ và cung cấp menu quản lý tiện lợi qua lệnh `telecloud`.
 
 **Cách sử dụng:**
 ```bash
-# Sử dụng curl
-bash <(curl -sL https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh)
+# Sử dụng curl (Khuyên dùng)
+curl -fsSL https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh -o auto-setup.sh && bash auto-setup.sh
+```
 
+```bash
 # Hoặc sử dụng wget
-bash <(wget -qO- https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh)
+wget -qO auto-setup.sh https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh && bash auto-setup.sh
 ```
 Hoặc nếu bạn đã tải mã nguồn về:
 ```bash

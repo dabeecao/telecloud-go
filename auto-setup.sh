@@ -391,6 +391,7 @@ check_status() {
         systemctl is-active --quiet telecloud && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
         systemctl is-active --quiet telecloud-tunnel && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
     else
+        # Termux and macOS both use tmux
         tmux has-session -t $SESSION 2>/dev/null && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
         pgrep -f "\./telecloud" > /dev/null && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
         pgrep -f "cloudflared tunnel run" > /dev/null && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
@@ -469,7 +470,7 @@ manage_tunnel() {
             if [ "$OS_TYPE" == "linux" ]; then
                 systemctl stop telecloud-tunnel 2>/dev/null
                 systemctl disable telecloud-tunnel 2>/dev/null
-            else
+            else  # termux and macos
                 pkill -f "cloudflared tunnel run" 2>/dev/null
             fi
             cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
@@ -591,14 +592,32 @@ update_app() {
     echo "✅ Đã cập nhật xong. Vui lòng chọn Khởi động lại."
 }
 
+update_setup_script() {
+    echo "[+] Đang kiểm tra cập nhật cho script quản lý..."
+    local SCRIPT_URL="https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh"
+    # Tải về file tạm
+    if wget -qO "$BASE_DIR/auto-setup.sh.new" "$SCRIPT_URL"; then
+        mv "$BASE_DIR/auto-setup.sh.new" "$BASE_DIR/auto-setup.sh"
+        chmod +x "$BASE_DIR/auto-setup.sh"
+        echo "✅ Đã cập nhật xong file auto-setup.sh."
+        # Gọi chính file vừa tải để cập nhật BIN_DIR (hành động cài đè menu)
+        bash "$BASE_DIR/auto-setup.sh" --update-menu
+        echo "✅ Đã cập nhật xong menu lệnh 'telecloud'."
+        echo "[!] Vui lòng thoát và gõ lại lệnh 'telecloud' để áp dụng thay đổi."
+    else
+        echo "❌ Lỗi: Không thể tải bản cập nhật từ GitHub."
+    fi
+}
+
 telecloud_commands() {
     echo "=========================================="
     echo "          CÁC LỆNH CỦA TELECLOUD          "
     echo "=========================================="
     echo "1. Đăng nhập lần đầu (-auth)"
     echo "2. Reset mật khẩu (-resetpass)"
-    echo "3. Quay lại Menu chính"
-    read -p "Chọn lệnh (1-3): " cmd_choice
+    echo "3. Cập nhật chính Script này (Setup Script)"
+    echo "4. Quay lại Menu chính"
+    read -p "Chọn lệnh (1-4): " cmd_choice
     
     case $cmd_choice in
         1)
@@ -608,6 +627,9 @@ telecloud_commands() {
         2)
             echo "[+] Đang tiến hành reset mật khẩu..."
             cd "$BASE_DIR" && ./telecloud -resetpass
+            ;;
+        3)
+            update_setup_script
             ;;
         *) return ;;
     esac
@@ -687,6 +709,12 @@ rollback() {
     rm -rf "$BASE_DIR" telecloud.tar.gz 2>/dev/null
     exit 1
 }
+
+# Xử lý tham số dòng lệnh (nếu có)
+if [ "$1" == "--update-menu" ]; then
+    create_menu
+    exit 0
+fi
 
 if [ ! -f "$BASE_DIR/telecloud" ]; then
     echo "--- CÀI ĐẶT TELECLOUD LẦN ĐẦU ---"

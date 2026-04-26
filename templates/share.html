@@ -165,7 +165,7 @@
             } else if (videoExts.includes(ext)) {
                 const typeAttr = mimeTypes[ext] || 'video/mp4';
                 const posterAttr = hasThumb ? 'data-poster="' + thumbUrl + '"' : '';
-                previewContainer.innerHTML = '<div class="w-full relative z-20 rounded-[1rem] bg-black overflow-hidden shadow-md"><video id="tele-player" playsinline controls preload="none" ' + posterAttr + '><source src="' + streamUrl + '" type="' + typeAttr + '"></video></div>';
+                previewContainer.innerHTML = '<div class="w-full relative z-20 rounded-[1rem] bg-black shadow-md"><video id="tele-player" playsinline controls preload="none" ' + posterAttr + '><source src="' + streamUrl + '" type="' + typeAttr + '"></video></div>';
                 isMedia = true;
                 playerTarget = '#tele-player';
             } else if (audioExts.includes(ext)) {

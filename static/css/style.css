@@ -142,6 +142,16 @@ body {
     background: rgba(15, 23, 42, 0.7) !important; 
 }
 
+/* Fullscreen fix for Plyr when inside modals/containers */
+.plyr--fullscreen-active {
+    z-index: 999999 !important;
+}
+
+:fullscreen .plyr, :-webkit-full-screen .plyr, :-moz-full-screen .plyr, :-ms-fullscreen .plyr {
+    width: 100% !important;
+    height: 100% !important;
+}
+
 @media (prefers-color-scheme: light) {
     .plyr--audio .plyr__controls { 
         background: rgba(255, 255, 255, 0.8) !important; 

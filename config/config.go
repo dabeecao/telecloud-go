@@ -19,6 +19,7 @@ type Config struct {
 	TempDir         string
 	ProxyURL        string
 	Version         string
+	SessionFile     string
 }
 
 func Load() *Config {
@@ -48,6 +49,7 @@ func Load() *Config {
 		Port:            getEnv("PORT", "8091"),
 		TempDir:         getEnv("TEMP_DIR", os.TempDir()+"/telecloud_temp_chunks"),
 		ProxyURL:        getEnv("PROXY_URL", ""),
+		SessionFile:     getEnv("SESSION_FILE", "session.json"),
 	}
 }
 

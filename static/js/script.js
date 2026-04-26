@@ -24,7 +24,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             fd.append('username', this.username);
             fd.append('password', this.password);
             try {
-                let res = await fetch('/setup', { method: 'POST', body: fd });
+                let res = await fetch('/setup', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
                 if (res.ok) window.location.href = '/';
                 else {
                     let d = await res.json();
@@ -43,7 +43,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             fd.append('old_password', this.settingsForm.oldPassword);
             fd.append('new_password', this.settingsForm.newPassword);
             try {
-                let res = await fetch('/api/settings/password', { method: 'POST', body: fd });
+                let res = await fetch('/api/settings/password', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
                 if (res.ok) {
                     this.showToast(this.t('toast_pass_changed'), 'success');
                     this.settingsForm = { oldPassword: '', newPassword: '', confirmPassword: '' };
@@ -61,7 +61,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             let fd = new FormData();
             fd.append('enabled', newState);
             try {
-                let res = await fetch('/api/settings/webdav', { method: 'POST', body: fd });
+                let res = await fetch('/api/settings/webdav', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
                 if (res.ok) {
                     this.webdavEnabled = newState;
                 } else {
@@ -181,7 +181,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 let fd = new FormData();
                 fd.append('task_id', taskId);
                 fd.append('filename', task.name);
-                fetch('/api/cancel_upload', { method: 'POST', body: fd }).catch(e => console.error("Cancel failed:", e));
+                fetch('/api/cancel_upload', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } }).catch(e => console.error("Cancel failed:", e));
             }
         },
         toastModal: { show: false, message: '', type: 'success' },
@@ -263,7 +263,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 this.showToast(this.t(errorKey), 'error');
             }
         },
-        async logout() { await fetch('/logout', { method: 'POST' }); window.location.href = '/login'; },
+        async logout() { await fetch('/logout', { method: 'POST', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } }); window.location.href = '/login'; },
         getBreadcrumbs() { return this.currentPath === '/' ? [] : this.currentPath.split('/').filter(Boolean); },
         navigateToFolder(folderName) { this.currentPath = this.currentPath === '/' ? '/' + folderName : this.currentPath + '/' + folderName; this.fetchFiles(); },
         navigateToIndex(index) { this.currentPath = '/' + this.getBreadcrumbs().slice(0, index + 1).join('/'); this.fetchFiles(); },
@@ -284,7 +284,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const tempId = 'temp_' + Date.now();
             this.files.unshift({ id: tempId, filename: name.trim(), is_folder: true, size: 0, created_at: new Date().toISOString() });
             const fd = new FormData(); fd.append('name', name.trim()); fd.append('path', this.currentPath);
-            await fetch('/api/folders', { method: 'POST', body: fd });
+            await fetch('/api/folders', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
             this.fetchFiles(true); 
             this.showToast(this.t('toast_created', {n: name.trim()}));
         },
@@ -292,7 +292,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         async executePaste() {
             if (this.clipboard.ids.length === 0) return;
             if (this.clipboard.action === 'move') this.files = this.files.filter(f => !this.clipboard.ids.includes(f.id));
-            await fetch('/api/actions/paste', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: this.clipboard.action, item_ids: this.clipboard.ids, destination: this.currentPath }) });
+            await fetch('/api/actions/paste', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': TeleCloud.getCsrfToken() }, body: JSON.stringify({ action: this.clipboard.action, item_ids: this.clipboard.ids, destination: this.currentPath }) });
             this.clipboard = { action: null, ids: [] }; 
             this.fetchFiles(true);
             this.showToast(this.t('toast_pasted'));
@@ -303,7 +303,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const idsToDelete = [...this.selectedIds];
             this.files = this.files.filter(f => !idsToDelete.includes(f.id));
             this.selectedIds = [];
-            for (let id of idsToDelete) await fetch(`/api/files/${id}`, { method: 'DELETE' });
+            for (let id of idsToDelete) await fetch(`/api/files/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
             this.fetchFiles(true);
             this.showToast(this.t('toast_deleted', {n: idsToDelete.length}), 'success');
         },
@@ -333,7 +333,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     try {
                         let task = this.uploadQueue.find(t => t.id === taskId);
                         if (task && !task.statusText.includes(this.t('status_error'))) task.statusText = `Pushing (${chunkIndex + 1}/${totalChunks})...`;
-                        const response = await fetch('/api/upload', { method: 'POST', body: fd });
+                        const response = await fetch('/api/upload', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
                         if (!response.ok) throw new Error("Upload failed");
                         const result = await response.json();
                         if (task) task.progress = Math.round(((chunkIndex + 1) / totalChunks) * 50);
@@ -368,11 +368,11 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             if (targetFile) {
                 if (targetFile.share_token) {
                     targetFile.share_token = null;
-                    await fetch(`/api/files/${file.id}/share`, { method: 'DELETE' });
+                    await fetch(`/api/files/${file.id}/share`, { method: 'DELETE', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
                     this.showToast(this.t('toast_revoked'), 'success');
                 } else {
                     targetFile.share_token = 'loading...';
-                    const res = await fetch(`/api/files/${file.id}/share`, { method: 'POST' });
+                    const res = await fetch(`/api/files/${file.id}/share`, { method: 'POST', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
                     const data = await res.json();
                     targetFile.share_token = data.share_token;
                     targetFile.direct_token = data.direct_token; 
@@ -394,7 +394,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const confirmed = await this.customConfirm(this.t('delete_confirm_title'), this.t('delete_confirm_msg'), true); 
             if (!confirmed) return; 
             this.files = this.files.filter(f => f.id !== id);
-            await fetch(`/api/files/${id}`, { method: 'DELETE' }); 
+            await fetch(`/api/files/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } }); 
             this.fetchFiles(true);
             this.showToast(this.t('delete'), 'success'); 
         },
@@ -404,7 +404,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const targetFile = this.files.find(f => f.id === file.id);
             if(targetFile) targetFile.filename = newName;
             const fd = new FormData(); fd.append('new_name', newName); 
-            await fetch(`/api/files/${file.id}/rename`, { method: 'PUT', body: fd }); 
+            await fetch(`/api/files/${file.id}/rename`, { method: 'PUT', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } }); 
             this.fetchFiles(true); 
             this.showToast(this.t('toast_renamed')); 
         },

@@ -155,6 +155,83 @@ WebDAV at: `http://localhost:8091/webdav`
 
 ---
 
+## 🐳 Docker Deployment (Recommended for Servers)
+
+This is the recommended deployment method for servers. It makes it easy to manage, update, and run TeleCloud without worrying about the host OS environment.
+
+### Requirements
+- [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed
+
+### 1. Clone the project
+
+```bash
+git clone https://github.com/dabeecao/telecloud-go.git
+cd telecloud-go
+```
+
+### 2. Configure environment
+
+```bash
+cp env.example .env
+```
+
+Open `.env` and fill in the required fields:
+
+```env
+API_ID=your_api_id
+API_HASH=your_api_hash
+LOG_GROUP_ID=me
+PORT=8091
+```
+
+> The `DATABASE_PATH`, `THUMBS_DIR`, and `TEMP_DIR` variables are automatically overridden by docker-compose to point inside the `./data/` volume — you **do not need** to set them when using Docker.
+
+### 3. Authenticate your Telegram account (First time only)
+
+You need to log in to generate the session file (`session.json`):
+
+```bash
+# Build the image first
+docker compose build
+
+# Run the interactive auth flow
+docker compose run --rm telecloud /app/telecloud -auth
+```
+
+Enter your phone number, OTP, and 2FA password (if any). The `session.json` file will be saved in `./data/`.
+
+### 4. Start the server
+
+```bash
+docker compose up -d
+```
+
+Access the web interface at: `http://localhost:8091`
+
+**On first visit**, the system will prompt you to create an admin account and password.
+
+### Useful commands
+
+```bash
+# View logs
+docker compose logs -f
+
+# Stop the application
+docker compose stop
+
+# Update to a new version
+git pull
+docker compose build
+docker compose up -d
+
+# Remove the container (data in ./data/ is preserved)
+docker compose down
+```
+
+> 📁 All persistent data (database, thumbnails, temp files) is stored in the `./data/` directory on your host machine.
+
+---
+
 ## 🛠️ Build from Source (For Developers)
 
 1. Install **Golang (1.21+)**: [https://golang.org/dl/](https://golang.org/dl/)

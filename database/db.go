@@ -58,6 +58,9 @@ func InitDB(dbPath string) {
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {

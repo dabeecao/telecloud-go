@@ -350,5 +350,15 @@ const TeleCloud = {
         let result = types[ext];
         if (typeof result === 'string') result = types[result];
         return result || { n: this.t('type_unknown') + ' (' + ext.toUpperCase() + ')', c: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400', i: '<i class="fa-solid fa-file text-2xl"></i>' };
+    },
+
+    /**
+     * Reads the CSRF token from the csrf_token cookie set by the server.
+     * Use this to attach an X-CSRF-Token header to all POST/PUT/DELETE fetch requests.
+     * @returns {string} The CSRF token, or empty string if not found.
+     */
+    getCsrfToken() {
+        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : '';
     }
 };

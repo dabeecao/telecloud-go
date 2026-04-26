@@ -17,6 +17,7 @@ session.json
 *.db-journal
 *.db-shm
 *.db-wal
+data/
 
 # Media and Generated Assets
 static/thumbs/*

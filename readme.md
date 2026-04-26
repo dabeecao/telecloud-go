@@ -133,6 +133,83 @@ WebDAV tại: `http://localhost:8091/webdav`
 
 ---
 
+## 🐳 Hướng dẫn cài đặt bằng Docker
+
+Đây là cách triển khai được khuyến nghị cho máy chủ (server), giúp dễ dàng quản lý, cập nhật và không cần lo về môi trường hệ điều hành.
+
+### Yêu cầu
+- [Docker](https://docs.docker.com/engine/install/) và [Docker Compose](https://docs.docker.com/compose/install/) đã được cài đặt
+
+### 1. Clone dự án
+
+```bash
+git clone https://github.com/dabeecao/telecloud-go.git
+cd telecloud-go
+```
+
+### 2. Cấu hình môi trường
+
+```bash
+cp env.example .env
+```
+
+Mở `.env` và điền các thông tin bắt buộc:
+
+```env
+API_ID=your_api_id
+API_HASH=your_api_hash
+LOG_GROUP_ID=me
+PORT=8091
+```
+
+> Các biến `DATABASE_PATH`, `THUMBS_DIR`, `TEMP_DIR` được docker-compose tự động ghi đè để lưu vào thư mục `./data/` — bạn **không cần** thay đổi chúng trong `.env` khi dùng Docker.
+
+### 3. Xác thực tài khoản Telegram (Chỉ thực hiện lần đầu)
+
+Lần đầu sử dụng, bạn cần đăng nhập tài khoản Telegram để tạo file phiên (`session.json`):
+
+```bash
+# Build image trước
+docker compose build
+
+# Chạy xác thực tương tác
+docker compose run --rm telecloud /app/telecloud -auth
+```
+
+Nhập số điện thoại, mã OTP và mật khẩu 2FA (nếu có) theo hướng dẫn. Sau khi thành công, file `session.json` sẽ được lưu vào thư mục `./data/`.
+
+### 4. Khởi động
+
+```bash
+docker compose up -d
+```
+
+Truy cập giao diện web tại: `http://localhost:8091`
+
+**Lần đầu tiên truy cập**, hệ thống sẽ yêu cầu bạn tạo tài khoản và mật khẩu quản trị (Admin).
+
+### Các lệnh hữu ích
+
+```bash
+# Xem log
+docker compose logs -f
+
+# Dừng ứng dụng
+docker compose stop
+
+# Cập nhật lên phiên bản mới
+git pull
+docker compose build
+docker compose up -d
+
+# Xóa container (dữ liệu trong ./data/ vẫn được giữ nguyên)
+docker compose down
+```
+
+> 📁 Toàn bộ dữ liệu (database, ảnh thumbnail, file tạm) được lưu trong thư mục `./data/` trên máy chủ của bạn.
+
+---
+
 ## 🛠️ Build từ nguồn (Dành cho nhà phát triển)
 
 Nếu bạn muốn tự biên dịch dự án, hãy làm theo các bước sau:

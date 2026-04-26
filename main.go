@@ -24,7 +24,11 @@ import (
 	"embed"
 	"flag"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -81,18 +85,78 @@ func main() {
 		log.Fatalf("Telegram client init error: %v", err)
 	}
 
+	// cancelCtx is used to signal the Telegram client to stop
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	defer cancelApp()
+
+	// Catch OS signals for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
 	router := api.SetupRouter(cfg, contentFS)
 
-	ctx := context.Background()
-
-	log.Println("Starting Telecloud on port " + cfg.Port + "...")
-
-	// Start telegram client run loop in the background and block on router.Run()
-	err := tgclient.Run(ctx, cfg, func(ctx context.Context) error {
-		return router.Run(":" + cfg.Port)
-	})
-
-	if err != nil {
-		log.Fatalf("Run error: %v", err)
+	httpServer := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
 	}
+
+	// Run Telegram client in the background; it will block until appCtx is cancelled
+	tgErrCh := make(chan error, 1)
+	go func() {
+		tgErrCh <- tgclient.Run(appCtx, cfg, func(ctx context.Context) error {
+			log.Println("Starting TeleCloud on port " + cfg.Port + "...")
+
+			// Start HTTP server in its own goroutine so Telegram keeps running alongside
+			go func() {
+				if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Printf("HTTP server error: %v", err)
+				}
+			}()
+
+			// Block until the app context is cancelled (signal received)
+			<-ctx.Done()
+			return nil
+		})
+	}()
+
+	// Wait for shutdown signal or Telegram client to exit
+	select {
+	case sig := <-sigCh:
+		log.Printf("Received signal: %v — initiating graceful shutdown...", sig)
+	case err := <-tgErrCh:
+		if err != nil {
+			log.Printf("Telegram client exited with error: %v", err)
+		}
+	}
+
+	// Step 1: Gracefully shut down HTTP server (wait up to 15s for in-flight requests)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+
+	log.Println("Shutting down HTTP server...")
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP server forced to shut down: %v", err)
+	} else {
+		log.Println("HTTP server stopped cleanly.")
+	}
+
+	// Step 2: Cancel app context → signals Telegram client goroutine to exit
+	cancelApp()
+
+	// Step 3: Wait for Telegram client to finish (with timeout)
+	select {
+	case <-tgErrCh:
+		log.Println("Telegram client stopped.")
+	case <-time.After(10 * time.Second):
+		log.Println("Telegram client did not stop in time; forcing exit.")
+	}
+
+	// Step 4: Close database connection safely
+	if err := database.DB.Close(); err != nil {
+		log.Printf("Error closing database: %v", err)
+	} else {
+		log.Println("Database closed cleanly.")
+	}
+
+	log.Println("TeleCloud shut down successfully.")
 }

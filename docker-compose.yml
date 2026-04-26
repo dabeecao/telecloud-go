@@ -1,0 +1,27 @@
+services:
+  telecloud:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: telecloud
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8091}:8091"
+    env_file:
+      - .env
+    environment:
+      # Override paths to point inside /app/data volume
+      - DATABASE_PATH=/app/data/database.db
+      - THUMBS_DIR=/app/data/thumbs
+      - TEMP_DIR=/app/data/temp
+      - SESSION_FILE=/app/data/session.json
+    volumes:
+      # Persist database, thumbnails, temp files, and Telegram session
+      - ./data:/app/data
+    # Health check: ping the web server every 30s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8091/ > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

@@ -63,7 +63,7 @@ func (termAuth) Code(ctx context.Context, sentCode *tg.AuthSentCode) (string, er
 }
 
 func InitClient(cfg *config.Config, runAuthFlow bool) error {
-	sessionDir := "session.json"
+	sessionDir := cfg.SessionFile
 	
 	options := telegram.Options{
 		SessionStorage: &session.FileStorage{

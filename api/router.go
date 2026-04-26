@@ -24,6 +24,51 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+const csrfCookieName = "csrf_token"
+const csrfHeaderName = "X-CSRF-Token"
+
+// generateCSRFToken creates a new random CSRF token
+func generateCSRFToken() string {
+	return uuid.New().String()
+}
+
+// setCSRFCookie sets the CSRF cookie on a response.
+// HttpOnly=false so JavaScript can read it to include in request headers.
+func setCSRFCookie(c *gin.Context) string {
+	token, err := c.Cookie(csrfCookieName)
+	if err != nil || token == "" {
+		token = generateCSRFToken()
+	}
+	c.SetCookie(csrfCookieName, token, 3600*24*7, "/", "", false, false)
+	return token
+}
+
+// csrfMiddleware validates the X-CSRF-Token header against the csrf_token cookie.
+// Applies to all state-changing methods: POST, PUT, PATCH, DELETE.
+func csrfMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		method := c.Request.Method
+		if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+			c.Next()
+			return
+		}
+
+		cookieToken, err := c.Cookie(csrfCookieName)
+		if err != nil || cookieToken == "" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "csrf token missing"})
+			return
+		}
+
+		headerToken := c.GetHeader(csrfHeaderName)
+		if headerToken == "" || headerToken != cookieToken {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "csrf token invalid"})
+			return
+		}
+
+		c.Next()
+	}
+}
+
 type PasteRequest struct {
 	Action      string `json:"action"`
 	ItemIDs     []int  `json:"item_ids"`
@@ -101,6 +146,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.Redirect(http.StatusFound, "/")
 			return
 		}
+		setCSRFCookie(c)
 		c.HTML(http.StatusOK, "setup.html", gin.H{
 			"version": cfg.Version,
 		})
@@ -147,6 +193,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 		
+		setCSRFCookie(c)
 		webdavEnabled := database.GetSetting("webdav_enabled") == "true"
 		webdavUser := database.GetSetting("admin_username")
 
@@ -165,6 +212,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.Redirect(http.StatusFound, "/")
 			return
 		}
+		setCSRFCookie(c)
 		c.HTML(http.StatusOK, "login.html", gin.H{
 			"version": cfg.Version,
 		})
@@ -212,14 +260,16 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 	})
 
-	r.POST("/logout", func(c *gin.Context) {
+	r.POST("/logout", csrfMiddleware(), func(c *gin.Context) {
 		database.SetSetting("session_token", "") // Invalidate session in DB
 		c.SetCookie("session_token", "", -1, "/", "", false, true)
+		c.SetCookie(csrfCookieName, "", -1, "/", "", false, false)
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
 	api := r.Group("/api")
 	api.Use(authMiddleware())
+	api.Use(csrfMiddleware())
 	{
 		api.POST("/settings/password", func(c *gin.Context) {
 			oldPassword := c.PostForm("old_password")

@@ -17,6 +17,7 @@ import (
 	"telecloud/tgclient"
 	"telecloud/utils"
 	"telecloud/webdav"
+	"telecloud/ws"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -324,6 +325,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		api.GET("/progress/:task_id", func(c *gin.Context) {
 			taskID := c.Param("task_id")
 			c.JSON(http.StatusOK, tgclient.GetTask(taskID))
+		})
+
+		api.GET("/ws", func(c *gin.Context) {
+			ws.HandleWebSocket(c.Writer, c.Request)
 		})
 
 		api.GET("/files", func(c *gin.Context) {

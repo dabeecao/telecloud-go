@@ -11,6 +11,7 @@ import (
 	"telecloud/config"
 	"telecloud/database"
 	"telecloud/utils"
+	"telecloud/ws"
 
 	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/telegram/message/html"
@@ -42,6 +43,7 @@ func UpdateTask(taskID string, status string, percent int, msg string) {
 		Percent: percent,
 		Message: msg,
 	}
+	ws.BroadcastTaskUpdate(taskID, status, percent, msg)
 }
 
 func GetTask(taskID string) *UploadStatus {
@@ -230,7 +232,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		size = fileInfo.Size()
 	}
 
-	localThumb := utils.CreateLocalThumbnail(filePath, mimeType)
+	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
 
 	// Save to DB
 	_, err = database.DB.Exec(

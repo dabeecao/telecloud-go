@@ -13,6 +13,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         isLoading: false, 
         isRefreshing: false,
         isPreparingDownload: false,
+        ws: null,
         lang: TeleCloud.lang,
         t(key, params) { return TeleCloud.t(key, params, this.lang); },
         async setupAdmin() {
@@ -194,6 +195,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             if (this.isLoggedIn) {
                 this.fetchFiles(false);
                 this.checkUpdate();
+                this.initWebSocket();
             }
         },
         async checkUpdate() {
@@ -222,6 +224,46 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     }
                 }
             } catch (e) { console.error('Failed to check for updates', e); }
+        },
+        initWebSocket() {
+            if (this.ws) return;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/ws`;
+            this.ws = new WebSocket(wsUrl);
+            
+            this.ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    let task = this.uploadQueue.find(t => t.id === data.task_id);
+                    if (task) {
+                        if (data.status === 'telegram' || data.status === 'done') {
+                            task.progress = 50 + Math.round(data.percent / 2);
+                        }
+                        if (data.status === 'done') {
+                            task.progress = 100;
+                            task.statusText = this.t('done');
+                            this.fetchFiles(true);
+                        } else if (data.status === 'error') {
+                            task.statusText = this.t('status_error') + ': ' + (data.message || 'Unknown');
+                        } else if (data.status === 'telegram') {
+                            task.statusText = this.t('syncing_tg');
+                        }
+                    }
+                } catch (e) {
+                    console.error('WS message error:', e);
+                }
+            };
+
+            this.ws.onclose = () => {
+                this.ws = null;
+                // Reconnect after 5 seconds
+                setTimeout(() => this.initWebSocket(), 5000);
+            };
+
+            this.ws.onerror = (err) => {
+                console.error('WS error:', err);
+                this.ws.close();
+            };
         },
         showUIModal(type, title, message = '', defaultValue = '', isDanger = false) {
             return new Promise((resolve) => {
@@ -339,20 +381,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                         if (task) task.progress = Math.round(((chunkIndex + 1) / totalChunks) * 50);
                         if (result.status === "processing_telegram") {
                             if (task) task.statusText = this.t('syncing_tg');
-                            let pollInterval = setInterval(async () => {
-                                try { 
-                                    let t = this.uploadQueue.find(x => x.id === taskId); 
-                                    if (t && t.isCancelled) { clearInterval(pollInterval); return; }
-                                    let pRes = await fetch(`/api/progress/${taskId}`);
-                                    if (pRes.ok) { 
-                                        let pData = await pRes.json(); 
-                                        let t = this.uploadQueue.find(x => x.id === taskId); 
-                                        if (pData.status === 'telegram' || pData.status === 'done') if (t) t.progress = 50 + Math.round(pData.percent / 2); 
-                                        if (pData.status === 'done') { clearInterval(pollInterval); if (t) { t.progress = 100; t.statusText = this.t('done'); } this.fetchFiles(true); } 
-                                        else if (pData.status === 'error') { clearInterval(pollInterval); if (t) t.statusText = this.t('status_error') + ': ' + (pData.message || 'Unknown'); }
-                                    } 
-                                } catch (e) { console.error("Poll progress error:", e); }
-                            }, 1000);
+                            // Polling removed - handled by WebSocket
                         }
                     } catch (err) { 
                         console.error("Upload chunk error:", err);

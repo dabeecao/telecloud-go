@@ -20,6 +20,7 @@ type Config struct {
 	ProxyURL        string
 	Version         string
 	SessionFile     string
+	FFMPEGPath      string
 }
 
 func Load() *Config {
@@ -50,6 +51,7 @@ func Load() *Config {
 		TempDir:         getEnv("TEMP_DIR", os.TempDir()+"/telecloud_temp_chunks"),
 		ProxyURL:        getEnv("PROXY_URL", ""),
 		SessionFile:     getEnv("SESSION_FILE", "session.json"),
+		FFMPEGPath:      getEnv("FFMPEG_PATH", "ffmpeg"),
 	}
 }
 

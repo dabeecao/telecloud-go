@@ -555,10 +555,14 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 }
             }
         },
-        copyShareLink(file, type = 'regular') {
+        async copyShareLink(file, type = 'regular') {
             const link = type === 'direct' ? `${window.location.origin}/dl/${file.direct_token}` : `${window.location.origin}/s/${file.share_token}`;
-            navigator.clipboard.writeText(link);
-            this.showToast(this.t('toast_copied', {t: type === 'direct' ? 'Direct' : 'Share'}));
+            try {
+                await TeleCloud.copyToClipboard(link);
+                this.showToast(this.t('toast_copied', {t: type === 'direct' ? 'Direct' : 'Share'}));
+            } catch (err) {
+                console.error('Failed to copy link:', err);
+            }
         },
         showToast(msg, type = 'success') {
             this.toastModal = { show: true, message: msg, type: type };

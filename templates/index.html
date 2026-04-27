@@ -454,7 +454,7 @@
                                                 <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-xs break-all"
                                                     x-text="window.location.origin + '/webdav'"></div>
                                                 <button
-                                                    @click="navigator.clipboard.writeText(window.location.origin + '/webdav'); showToast(t('toast_copied', {t: 'URL'}), 'success')"
+                                                    @click="TeleCloud.copyToClipboard(window.location.origin + '/webdav'); showToast(t('toast_copied', {t: 'URL'}), 'success')"
                                                     class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white transition-all shrink-0">
                                                     <i class="fa-solid fa-copy"></i>
                                                 </button>
@@ -469,7 +469,7 @@
                                                     <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-xs truncate"
                                                         x-text="webdavUser"></div>
                                                     <button
-                                                        @click="navigator.clipboard.writeText(webdavUser); showToast(t('toast_copied', {t: 'Username'}), 'success')"
+                                                        @click="TeleCloud.copyToClipboard(webdavUser); showToast(t('toast_copied', {t: 'Username'}), 'success')"
                                                         class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white transition-all shrink-0">
                                                         <i class="fa-solid fa-copy"></i>
                                                     </button>
@@ -522,7 +522,7 @@
                                                     <span class="text-slate-500 dark:text-slate-400 mr-1">POST</span>
                                                     <span x-text="window.location.origin + '/api/upload-api/upload'"></span>
                                                 </div>
-                                                <button @click="navigator.clipboard.writeText(window.location.origin + '/api/upload-api/upload'); showToast(t('toast_copied', {t: 'URL'}), 'success')"
+                                                <button @click="TeleCloud.copyToClipboard(window.location.origin + '/api/upload-api/upload'); showToast(t('toast_copied', {t: 'URL'}), 'success')"
                                                     class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-violet-600 hover:text-white transition-all shrink-0">
                                                     <i class="fa-solid fa-copy"></i>
                                                 </button>
@@ -546,7 +546,7 @@
                                                             :title="showAPIKey ? t('upload_api_hide_key') : t('upload_api_show_key')">
                                                             <i class="fa-solid text-sm" :class="showAPIKey ? 'fa-eye-slash' : 'fa-eye'"></i>
                                                         </button>
-                                                        <button @click="navigator.clipboard.writeText(uploadAPIKey); showToast(t('upload_api_copy_key'), 'success')"
+                                                        <button @click="TeleCloud.copyToClipboard(uploadAPIKey); showToast(t('upload_api_copy_key'), 'success')"
                                                             class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-violet-600 hover:text-white transition-all"
                                                             :title="t('upload_api_copy_key')">
                                                             <i class="fa-solid fa-copy text-sm"></i>
@@ -593,7 +593,7 @@
   -H 'Authorization: Bearer <YOUR_API_KEY>' \\
   -F 'file=@/path/to/yourfile.txt' \\
   -F 'path=/'`"></code></pre>
-                                                    <button @click="navigator.clipboard.writeText(`curl -X POST ${window.location.origin}/api/upload-api/upload -H 'Authorization: Bearer ${uploadAPIKey}' -F 'file=@/path/to/yourfile.txt' -F 'path=/'`); showToast(t('toast_copied', {t: 'cURL'}), 'success')"
+                                                    <button @click="TeleCloud.copyToClipboard(`curl -X POST ${window.location.origin}/api/upload-api/upload -H 'Authorization: Bearer ${uploadAPIKey}' -F 'file=@/path/to/yourfile.txt' -F 'path=/'`); showToast(t('toast_copied', {t: 'cURL'}), 'success')"
                                                         class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 bg-slate-700 hover:bg-violet-600 text-white rounded-lg transition-all text-[10px]">
                                                         <i class="fa-solid fa-copy"></i>
                                                     </button>
@@ -608,7 +608,7 @@
   -F 'file=@/path/to/yourfile.txt' \\
   -F 'path=/' \\
   -F 'share=public'`"></code></pre>
-                                                    <button @click="navigator.clipboard.writeText(`curl -X POST ${window.location.origin}/api/upload-api/upload -H 'Authorization: Bearer ${uploadAPIKey}' -F 'file=@/path/to/yourfile.txt' -F 'path=/' -F 'share=public'`); showToast(t('toast_copied', {t: 'cURL'}), 'success')"
+                                                    <button @click="TeleCloud.copyToClipboard(`curl -X POST ${window.location.origin}/api/upload-api/upload -H 'Authorization: Bearer ${uploadAPIKey}' -F 'file=@/path/to/yourfile.txt' -F 'path=/' -F 'share=public'`); showToast(t('toast_copied', {t: 'cURL'}), 'success')"
                                                         class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 bg-slate-700 hover:bg-violet-600 text-white rounded-lg transition-all text-[10px]">
                                                         <i class="fa-solid fa-copy"></i>
                                                     </button>

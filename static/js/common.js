@@ -455,5 +455,40 @@ const TeleCloud = {
     getCsrfToken() {
         const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
         return match ? decodeURIComponent(match[1]) : '';
+    },
+
+    /**
+     * Copies text to the clipboard with fallback for non-secure contexts (HTTP).
+     * @param {string} text The text to copy.
+     * @returns {Promise} A promise that resolves when the text is copied.
+     */
+    async copyToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch (err) {
+                console.error('navigator.clipboard.writeText failed', err);
+            }
+        }
+
+        // Fallback for non-secure contexts (HTTP) or failure
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        textArea.style.top = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        let success = false;
+        try {
+            success = document.execCommand('copy');
+        } catch (err) {
+            console.error('Fallback copy failed', err);
+        }
+        document.body.removeChild(textArea);
+        if (!success) throw new Error('Copy failed');
+        return true;
     }
 };

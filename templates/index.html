@@ -563,7 +563,7 @@
 
                                             <!-- cURL example -->
                                             <div>
-                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">cURL — Basic</p>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5" x-text="t('curl_basic')"></p>
                                                 <div class="relative group">
                                                     <pre class="bg-slate-900 dark:bg-slate-950 text-emerald-400 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all"><code x-text="`curl -X POST ${window.location.origin}/api/upload-api/upload \\
   -H 'Authorization: Bearer <YOUR_API_KEY>' \\
@@ -577,7 +577,7 @@
                                             </div>
                                             <!-- cURL example with share -->
                                             <div>
-                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">cURL — Auto Share Link</p>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5" x-text="t('curl_share')"></p>
                                                 <div class="relative group">
                                                     <pre class="bg-slate-900 dark:bg-slate-950 text-emerald-400 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all"><code x-text="`curl -X POST ${window.location.origin}/api/upload-api/upload \\
   -H 'Authorization: Bearer <YOUR_API_KEY>' \\
@@ -619,7 +619,7 @@
   "path":     "/",
   "file_id":  42
 }</code></pre>
-                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-1">Response — With share=public</p>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-1" x-text="t('response_share')"></p>
                                                 <pre class="bg-slate-900 dark:bg-slate-950 text-blue-300 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto"><code>{
   "status":       "done",
   "filename":     "yourfile.txt",
@@ -918,7 +918,7 @@
                 <div class="flex items-center gap-6">
                     <div class="flex items-center gap-1.5">
                         <i class="fa-solid fa-hard-drive"></i>
-                        <span><span x-text="t('capcity') + ':'"></span> <span
+                        <span><span x-text="t('capacity') + ':'"></span> <span
                                 class="text-slate-700 dark:text-slate-300 font-semibold"
                                 x-text="t('unlimited')"></span></span>
                     </div>

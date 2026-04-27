@@ -32,10 +32,10 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 if (res.ok) window.location.href = '/';
                 else {
                     let d = await res.json();
-                    this.showToast(d.error || 'Setup failed', 'error');
+                    this.showToast(d.error || this.t('setup_failed'), 'error');
                 }
             } catch (e) {
-                this.showToast('Setup error', 'error');
+                this.showToast(this.t('setup_error'), 'error');
             }
         },
         async changePassword() {
@@ -69,10 +69,10 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 if (res.ok) {
                     this.webdavEnabled = newState;
                 } else {
-                    this.showToast('Failed to toggle WebDAV', 'error');
+                    this.showToast(this.t('webdav_toggle_error'), 'error');
                 }
             } catch(e) {
-                this.showToast('Error', 'error');
+                this.showToast(this.t('status_error'), 'error');
             }
         },
         async toggleUploadAPI() {
@@ -91,7 +91,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     this.showToast(this.t('api_toggle_error'), 'error');
                 }
             } catch(e) {
-                this.showToast('Error', 'error');
+                this.showToast(this.t('status_error'), 'error');
             }
         },
         async regenerateAPIKey() {
@@ -106,7 +106,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     this.showToast(this.t('api_toggle_error'), 'error');
                 }
             } catch(e) {
-                this.showToast('Error', 'error');
+                this.showToast(this.t('status_error'), 'error');
             }
         },
         async deleteAPIKey() {
@@ -120,7 +120,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     this.showToast(this.t('api_key_deleted'), 'success');
                 }
             } catch(e) {
-                this.showToast('Error', 'error');
+                this.showToast(this.t('status_error'), 'error');
             }
         },
         toggleLang() { 
@@ -425,7 +425,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     fd.append('task_id', taskId); fd.append('chunk_index', chunkIndex); fd.append('total_chunks', totalChunks);
                     try {
                         let task = this.uploadQueue.find(t => t.id === taskId);
-                        if (task && !task.statusText.includes(this.t('status_error'))) task.statusText = `Pushing (${chunkIndex + 1}/${totalChunks})...`;
+                        if (task && !task.statusText.includes(this.t('status_error'))) task.statusText = `${this.t('pushing')} (${chunkIndex + 1}/${totalChunks})...`;
                         const response = await fetch('/api/upload', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
                         if (!response.ok) throw new Error("Upload failed");
                         const result = await response.json();

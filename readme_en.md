@@ -38,6 +38,7 @@ This project has been **completely rewritten in Golang** from the original proje
 * 📦 Chunked uploads for better speed and stability
 * 👤 Supports **Userbot** with powerful **MTProto** (upload files up to 2GB/4GB)
 * 📂 **WebDAV** Support: Mount TeleCloud as a network drive on your computer (Windows, macOS, Linux).
+* 🔌 **Upload API**: Allows remote file uploads via HTTP API (Bearer Token) for integration into scripts or CI/CD.
 * 🌐 **Multi-language**: Supports Vietnamese and English UI
 
 ---
@@ -102,7 +103,7 @@ Main fields in `.env`:
 * `API_ID` & `API_HASH`: Get from [https://my.telegram.org](https://my.telegram.org)
 * `LOG_GROUP_ID`: ID of the group/channel storing files or use `me` for Saved Messages
 * `PORT`: Port to run the application
-* `MAX_UPLOAD_SIZE_MB`: Maximum upload file size (Premium accounts can go up to 4096MB)
+* `MAX_UPLOAD_SIZE_MB`: Maximum upload file size. Set to `0` for automatic detection (2GB for Normal, 4GB for Premium accounts)
 * `DATABASE_PATH`: (Optional) Path to the database file (default: `database.db`)
 * `THUMBS_DIR`: (Optional) Directory for storing thumbnails (default: `./static/thumbs`)
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process (default: `./temp`)
@@ -177,6 +178,18 @@ Access the web interface at: `http://localhost:8091`
 - **On first access**, the system will prompt you to create an admin account and password.
 - Other configurations like changing password and configuring **WebDAV** can be done directly in the **Settings** section of the web interface after logging in.
 WebDAV at: `http://localhost:8091/webdav`
+
+---
+
+## 🔌 Upload API
+
+TeleCloud provides a simple HTTP API so you can upload files from external scripts or the command line.
+
+- **Endpoint**: `POST /api/upload-api/upload`
+- **Authentication**: Bearer Token (Get it in the Web UI Settings).
+- **Parameters**: `file` (multipart/form-data), `path` (optional), `share` (optional, set to "public" to get a share link immediately).
+
+You can view detailed documentation and `curl` examples directly in the **Settings -> Upload API** section of the web interface.
 
 ---
 

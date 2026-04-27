@@ -1,10 +1,13 @@
-function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = false, webdavUser = '', webdavPassword = '') {
+function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = false, webdavUser = '', webdavPassword = '', uploadAPIEnabled = false, uploadAPIKey = '') {
     return {
         isLoggedIn: initialIsLoggedIn,
         maxUploadSizeMB: initialMaxUploadSizeMB,
         webdavEnabled: webdavEnabled,
         webdavUser: webdavUser,
         webdavPassword: webdavPassword,
+        uploadAPIEnabled: uploadAPIEnabled,
+        uploadAPIKey: uploadAPIKey,
+        showAPIKey: false,
         currentTab: 'files',
         username: '',
         password: '', 
@@ -67,6 +70,54 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     this.webdavEnabled = newState;
                 } else {
                     this.showToast('Failed to toggle WebDAV', 'error');
+                }
+            } catch(e) {
+                this.showToast('Error', 'error');
+            }
+        },
+        async toggleUploadAPI() {
+            let newState = !this.uploadAPIEnabled;
+            let fd = new FormData();
+            fd.append('enabled', newState);
+            try {
+                let res = await fetch('/api/settings/upload-api', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
+                if (res.ok) {
+                    this.uploadAPIEnabled = newState;
+                    // Auto-generate a key if enabling and no key exists
+                    if (newState && !this.uploadAPIKey) {
+                        await this.regenerateAPIKey();
+                    }
+                } else {
+                    this.showToast(this.t('api_toggle_error'), 'error');
+                }
+            } catch(e) {
+                this.showToast('Error', 'error');
+            }
+        },
+        async regenerateAPIKey() {
+            try {
+                let res = await fetch('/api/settings/upload-api/regenerate-key', { method: 'POST', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
+                if (res.ok) {
+                    let d = await res.json();
+                    this.uploadAPIKey = d.api_key;
+                    this.showAPIKey = true;
+                    this.showToast(this.t('api_key_regenerated'), 'success');
+                } else {
+                    this.showToast(this.t('api_toggle_error'), 'error');
+                }
+            } catch(e) {
+                this.showToast('Error', 'error');
+            }
+        },
+        async deleteAPIKey() {
+            const confirmed = await this.customConfirm(this.t('api_key_delete_title'), this.t('api_key_delete_msg'), true);
+            if (!confirmed) return;
+            try {
+                let res = await fetch('/api/settings/upload-api/key', { method: 'DELETE', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
+                if (res.ok) {
+                    this.uploadAPIKey = '';
+                    this.showAPIKey = false;
+                    this.showToast(this.t('api_key_deleted'), 'success');
                 }
             } catch(e) {
                 this.showToast('Error', 'error');

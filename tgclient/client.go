@@ -131,6 +131,31 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 		if !status.Authorized {
 			return fmt.Errorf("not authorized, please run with -auth flag first to login")
 		}
+
+		// Detect MaxUploadSizeMB if not set
+		if cfg.MaxUploadSizeMB <= 0 {
+			api := Client.API()
+			fullUser, err := api.UsersGetFullUser(ctx, &tg.InputUserSelf{})
+			if err == nil {
+				isPremium := false
+				for _, u := range fullUser.Users {
+					if user, ok := u.(*tg.User); ok {
+						isPremium = user.Premium
+						break
+					}
+				}
+				if isPremium {
+					cfg.MaxUploadSizeMB = 4000
+				} else {
+					cfg.MaxUploadSizeMB = 2000
+				}
+				log.Printf("Detected Telegram account status: Premium=%v. Automatically setting MaxUploadSizeMB to %d", isPremium, cfg.MaxUploadSizeMB)
+			} else {
+				cfg.MaxUploadSizeMB = 2000 // Fallback
+				log.Printf("Could not detect Telegram account status: %v. Using default 2000 MB", err)
+			}
+		}
+
 		return cb(ctx)
 	})
 }

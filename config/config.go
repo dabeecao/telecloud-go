@@ -36,7 +36,7 @@ func Load() *Config {
 		log.Fatal("Error: API_ID and API_HASH must be set in .env. Please get them from https://my.telegram.org")
 	}
 
-	maxUploadSizeMB, _ := strconv.Atoi(getEnv("MAX_UPLOAD_SIZE_MB", "2048"))
+	maxUploadSizeMB, _ := strconv.Atoi(getEnv("MAX_UPLOAD_SIZE_MB", "0"))
 
 	logGroupID := os.Getenv("LOG_GROUP_ID")
 

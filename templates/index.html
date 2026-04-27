@@ -37,7 +37,7 @@
 
 <body
     class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 h-full relative overflow-hidden flex flex-col transition-colors duration-500"
-    x-data="cloudApp(true, {{ .max_upload_size_mb }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}')"
+    x-data="cloudApp(true, {{ .max_upload_size_mb }}, {{ if .webdav_enabled }}true{{ else }}false{{ end }}, '{{ .webdav_user }}', '{{ .webdav_password }}', {{ if .upload_api_enabled }}true{{ else }}false{{ end }}, '{{ .upload_api_key }}')"
     @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="handleDrop($event)">
 
     <div class="blob-1"></div>
@@ -401,6 +401,7 @@
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div class="flex flex-col gap-6">
+                            <!-- WebDAV Card -->
                             <div class="glass-panel p-6 rounded-3xl border border-white/10">
                                 <div class="flex items-center justify-between mb-4">
                                     <h3 class="text-lg font-bold flex items-center gap-2">
@@ -460,6 +461,180 @@
                                                 <span x-text="t('webdav_setup_title')"></span>
                                             </div>
                                             <div x-html="t('webdav_setup_guide')"></div>
+                                        </div>
+
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Upload API Card -->
+                            <div class="glass-panel p-6 rounded-3xl border border-white/10">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="text-lg font-bold flex items-center gap-2">
+                                        <i class="fa-solid fa-plug text-violet-500"></i>
+                                        <span x-text="t('upload_api')"></span>
+                                    </h3>
+                                    <button @click="toggleUploadAPI"
+                                        class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                        :class="uploadAPIEnabled ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-600'"
+                                        role="switch" :aria-checked="uploadAPIEnabled">
+                                        <span aria-hidden="true"
+                                            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                                            :class="uploadAPIEnabled ? 'translate-x-5' : 'translate-x-0'"></span>
+                                    </button>
+                                </div>
+                                <p class="text-sm text-slate-500 dark:text-slate-400 mb-1" x-text="t('upload_api_desc')"></p>
+                                <p class="text-[11px] text-slate-400 mb-4 font-medium flex items-center gap-1.5"><i class="fa-solid fa-circle-info opacity-70"></i><span x-text="t('max_size')"></span>: <span class="font-bold text-slate-600 dark:text-slate-300" x-text="maxUploadSizeMB"></span> MB</p>
+
+                                <div x-show="uploadAPIEnabled" x-collapse>
+                                    <div class="space-y-4 pt-2">
+
+                                        <!-- Endpoint -->
+                                        <div>
+                                            <label class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block"
+                                                x-text="t('upload_api_endpoint')"></label>
+                                            <div class="flex items-center gap-2">
+                                                <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-xs break-all text-violet-700 dark:text-violet-300">
+                                                    <span class="text-slate-500 dark:text-slate-400 mr-1">POST</span>
+                                                    <span x-text="window.location.origin + '/api/upload-api/upload'"></span>
+                                                </div>
+                                                <button @click="navigator.clipboard.writeText(window.location.origin + '/api/upload-api/upload'); showToast(t('toast_copied', {t: 'URL'}), 'success')"
+                                                    class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-violet-600 hover:text-white transition-all shrink-0">
+                                                    <i class="fa-solid fa-copy"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- API Key -->
+                                        <div>
+                                            <label class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 block"
+                                                x-text="t('upload_api_key_label')"></label>
+                                            <template x-if="!uploadAPIKey">
+                                                <p class="text-sm text-slate-400 italic p-3 rounded-xl bg-slate-100 dark:bg-slate-800" x-text="t('upload_api_no_key')"></p>
+                                            </template>
+                                            <template x-if="uploadAPIKey">
+                                                <div class="flex items-center gap-2">
+                                                    <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-xs break-all select-all"
+                                                        x-text="showAPIKey ? uploadAPIKey : uploadAPIKey.substring(0,8) + '••••••••••••••••••••••••••••'"></div>
+                                                    <div class="flex flex-col gap-1.5 shrink-0">
+                                                        <button @click="showAPIKey = !showAPIKey"
+                                                            class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-violet-600 hover:text-white transition-all"
+                                                            :title="showAPIKey ? t('upload_api_hide_key') : t('upload_api_show_key')">
+                                                            <i class="fa-solid text-sm" :class="showAPIKey ? 'fa-eye-slash' : 'fa-eye'"></i>
+                                                        </button>
+                                                        <button @click="navigator.clipboard.writeText(uploadAPIKey); showToast(t('upload_api_copy_key'), 'success')"
+                                                            class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-violet-600 hover:text-white transition-all"
+                                                            :title="t('upload_api_copy_key')">
+                                                            <i class="fa-solid fa-copy text-sm"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+
+                                        <!-- Key Actions -->
+                                        <div class="flex gap-2">
+                                            <button @click="regenerateAPIKey"
+                                                class="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-lg shadow-violet-500/20 transition-all active:scale-95">
+                                                <i class="fa-solid fa-rotate-right"></i>
+                                                <span x-text="t('upload_api_regenerate')"></span>
+                                            </button>
+                                            <template x-if="uploadAPIKey">
+                                                <button @click="deleteAPIKey"
+                                                    class="px-3 py-2.5 rounded-xl bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-600 dark:text-red-400 text-xs font-semibold transition-all active:scale-95"
+                                                    :title="t('upload_api_delete_key')">
+                                                    <i class="fa-solid fa-trash"></i>
+                                                </button>
+                                            </template>
+                                        </div>
+
+                                        <!-- Warning -->
+                                        <div class="flex items-start gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
+                                            <i class="fa-solid fa-triangle-exclamation text-amber-500 mt-0.5 shrink-0"></i>
+                                            <p class="text-xs text-amber-700 dark:text-amber-300" x-text="t('upload_api_warning')"></p>
+                                        </div>
+
+                                        <!-- API Docs -->
+                                        <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 text-xs text-slate-600 dark:text-slate-300 space-y-3">
+                                            <div class="font-bold flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
+                                                <i class="fa-solid fa-book text-violet-500"></i>
+                                                <span x-text="t('upload_api_doc_title')"></span>
+                                            </div>
+
+                                            <!-- cURL example -->
+                                            <div>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">cURL — Basic</p>
+                                                <div class="relative group">
+                                                    <pre class="bg-slate-900 dark:bg-slate-950 text-emerald-400 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all"><code x-text="`curl -X POST ${window.location.origin}/api/upload-api/upload \\
+  -H 'Authorization: Bearer <YOUR_API_KEY>' \\
+  -F 'file=@/path/to/yourfile.txt' \\
+  -F 'path=/'`"></code></pre>
+                                                    <button @click="navigator.clipboard.writeText(`curl -X POST ${window.location.origin}/api/upload-api/upload -H 'Authorization: Bearer ${uploadAPIKey}' -F 'file=@/path/to/yourfile.txt' -F 'path=/'`); showToast(t('toast_copied', {t: 'cURL'}), 'success')"
+                                                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 bg-slate-700 hover:bg-violet-600 text-white rounded-lg transition-all text-[10px]">
+                                                        <i class="fa-solid fa-copy"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <!-- cURL example with share -->
+                                            <div>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">cURL — Auto Share Link</p>
+                                                <div class="relative group">
+                                                    <pre class="bg-slate-900 dark:bg-slate-950 text-emerald-400 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all"><code x-text="`curl -X POST ${window.location.origin}/api/upload-api/upload \\
+  -H 'Authorization: Bearer <YOUR_API_KEY>' \\
+  -F 'file=@/path/to/yourfile.txt' \\
+  -F 'path=/' \\
+  -F 'share=public'`"></code></pre>
+                                                    <button @click="navigator.clipboard.writeText(`curl -X POST ${window.location.origin}/api/upload-api/upload -H 'Authorization: Bearer ${uploadAPIKey}' -F 'file=@/path/to/yourfile.txt' -F 'path=/' -F 'share=public'`); showToast(t('toast_copied', {t: 'cURL'}), 'success')"
+                                                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 bg-slate-700 hover:bg-violet-600 text-white rounded-lg transition-all text-[10px]">
+                                                        <i class="fa-solid fa-copy"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <!-- Parameters -->
+                                            <div>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5" x-text="t('upload_api_params')"></p>
+                                                <div class="space-y-1.5 pl-1.5 border-l-2 border-slate-200 dark:border-slate-700">
+                                                    <div class="flex items-start gap-2">
+                                                        <span class="font-mono bg-violet-100 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300 px-1.5 py-0.5 rounded text-[10px] shrink-0">file</span>
+                                                        <span class="text-slate-500 dark:text-slate-400" x-text="t('upload_api_param_file')"></span>
+                                                    </div>
+                                                    <div class="flex items-start gap-2">
+                                                        <span class="font-mono bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded text-[10px] shrink-0">path</span>
+                                                        <span class="text-slate-500 dark:text-slate-400" x-text="t('upload_api_param_path')"></span>
+                                                    </div>
+                                                    <div class="flex items-start gap-2">
+                                                        <span class="font-mono bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded text-[10px] shrink-0">share</span>
+                                                        <span class="text-slate-500 dark:text-slate-400" x-text="t('upload_api_param_share')"></span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Response -->
+                                            <div class="space-y-2">
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider" x-text="t('upload_api_response_title')"></p>
+                                                <pre class="bg-slate-900 dark:bg-slate-950 text-blue-300 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto"><code>{
+  "status":   "done",
+  "filename": "yourfile.txt",
+  "path":     "/",
+  "file_id":  42
+}</code></pre>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-1">Response — With share=public</p>
+                                                <pre class="bg-slate-900 dark:bg-slate-950 text-blue-300 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto"><code>{
+  "status":       "done",
+  "filename":     "yourfile.txt",
+  "path":         "/",
+  "file_id":      42,
+  "share_token":  "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "share_link":   "https://yourhost/s/&lt;token&gt;",
+  "direct_link":  "https://yourhost/dl/&lt;signed-token&gt;"
+}</code></pre>
+                                                <div class="flex items-start gap-2 p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-800/30 text-emerald-200 text-[10px]">
+                                                    <i class="fa-solid fa-circle-check text-emerald-400 mt-0.5 shrink-0"></i>
+                                                    <span x-html="t('upload_api_sync_note')"></span>
+                                                </div>
+                                            </div>
+
                                         </div>
 
                                     </div>

@@ -205,11 +205,15 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		setCSRFCookie(c)
 		webdavEnabled := database.GetSetting("webdav_enabled") == "true"
 		webdavUser := database.GetSetting("admin_username")
+		uploadAPIEnabled := database.GetSetting("upload_api_enabled") == "true"
+		uploadAPIKey := database.GetSetting("upload_api_key")
 
 		c.HTML(http.StatusOK, "index.html", gin.H{
 			"max_upload_size_mb": cfg.MaxUploadSizeMB,
 			"webdav_enabled":     webdavEnabled,
 			"webdav_user":        webdavUser,
+			"upload_api_enabled": uploadAPIEnabled,
+			"upload_api_key":     uploadAPIKey,
 			"version":            cfg.Version,
 		})
 	})
@@ -286,6 +290,106 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
+	// --- Public Upload API endpoint (Bearer token, synchronous) ---
+	r.POST("/api/upload-api/upload", func(c *gin.Context) {
+		if database.GetSetting("upload_api_enabled") != "true" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Upload API is disabled"})
+			return
+		}
+
+		apiKey := database.GetSetting("upload_api_key")
+		if apiKey == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "No API key configured"})
+			return
+		}
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" || authHeader != "Bearer "+apiKey {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing API key"})
+			return
+		}
+
+		file, header, err := c.Request.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided"})
+			return
+		}
+		defer file.Close()
+
+		// Enforce max upload size
+		if cfg.MaxUploadSizeMB > 0 && header.Size > int64(cfg.MaxUploadSizeMB)*1024*1024 {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error": fmt.Sprintf("File too large. Maximum allowed size is %d MB", cfg.MaxUploadSizeMB),
+			})
+			return
+		}
+
+		filename := header.Filename
+		path := c.PostForm("path")
+		if path == "" {
+			path = "/"
+		}
+		shareMode := c.PostForm("share") // "public" → auto share link
+
+		// Save to temp file
+		taskID := uuid.New().String()
+		os.MkdirAll(cfg.TempDir, os.ModePerm)
+		tempFilePath := filepath.Join(cfg.TempDir, taskID+"_"+filename)
+
+		out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+			return
+		}
+		_, err = io.Copy(out, file)
+		out.Close()
+		if err != nil {
+			os.Remove(tempFilePath)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write file"})
+			return
+		}
+		defer os.Remove(tempFilePath)
+
+		mimeType := header.Header.Get("Content-Type")
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+
+		uniqueName := database.GetUniqueFilename(path, filename, false)
+
+		// Synchronous upload — block until Telegram upload + DB insert done
+		fileID, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, uniqueName, path, mimeType, cfg)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed: " + err.Error()})
+			return
+		}
+
+		resp := gin.H{
+			"status":   "done",
+			"filename": uniqueName,
+			"path":     path,
+			"file_id":  fileID,
+		}
+
+		// If share=public, create share token and return links
+		if shareMode == "public" {
+			shareToken := uuid.New().String()
+			directToken := utils.GenerateDirectToken(shareToken)
+			database.DB.Exec("UPDATE files SET share_token = ? WHERE id = ?", shareToken, fileID)
+
+			scheme := "http"
+			if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+				scheme = "https"
+			}
+			origin := scheme + "://" + c.Request.Host
+
+			resp["share_token"] = shareToken
+			resp["share_link"] = origin + "/s/" + shareToken
+			resp["direct_link"] = origin + "/dl/" + directToken
+		}
+
+		c.JSON(http.StatusOK, resp)
+	})
+
 	api := r.Group("/api")
 	api.Use(authMiddleware())
 	api.Use(csrfMiddleware())
@@ -319,6 +423,27 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			} else {
 				database.SetSetting("webdav_enabled", "false")
 			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/upload-api", func(c *gin.Context) {
+			enabled := c.PostForm("enabled")
+			if enabled == "true" {
+				database.SetSetting("upload_api_enabled", "true")
+			} else {
+				database.SetSetting("upload_api_enabled", "false")
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/upload-api/regenerate-key", func(c *gin.Context) {
+			newKey := uuid.New().String()
+			database.SetSetting("upload_api_key", newKey)
+			c.JSON(http.StatusOK, gin.H{"status": "success", "api_key": newKey})
+		})
+
+		api.DELETE("/settings/upload-api/key", func(c *gin.Context) {
+			database.SetSetting("upload_api_key", "")
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 

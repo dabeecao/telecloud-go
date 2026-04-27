@@ -36,6 +36,7 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 📦 Upload chia nhỏ (chunk) để tối ưu tốc độ và ổn định
 * 👤 Hỗ trợ **Userbot** với **MTProto** mạnh mẽ (tải lên file lớn đến 2GB/4GB)
 * 📂 Hỗ trợ **WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
+* 🔌 **Upload API**: Cho phép upload file từ xa qua HTTP API (Bearer Token) để tích hợp vào script hoặc CI/CD.
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ tiếng Việt và tiếng Anh ở giao diện sử dụng
 
 ---
@@ -93,7 +94,7 @@ Nội dung chính trong tệp `.env`:
 *   `API_ID` & `API_HASH`: Lấy tại [my.telegram.org](https://my.telegram.org).
 *   `LOG_GROUP_ID`: ID nhóm/kênh lưu file hoặc điền `me` để lưu vào Saved Messages.
 *   `PORT`: Cổng muốn chạy ứng dụng.
-*   `MAX_UPLOAD_SIZE_MB`: Kích thước file tối đa được phép upload (nếu tài khoản Telegram của bạn là Premium thì có thể nâng lên 4096).
+*   `MAX_UPLOAD_SIZE_MB`: Kích thước file tối đa được phép upload. Đặt là `0` để hệ thống tự động nhận diện (2GB cho tài khoản thường, 4GB cho Premium).
 *   `DATABASE_PATH`: (Tùy chọn) Đường dẫn tới file database (mặc định: `database.db`).
 *   `THUMBS_DIR`: (Tùy chọn) Đường dẫn tới thư mục chứa ảnh thumbnail (mặc định: `./static/thumbs`).
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).
@@ -155,6 +156,18 @@ Truy cập giao diện web tại: `http://localhost:8091`
 - **Lần đầu tiên truy cập**, hệ thống sẽ yêu cầu bạn tạo tài khoản và mật khẩu quản trị (Admin).
 - Các cấu hình khác như đổi mật khẩu hay cấu hình **WebDAV** đều có thể được thực hiện trực tiếp trong phần **Cài đặt** của giao diện Web sau khi đăng nhập.
 WebDAV tại: `http://localhost:8091/webdav`
+
+---
+
+## 🔌 Upload API
+
+TeleCloud cung cấp một HTTP API đơn giản để bạn có thể tải tệp lên từ các script bên ngoài hoặc dòng lệnh.
+
+- **Endpoint**: `POST /api/upload-api/upload`
+- **Xác thực**: Bearer Token (Lấy trong phần Cài đặt giao diện Web).
+- **Tham số**: `file` (multipart/form-data), `path` (tùy chọn), `share` (tùy chọn, đặt "public" để lấy link chia sẻ ngay).
+
+Bạn có thể xem tài liệu chi tiết và ví dụ lệnh `curl` trực tiếp trong phần **Cài đặt -> Upload API** trên giao diện web.
 
 ---
 

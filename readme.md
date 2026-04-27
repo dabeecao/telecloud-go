@@ -100,8 +100,7 @@ Nội dung chính trong tệp `.env`:
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).
 *   `PROXY_URL`: (Tùy chọn) Proxy để kết nối MTProto, hỗ trợ HTTP và SOCKS5 (VD: `socks5://127.0.0.1:1080`).
 *   `FFMPEG_PATH`: (Tùy chọn) Đường dẫn tới file FFmpeg (mặc định: `ffmpeg`). Đặt thành "disabled" để bỏ qua hình thu nhỏ video/âm thanh nếu FFmpeg không được cài đặt hoặc gây ra lỗi.
-
-
+ 
 #### 🔑 Lấy API_ID và API_HASH
 
 * Truy cập: https://my.telegram.org
@@ -156,6 +155,42 @@ Truy cập giao diện web tại: `http://localhost:8091`
 - **Lần đầu tiên truy cập**, hệ thống sẽ yêu cầu bạn tạo tài khoản và mật khẩu quản trị (Admin).
 - Các cấu hình khác như đổi mật khẩu hay cấu hình **WebDAV** đều có thể được thực hiện trực tiếp trong phần **Cài đặt** của giao diện Web sau khi đăng nhập.
 WebDAV tại: `http://localhost:8091/webdav`
+
+## 🌐 Cấu hình Reverse Proxy (Nginx)
+
+Nếu bạn muốn sử dụng Nginx làm Reverse Proxy (để dùng tên miền riêng, HTTPS), hãy sử dụng mẫu cấu hình tối ưu sau để hỗ trợ upload file lớn và streaming:
+
+```nginx
+server {
+    listen 80;
+    server_name your.domain.com;
+
+    # Quan trọng: Cho phép upload file lớn không giới hạn
+    client_max_body_size 0;
+
+    location / {
+        proxy_pass http://127.0.0.1:8091;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Hỗ trợ WebSockets (Cần thiết cho WebDAV và một số tính năng real-time)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # QUAN TRỌNG: Tắt buffering để hỗ trợ upload file lớn và streaming mượt hơn
+        proxy_request_buffering off;
+        proxy_buffering off;
+
+        # Tăng timeout để tránh đứt kết nối khi xử lý file lớn
+        proxy_read_timeout 3600s;
+        proxy_connect_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
 
 ---
 

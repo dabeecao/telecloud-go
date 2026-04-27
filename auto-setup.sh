@@ -4,9 +4,33 @@
 # 1. TỰ ĐỘNG NHẬN DIỆN MÔI TRƯỜNG & BIẾN
 # ==========================================
 
+# Hàm kiểm tra internet
+check_internet() {
+    echo "[+] Kiểm tra kết nối internet..."
+    if ! curl -fsSL --connect-timeout 5 https://api.github.com >/dev/null 2>&1; then
+        echo "[!] Không có kết nối internet hoặc không thể truy cập GitHub API!"
+        exit 1
+    fi
+}
+
+# Hàm chuẩn hoá kiến trúc CPU
+normalize_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64)          echo "amd64" ;;
+        aarch64|arm64)   echo "arm64" ;;
+        armv7l|armhf)    echo "armv7" ;;
+        armv6l)          echo "armv6" ;;
+        i386|i686)       echo "386" ;;
+        *)               echo "$arch" ;;
+    esac
+}
+
 # Hàm phát hiện package manager dựa vào /etc/os-release và lệnh có sẵn
 detect_pkg_manager() {
-    if command -v apt &>/dev/null; then
+    if [ -n "$PREFIX" ] && command -v pkg &>/dev/null; then
+        PKG_MGR="pkg"
+    elif command -v apt &>/dev/null; then
         PKG_MGR="apt"
     elif command -v dnf &>/dev/null; then
         PKG_MGR="dnf"
@@ -21,7 +45,7 @@ detect_pkg_manager() {
     elif command -v brew &>/dev/null; then
         PKG_MGR="brew"
     else
-        echo "[!] Không nhận diện được trình quản lý gói. Hỗ trợ: apt, dnf, yum, pacman, apk, zypper, brew."
+        echo "[!] Không nhận diện được trình quản lý gói. Hỗ trợ: apt, dnf, yum, pacman, apk, zypper, brew, pkg."
         exit 1
     fi
 
@@ -38,7 +62,6 @@ detect_pkg_manager() {
 # Hàm cài một gói, bỏ qua nếu đã có
 pkg_install() {
     local pkg="$1"
-    # Chuẩn hoá tên lệnh để kiểm tra (một số gói có tên lệnh khác tên gói)
     local cmd="${2:-$pkg}"
     if command -v "$cmd" &>/dev/null; then
         echo "[✓] $pkg đã được cài sẵn, bỏ qua."
@@ -53,7 +76,30 @@ pkg_install() {
         apk)     apk add --no-cache "$pkg" ;;
         zypper)  zypper install -y "$pkg" ;;
         brew)    brew install "$pkg" ;;
+        pkg)     pkg install -y "$pkg" ;;
     esac
+}
+
+# Hàm tải file hỗ trợ fallback wget/curl và retry
+download_file() {
+    local url="$1"
+    local output="$2"
+    local retries=3
+    local count=0
+    
+    while [ $count -lt $retries ]; do
+        if command -v wget &>/dev/null; then
+            wget -qO "$output" "$url" && return 0
+        elif command -v curl &>/dev/null; then
+            curl -fsSL "$url" -o "$output" && return 0
+        else
+            echo "[!] Cần wget hoặc curl để tải file!"
+            return 1
+        fi
+        count=$((count + 1))
+        [ $count -lt $retries ] && echo "[!] Tải lỗi, đang thử lại ($count/$retries)..." && sleep 2
+    done
+    return 1
 }
 
 if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
@@ -113,36 +159,23 @@ install_dependencies() {
         read -p "[?] Bạn có muốn cài đặt FFmpeg không? (y/n): " install_ffmpeg
         [ "$install_ffmpeg" == "y" ] && pkg_install "ffmpeg"
 
-        # Cài Cloudflared nếu chưa có
-        if ! command -v cloudflared &>/dev/null; then
-            echo "[+] Đang cài đặt Cloudflared..."
-            if [ "$OS_TYPE" == "macos" ]; then
-                brew install cloudflared || { echo "[!] Cài cloudflared qua brew thất bại!"; return 1; }
-            else
-                ARCH=$(uname -m)
-                case "$ARCH" in
-                    x86_64)          ARCH="amd64" ;;
-                    aarch64|arm64)   ARCH="arm64" ;;
-                    armv7l|armhf)    ARCH="armv7" ;;
-                    *)
-                        echo "[!] Kiến trúc không hỗ trợ để tải Cloudflared: $ARCH"
-                        return 1
-                    ;;
-                esac
+        # Chỉ cài Cloudflared nếu dùng Cloudflare Tunnel
+        if [ "${TUNNEL_METHOD:-}" == "cloudflare" ]; then
+            if ! command -v cloudflared &>/dev/null; then
+                echo "[+] Đang cài đặt Cloudflared..."
+                ARCH=$(normalize_arch)
                 CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
-                # Fallback: thử wget trước, nếu không có dùng curl
-                if command -v wget &>/dev/null; then
-                    wget -qO /usr/local/bin/cloudflared "$CF_URL" || { echo "[!] Tải cloudflared thất bại!"; return 1; }
-                elif command -v curl &>/dev/null; then
-                    curl -fsSL "$CF_URL" -o /usr/local/bin/cloudflared || { echo "[!] Tải cloudflared thất bại!"; return 1; }
-                else
-                    echo "[!] Cần wget hoặc curl để tải Cloudflared!"; return 1
+                download_file "$CF_URL" "$BIN_DIR/cloudflared" || return 1
+                chmod +x "$BIN_DIR/cloudflared"
+                if ! "$BIN_DIR/cloudflared" --version &>/dev/null; then
+                    echo "[!] LỖI: cloudflared không thể chạy trên hệ thống này (có thể do mount noexec)."
+                    return 1
                 fi
-                chmod +x /usr/local/bin/cloudflared
+                hash -r 2>/dev/null
+                echo "[+] Cloudflared đã cài xong!"
+            else
+                echo "[✓] cloudflared đã được cài sẵn, bỏ qua."
             fi
-            echo "[+] Cloudflared đã cài xong!"
-        else
-            echo "[✓] cloudflared đã được cài sẵn, bỏ qua."
         fi
     else
         # Termux
@@ -151,16 +184,12 @@ install_dependencies() {
         echo "[!] Trên các dòng chip Exynos hoặc thiết bị yếu, FFmpeg có thể gây lỗi hoặc treo máy."
         read -p "[?] Bạn có muốn cài đặt FFmpeg không? (y/n): " install_ffmpeg
 
-        MAIN_PACKAGES="wget curl tar unzip tmux cloudflared jq nano"
+        MAIN_PACKAGES="wget curl tar unzip tmux jq nano"
+        [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
 
         for pkg in $MAIN_PACKAGES; do
-            if ! command -v "$pkg" &>/dev/null; then
-                echo "[+] Cài đặt $pkg..."
-                pkg install -y "$pkg" || return 1
-            else
-                echo "[✓] $pkg đã được cài sẵn, bỏ qua."
-            fi
+            pkg_install "$pkg"
         done
     fi
 }
@@ -170,46 +199,49 @@ install_dependencies() {
 # =============================
 download_telecloud() {
     echo "[+] Đang lấy thông tin phiên bản mới nhất từ GitHub..."
-    API_DATA=$(curl -fsSL "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest")
+    API_DATA=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest" 2>/dev/null || echo "")
     
-    VERSION=$(echo "$API_DATA" | jq -r ".tag_name")
+    if [ -z "$API_DATA" ]; then
+        echo "[!] Không thể kết nối tới GitHub API!"; return 1
+    fi
+
+    VERSION=$(echo "$API_DATA" | jq -r ".tag_name" 2>/dev/null || echo "null")
     if [ -z "$VERSION" ] || [ "$VERSION" == "null" ]; then
         echo "[!] Không lấy được thông tin phiên bản từ GitHub!"; return 1
     fi
 
-    TARGET=$(uname -m)
+    TARGET=$(normalize_arch)
+    OS_NAME="linux"
+    [ "$OS_TYPE" == "macos" ] && OS_NAME="darwin"
 
-    if [[ "$TARGET" == "aarch64" || "$TARGET" == "arm64" ]]; then
-        TARGET="arm64"
-    elif [[ "$TARGET" == "x86_64" ]]; then
-        TARGET="amd64"
-    elif [[ "$TARGET" == "armv7l" || "$TARGET" == "armhf" ]]; then
-        TARGET="armv7"
-    fi
+    # Tìm URL binary phù hợp
+    URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" --arg arch "$TARGET" '
+        .assets[] | select(.name | contains($os) and contains($arch)) | .browser_download_url
+    ' | head -n 1)
 
-    if [ "$TARGET" == "arm64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_arm64")) | .browser_download_url')
-    elif [ "$TARGET" == "amd64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_amd64") or contains("linux_x86_64")) | .browser_download_url')
-    elif [ "$TARGET" == "armv7" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_armv7")) | .browser_download_url')
+    # Fallback cho amd64/x86_64
+    if [ -z "$URL" ] && [ "$TARGET" == "amd64" ]; then
+        URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" '
+            .assets[] | select(.name | contains($os) and contains("x86_64")) | .browser_download_url
+        ' | head -n 1)
     fi
 
     if [ -z "$URL" ] || [ "$URL" == "null" ]; then
-        echo "[!] Không tìm thấy binary cho kiến trúc $TARGET!"; return 1
+        echo "[!] Không tìm thấy binary phù hợp cho $OS_NAME $TARGET!"; return 1
     fi
 
     echo "[+] Đang tải phiên bản $VERSION..."
-    wget -qO telecloud.tar.gz "$URL" || return 1
+    download_file "$URL" telecloud.tar.gz || return 1
     mkdir -p "$BASE_DIR"
-    tar -xzf telecloud.tar.gz -C "$BASE_DIR" || return 1
+    tar -xzf telecloud.tar.gz -C "$BASE_DIR" || { echo "[!] Giải nén thất bại!"; return 1; }
 
     if [ ! -f "$BASE_DIR/telecloud" ]; then
         echo "[!] Binary 'telecloud' không tìm thấy!"; return 1
     fi
     
     echo "$VERSION" > "$BASE_DIR/version.txt"
-    rm telecloud.tar.gz
+    rm -f telecloud.tar.gz
+    hash -r 2>/dev/null
 }
 
 # =============================
@@ -235,8 +267,8 @@ create_env() {
         read -p "LOG_GROUP_ID [Mặc định me]: " LOG_GROUP_ID
         LOG_GROUP_ID=${LOG_GROUP_ID:-me}
 
-        read -p "MAX_UPLOAD_SIZE_MB [Mặc định 2000]: " MAX_UPLOAD
-        MAX_UPLOAD=${MAX_UPLOAD:-2000}
+        read -p "MAX_UPLOAD_SIZE_MB [Mặc định 0 - Tự nhận diện]: " MAX_UPLOAD
+        MAX_UPLOAD=${MAX_UPLOAD:-0}
 
         cat > "$BASE_DIR/.env" <<EOF
 API_ID=$API_ID
@@ -280,11 +312,12 @@ cloudflared_setup() {
     fi
 }
 
+
 # =============================
 # 6. KHỞI TẠO DỊCH VỤ / SCRIPT CHẠY
 # =============================
 create_run_scripts() {
-    local APP_PORT=$(grep PORT "$BASE_DIR/.env" | cut -d'=' -f2)
+    local APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
     APP_PORT=${APP_PORT:-8091}
 
     if [ "$OS_TYPE" == "linux" ]; then
@@ -305,7 +338,9 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-        cat > /etc/systemd/system/telecloud-tunnel.service <<EOF
+        # Dịch vụ Cloudflare Tunnel (nếu có)
+        if [ -f "$BASE_DIR/tunnel.txt" ]; then
+            cat > /etc/systemd/system/telecloud-tunnel.service <<EOF
 [Unit]
 Description=Telecloud Cloudflared Tunnel
 After=network.target
@@ -319,7 +354,12 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
+        fi
+
+
+        if command -v systemctl &>/dev/null; then
+            systemctl daemon-reload
+        fi
     else
         # Cấu hình Tmux cho Termux / macOS
         WAKELOCK=""
@@ -344,6 +384,7 @@ while true; do
 done
 EOF
         chmod +x "$BASE_DIR/run-cloudflared.sh"
+
     fi
 }
 
@@ -351,8 +392,41 @@ EOF
 # 7. TẠO MENU QUẢN LÝ
 # =============================
 create_menu() {
+    # Sao lưu menu cũ nếu có
+    [ -f "$BIN_DIR/telecloud" ] && cp "$BIN_DIR/telecloud" "$BIN_DIR/telecloud.bak" 2>/dev/null
     cat > "$BIN_DIR/telecloud" <<'EOF'
 #!/bin/bash
+set -e
+
+# --- CÁC HÀM TIỆN ÍCH ---
+normalize_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64)          echo "amd64" ;;
+        aarch64|arm64)   echo "arm64" ;;
+        armv7l|armhf)    echo "armv7" ;;
+        armv6l)          echo "armv6" ;;
+        i386|i686)       echo "386" ;;
+        *)               echo "$arch" ;;
+    esac
+}
+
+download_file() {
+    local url="$1"
+    local output="$2"
+    local retries=3
+    local count=0
+    while [ $count -lt $retries ]; do
+        if command -v wget &>/dev/null; then
+            wget -qO "$output" "$url" && return 0
+        elif command -v curl &>/dev/null; then
+            curl -fsSL "$url" -o "$output" && return 0
+        fi
+        count=$((count + 1))
+        [ $count -lt $retries ] && sleep 2
+    done
+    return 1
+}
 
 if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     OS_TYPE="termux"
@@ -383,20 +457,22 @@ check_status() {
     [ -f "$BASE_DIR/version.txt" ] && echo "📌 Phiên bản        : $(cat $BASE_DIR/version.txt)"
     
     if [ -f "$BASE_DIR/.env" ]; then
-        APP_PORT=$(grep PORT "$BASE_DIR/.env" | cut -d'=' -f2)
+        APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
         echo "📌 Cổng ứng dụng    : ${APP_PORT:-8091}"
     fi
 
     if [ "$OS_TYPE" == "linux" ]; then
-        systemctl is-active --quiet telecloud && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        systemctl is-active --quiet telecloud-tunnel && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        if command -v systemctl &>/dev/null; then
+            (systemctl is-active --quiet telecloud) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+            (systemctl is-active --quiet telecloud-tunnel) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        else
+            (pgrep -x telecloud >/dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+        fi
     else
-        # Termux and macOS both use tmux
-        tmux has-session -t $SESSION 2>/dev/null && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
-        pgrep -f "\./telecloud" > /dev/null && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        pgrep -f "cloudflared tunnel run" > /dev/null && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
+        (pgrep -f "\./telecloud" > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || true
     fi
-    
     if [ -f "$BASE_DIR/domain.txt" ]; then
         echo "🔗 Tên miền         : https://$(cat $BASE_DIR/domain.txt)"
     else
@@ -414,11 +490,25 @@ start_app() {
 
     echo "[+] Đang khởi động ứng dụng..."
     if [ "$OS_TYPE" == "linux" ]; then
-        systemctl enable --now telecloud
-        [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel
+        if command -v systemctl &>/dev/null; then
+            [ -f /etc/systemd/system/telecloud.service ] && systemctl enable --now telecloud || true
+            [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
+        else
+            echo "[!] Hệ thống không hỗ trợ systemctl. Vui lòng chạy thủ công."
+        fi
     else
-        tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh"
-        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh"
+        # Tránh spawn lồng nhau nếu đang ở trong tmux
+        if [ -n "$TMUX" ]; then
+            echo "[!] CẢNH BÁO: Bạn đang chạy trong một phiên TMUX."
+            echo "Việc khởi động ứng dụng ở đây sẽ tạo một phiên TMUX lồng nhau, có thể gây rối."
+            read -p "Bạn vẫn muốn tiếp tục? (y/n): " confirm_tmux
+            [ "$confirm_tmux" != "y" ] && return
+        fi
+
+        if ! tmux has-session -t $SESSION 2>/dev/null; then
+            tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
+        fi
+        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
     fi
     echo "✅ Đã khởi động."
 }
@@ -426,11 +516,15 @@ start_app() {
 stop_app() {
     echo "[+] Đang dừng ứng dụng..."
     if [ "$OS_TYPE" == "linux" ]; then
-        systemctl stop telecloud telecloud-tunnel 2>/dev/null
+        if command -v systemctl &>/dev/null; then
+            systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
+        else
+            pkill -x telecloud 2>/dev/null || true
+        fi
     else
-        tmux kill-session -t $SESSION 2>/dev/null
-        pkill -f "\./telecloud" 2>/dev/null
-        pkill -f "cloudflared tunnel run" 2>/dev/null
+        tmux kill-session -t $SESSION 2>/dev/null || true
+        pkill -f "\./telecloud" 2>/dev/null || true
+        pkill -f "cloudflared tunnel run" 2>/dev/null || true
     fi
     echo "✅ Đã dừng toàn bộ."
 }
@@ -441,13 +535,34 @@ restart_app() {
 }
 
 manage_tunnel() {
-    echo "1. Cài đặt / Cấu hình lại Cloudflare Tunnel"
-    echo "2. Gỡ bỏ Cloudflare Tunnel"
-    echo "3. Quay lại"
+    echo "=========================================="
+    echo "        QUẢN LÝ KẾT NỐI TỪ XA"
+    echo "=========================================="
+    echo "--- Cloudflare Tunnel ---"
+    echo "  1. Cài đặt / Cấu hình lại Cloudflare Tunnel"
+    echo "  2. Gỡ bỏ Cloudflare Tunnel"
+    echo "  3. Quay lại"
     read -p "Chọn chức năng (1-3): " tc
-    
     case $tc in
         1)
+            if ! command -v cloudflared &>/dev/null; then
+                echo "[+] Đang cài đặt cloudflared..."
+                if [ "$OS_TYPE" == "termux" ]; then
+                    pkg install -y cloudflared
+                elif [ "$OS_TYPE" == "macos" ]; then
+                    brew install cloudflared
+                else
+                    local ARCH=$(normalize_arch)
+                    local CF_BIN="/usr/local/bin/cloudflared"
+                    download_file "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" "$CF_BIN"
+                    chmod +x "$CF_BIN"
+                fi
+                if ! command -v cloudflared &>/dev/null; then
+                    echo "❌ Lỗi: Không thể cài đặt cloudflared. Vui lòng cài thủ công."
+                    return 1
+                fi
+            fi
+
             if [ ! -f "$HOME/.cloudflared/cert.pem" ] && [ ! -f "/etc/cloudflared/cert.pem" ]; then
                 cloudflared tunnel login
             fi
@@ -466,20 +581,19 @@ manage_tunnel() {
             fi
             ;;
         2)
-            echo "[+] Đang xoá Tunnel..."
             if [ "$OS_TYPE" == "linux" ]; then
-                systemctl stop telecloud-tunnel 2>/dev/null
-                systemctl disable telecloud-tunnel 2>/dev/null
-            else  # termux and macos
+                if command -v systemctl &>/dev/null; then
+                    systemctl stop telecloud-tunnel 2>/dev/null
+                    systemctl disable telecloud-tunnel 2>/dev/null
+                fi
+            else
                 pkill -f "cloudflared tunnel run" 2>/dev/null
             fi
             cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
-            rm -f "$BASE_DIR/tunnel.txt" "$BASE_DIR/domain.txt"
+            rm -f "$BASE_DIR/tunnel.txt"
+            rm -f "$BASE_DIR/domain.txt"
             echo "✅ Đã xoá Tunnel."
-            echo "------------------------------------------------------"
-            echo "📢 LƯU Ý: Vui lòng truy cập dash.cloudflare.com để"
-            echo "xoá bản ghi DNS của Tunnel cũ nếu bạn không dùng nữa!"
-            echo "------------------------------------------------------"
+            echo "📢 Hãy xoá bản ghi DNS cũ tại dash.cloudflare.com nếu không dùng nữa!"
             ;;
         *) return ;;
     esac
@@ -504,16 +618,24 @@ view_logs() {
     case $log_choice in
         1)
             if [ "$OS_TYPE" == "linux" ]; then
-                journalctl -u telecloud.service -f -n 50
+                if command -v systemctl &>/dev/null; then
+                    journalctl -u telecloud.service -f -n 50
+                else
+                    echo "[!] Không có journalctl."
+                fi
             else
-                [ -f "$BASE_DIR/app.log" ] && tail -f -n 50 "$BASE_DIR/app.log" || echo "❌ Chưa có file log ứng dụng (hãy đảm bảo app đang chạy)."
+                [ -f "$BASE_DIR/app.log" ] && tail -f -n 50 "$BASE_DIR/app.log" || echo "❌ Chưa có file log ứng dụng."
             fi
             ;;
         2)
             if [ "$OS_TYPE" == "linux" ]; then
-                journalctl -u telecloud-tunnel.service -f -n 50
+                if command -v systemctl &>/dev/null; then
+                    journalctl -u telecloud-tunnel.service -f -n 50
+                else
+                    echo "[!] Không có journalctl."
+                fi
             else
-                [ -f "$BASE_DIR/tunnel.log" ] && tail -f -n 50 "$BASE_DIR/tunnel.log" || echo "❌ Chưa có file log tunnel (hãy đảm bảo tunnel đang chạy)."
+                [ -f "$BASE_DIR/tunnel.log" ] && tail -f -n 50 "$BASE_DIR/tunnel.log" || echo "❌ Chưa có file log tunnel."
             fi
             ;;
         *) return ;;
@@ -546,11 +668,84 @@ edit_env() {
     fi
 }
 
+backup_data() {
+    echo "=========================================="
+    echo "            SAO LƯU DỮ LIỆU               "
+    echo "=========================================="
+    mkdir -p "$HOME/telecloud_backups"
+    local BK_NAME="telecloud_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+    
+    echo "[+] Đang tạm dừng ứng dụng để đảm bảo an toàn dữ liệu..."
+    stop_app
+    echo "[+] Đang tạo bản sao lưu..."
+    (cd "$BASE_DIR" && tar -czf "$HOME/telecloud_backups/$BK_NAME" session.json database.db* .env 2>/dev/null)
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Đã sao lưu thành công tại: $HOME/telecloud_backups/$BK_NAME"
+    else
+        echo "❌ Lỗi: Có thể một số tệp (session.json, database.db) chưa tồn tại."
+    fi
+    start_app
+}
+
+restore_data() {
+    echo "=========================================="
+    echo "            KHÔI PHỤC DỮ LIỆU             "
+    echo "=========================================="
+    if [ ! -d "$HOME/telecloud_backups" ] || [ -z "$(ls -A $HOME/telecloud_backups)" ]; then
+        echo "❌ Chưa có bản sao lưu nào trong thư mục $HOME/telecloud_backups"
+        return
+    fi
+
+    echo "Các bản sao lưu hiện có:"
+    ls -1 "$HOME/telecloud_backups"
+    echo ""
+    read -p "Nhập tên file muốn khôi phục (VD: telecloud_backup_...tar.gz): " FILE_NAME
+    
+    if [ ! -f "$HOME/telecloud_backups/$FILE_NAME" ]; then
+        echo "❌ File không tồn tại!"
+        return
+    fi
+
+    read -p "⚠️ Việc khôi phục sẽ ghi đè dữ liệu hiện tại. Tiếp tục? (y/n): " cf
+    if [ "$cf" == "y" ]; then
+        stop_app
+        echo "[+] Đang xóa dữ liệu cũ..."
+        rm -f "$BASE_DIR/database.db" "$BASE_DIR/database.db-wal" "$BASE_DIR/database.db-shm" 2>/dev/null || true
+        (cd "$BASE_DIR" && tar -xzf "$HOME/telecloud_backups/$FILE_NAME")
+        echo "✅ Đã khôi phục xong. Vui lòng khởi động lại ứng dụng."
+    fi
+}
+
+manage_backups() {
+    echo "=========================================="
+    echo "            QUẢN LÝ SAO LƯU               "
+    echo "=========================================="
+    echo "1. Tạo bản sao lưu mới"
+    echo "2. Khôi phục từ bản sao lưu cũ"
+    echo "3. Quay lại"
+    read -p "Chọn chức năng (1-3): " b_choice
+    case $b_choice in
+        1) backup_data ;;
+        2) restore_data ;;
+        *) return ;;
+    esac
+}
+
 update_app() {
     echo "[+] Đang kiểm tra bản cập nhật..."
-    API_DATA=$(curl -s "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest")
-    LATEST=$(echo "$API_DATA" | jq -r ".tag_name")
+    API_DATA=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest" 2>/dev/null || echo "")
+    
+    if [ -z "$API_DATA" ]; then
+        echo "❌ Lỗi: Không thể lấy dữ liệu từ GitHub API!"; return
+    fi
+
+    LATEST=$(echo "$API_DATA" | jq -r ".tag_name" 2>/dev/null || echo "null")
     LOCAL=$(cat "$BASE_DIR/version.txt" 2>/dev/null)
+
+    if [ "$LATEST" == "null" ]; then
+        echo "❌ Lỗi: Không nhận diện được phiên bản từ GitHub."; return
+    fi
 
     if [ "$LATEST" == "$LOCAL" ]; then
         echo "✅ Bạn đang ở bản mới nhất ($LOCAL)."
@@ -558,37 +753,42 @@ update_app() {
     fi
 
     echo "🔥 Có bản mới: $LATEST. Đang tiến hành cập nhật..."
-    TARGET=$(uname -m)
+    TARGET=$(normalize_arch)
+    OS_NAME="linux"
+    [ "$OS_TYPE" == "macos" ] && OS_NAME="darwin"
 
-    if [[ "$TARGET" == "aarch64" || "$TARGET" == "arm64" ]]; then
-        TARGET="arm64"
-    elif [[ "$TARGET" == "x86_64" ]]; then
-        TARGET="amd64"
-    elif [[ "$TARGET" == "armv7l" || "$TARGET" == "armhf" ]]; then
-        TARGET="armv7"
-    fi
-    
-    if [ "$TARGET" == "arm64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_arm64")) | .browser_download_url')
-    elif [ "$TARGET" == "amd64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_amd64") or contains("linux_x86_64")) | .browser_download_url')
-    elif [ "$TARGET" == "armv7" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_armv7")) | .browser_download_url')
+    # Tìm URL binary phù hợp
+    URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" --arg arch "$TARGET" '
+        .assets[] | select(.name | contains($os) and contains($arch)) | .browser_download_url
+    ' | head -n 1)
+
+    # Fallback cho amd64/x86_64
+    if [ -z "$URL" ] && [ "$TARGET" == "amd64" ]; then
+        URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" '
+            .assets[] | select(.name | contains($os) and contains("x86_64")) | .browser_download_url
+        ' | head -n 1)
     fi
 
     if [ -z "$URL" ] || [ "$URL" == "null" ]; then
-        echo "❌ Lỗi: Không tìm thấy file chạy cho kiến trúc $TARGET."
+        echo "❌ Lỗi: Không tìm thấy file chạy phù hợp cho $OS_NAME $TARGET."
         return
     fi
 
     echo "Đang tải bản cập nhật..."
-    wget -qO telecloud.tar.gz "$URL" || { echo "❌ Lỗi khi tải file!"; return; }
+    download_file "$URL" telecloud.tar.gz || { echo "❌ Lỗi khi tải file!"; return; }
     
     stop_app
-    tar -xvzf telecloud.tar.gz -C "$BASE_DIR" || { echo "❌ Lỗi khi giải nén!"; return; }
+    # Backup file cũ để tránh lỗi ghi đè file đang dùng
+    [ -f "$BASE_DIR/telecloud" ] && mv "$BASE_DIR/telecloud" "$BASE_DIR/telecloud.old"
+    tar -xzf telecloud.tar.gz -C "$BASE_DIR" || { 
+        echo "❌ Lỗi khi giải nén!"
+        [ -f "$BASE_DIR/telecloud.old" ] && mv "$BASE_DIR/telecloud.old" "$BASE_DIR/telecloud"
+        return
+    }
     
     echo "$LATEST" > "$BASE_DIR/version.txt"
-    rm telecloud.tar.gz
+    rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
+    hash -r 2>/dev/null
     echo "✅ Đã cập nhật xong. Vui lòng chọn Khởi động lại."
 }
 
@@ -596,7 +796,7 @@ update_setup_script() {
     echo "[+] Đang kiểm tra cập nhật cho script quản lý..."
     local SCRIPT_URL="https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh"
     # Tải về file tạm
-    if wget -qO "$BASE_DIR/auto-setup.sh.new" "$SCRIPT_URL"; then
+    if download_file "$SCRIPT_URL" "$BASE_DIR/auto-setup.sh.new"; then
         mv "$BASE_DIR/auto-setup.sh.new" "$BASE_DIR/auto-setup.sh"
         chmod +x "$BASE_DIR/auto-setup.sh"
         echo "✅ Đã cập nhật xong file auto-setup.sh."
@@ -651,14 +851,18 @@ uninstall() {
         echo "bản ghi DNS cũ để tránh rác hệ thống."
         echo "------------------------------------------------------"
         
-        if [ "$OS_TYPE" == "linux" ]; then
-            systemctl disable telecloud telecloud-tunnel 2>/dev/null
-            rm -f /etc/systemd/system/telecloud.service
-            rm -f /etc/systemd/system/telecloud-tunnel.service
-            systemctl daemon-reload
+        if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null; then
+            systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
+            systemctl disable telecloud telecloud-tunnel 2>/dev/null || true
+            rm -f /etc/systemd/system/telecloud.service 2>/dev/null || true
+            rm -f /etc/systemd/system/telecloud-tunnel.service 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
         fi
         
-        rm -rf "$BASE_DIR" "$(command -v telecloud)"
+        echo "[+] Đang xóa tệp tin..."
+        [ -n "$BASE_DIR" ] && rm -rf "$BASE_DIR" || true
+        [ -n "$BIN_DIR" ] && rm -f "$BIN_DIR/telecloud" || true
+        
         echo "✅ Đã gỡ bỏ sạch sẽ. Script sẽ thoát."
         exit
     fi
@@ -673,15 +877,16 @@ while true; do
     echo "  2. Khởi động ứng dụng"
     echo "  3. Dừng ứng dụng"
     echo "  4. Khởi động lại ứng dụng"
-    echo "  5. Quản lý Tunnel (Cài mới/Đổi miền/Gỡ)"
+    echo "  5. Quản lý kết nối (Cloudflare Tunnel)"
     echo "  6. Xem Log (Nhật ký hệ thống)"
     echo "  7. Sửa cấu hình (.env)"
     echo "  8. Các lệnh của Telecloud (Auth / Reset Pass)"
     echo "  9. Kiểm tra Cập nhật (Update)"
-    echo "  10. Gỡ cài đặt ứng dụng"
-    echo "  11. Thoát"
+    echo "  10. Quản lý Sao lưu (Backup)"
+    echo "  11. Gỡ cài đặt ứng dụng"
+    echo "  12. Thoát"
     echo "=========================================="
-    read -p "Chọn chức năng (1-11): " c
+    read -p "Chọn chức năng (1-12): " c
     case $c in
         1) check_status; pause ;;
         2) start_app; pause ;;
@@ -692,8 +897,9 @@ while true; do
         7) edit_env; pause ;;
         8) telecloud_commands; pause ;;
         9) update_app; pause ;;
-        10) uninstall ;;
-        11) clear; exit ;;
+        10) manage_backups; pause ;;
+        11) uninstall ;;
+        12) clear; exit ;;
         *) echo "[!] Lựa chọn không hợp lệ!"; pause ;;
     esac
 done
@@ -704,9 +910,11 @@ EOF
 # =============================
 # KHỐI THỰC THI CHÍNH
 # =============================
+set -e
 rollback() {
     echo -e "\n[!] LỖI CÀI ĐẶT! Đang dọn dẹp..."
-    rm -rf "$BASE_DIR" telecloud.tar.gz 2>/dev/null
+    [ -n "$BASE_DIR" ] && [ "$BASE_DIR" != "/" ] && rm -rf "$BASE_DIR"
+    rm -f telecloud.tar.gz 2>/dev/null
     exit 1
 }
 
@@ -717,21 +925,32 @@ if [ "$1" == "--update-menu" ]; then
 fi
 
 if [ ! -f "$BASE_DIR/telecloud" ]; then
+    check_internet
     echo "--- CÀI ĐẶT TELECLOUD LẦN ĐẦU ---"
+    echo ""
+    echo "Sử dụng Cloudflare Tunnel để truy cập từ xa?"
+    read -p "Chọn (y/n) [Mặc định y]: " _tm
+    _tm=${_tm:-y}
+    if [ "$_tm" == "y" ]; then
+        TUNNEL_METHOD="cloudflare"
+    else
+        TUNNEL_METHOD="none"
+    fi
+    export TUNNEL_METHOD
+
     trap rollback INT TERM
     install_dependencies || rollback
     download_telecloud || rollback
     create_env || rollback
-    
-    read -p "Bạn có muốn mở kết nối Cloudflare Tunnel ngay bây giờ không? (y/n): " setup_tnl
-    if [ "$setup_tnl" == "y" ]; then
+
+    if [ "$TUNNEL_METHOD" == "cloudflare" ]; then
         cloudflared_setup || rollback
     fi
-    
+
     create_run_scripts || rollback
     create_menu || rollback
     trap - INT TERM
-    
+
     echo "============================================="
     echo "✅ CÀI ĐẶT THÀNH CÔNG!"
     echo "Gõ lệnh sau để mở Menu Quản lý:"

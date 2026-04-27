@@ -106,7 +106,7 @@ Main fields in `.env`:
 * `MAX_UPLOAD_SIZE_MB`: Maximum upload file size. Set to `0` for automatic detection (2GB for Normal, 4GB for Premium accounts)
 * `DATABASE_PATH`: (Optional) Path to the database file (default: `database.db`)
 * `THUMBS_DIR`: (Optional) Directory for storing thumbnails (default: `./static/thumbs`)
-* `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process (default: `./temp`)
+* `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process.
 * `PROXY_URL`: (Optional) Proxy to connect MTProto, supports HTTP and SOCKS5 (e.g. `socks5://127.0.0.1:1080`)
 * `FFMPEG_PATH`: (Optional) Path to FFmpeg (default: `ffmpeg`). Set to "disabled" to skip video/audio thumbnails if FFmpeg is not installed or causing crashes.
 
@@ -178,6 +178,44 @@ Access the web interface at: `http://localhost:8091`
 - **On first access**, the system will prompt you to create an admin account and password.
 - Other configurations like changing password and configuring **WebDAV** can be done directly in the **Settings** section of the web interface after logging in.
 WebDAV at: `http://localhost:8091/webdav`
+
+---
+
+## 🌐 Reverse Proxy Configuration (Nginx)
+
+If you want to use Nginx as a Reverse Proxy (for custom domains, HTTPS), use the following optimized configuration to support large file uploads and streaming:
+
+```nginx
+server {
+    listen 80;
+    server_name your.domain.com;
+
+    # IMPORTANT: Allow unlimited upload size
+    client_max_body_size 0;
+
+    location / {
+        proxy_pass http://127.0.0.1:8091;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket support (Required for WebDAV and real-time features)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # IMPORTANT: Disable buffering for large uploads and smooth streaming
+        proxy_request_buffering off;
+        proxy_buffering off;
+
+        # Increase timeouts to avoid disconnection when processing large files
+        proxy_read_timeout 3600s;
+        proxy_connect_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
 
 ---
 

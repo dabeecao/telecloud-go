@@ -4,9 +4,33 @@
 # 1. AUTO DETECT ENVIRONMENT & VARIABLES
 # ==========================================
 
+# Internet check function
+check_internet() {
+    echo "[+] Checking internet connection..."
+    if ! curl -fsSL --connect-timeout 5 https://api.github.com >/dev/null 2>&1; then
+        echo "[!] No internet connection or github.com is unreachable!"
+        exit 1
+    fi
+}
+
+# CPU architecture normalization function
+normalize_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64)          echo "amd64" ;;
+        aarch64|arm64)   echo "arm64" ;;
+        armv7l|armhf)    echo "armv7" ;;
+        armv6l)          echo "armv6" ;;
+        i386|i686)       echo "386" ;;
+        *)               echo "$arch" ;;
+    esac
+}
+
 # Detect package manager using /etc/os-release and available commands
 detect_pkg_manager() {
-    if command -v apt &>/dev/null; then
+    if [ -n "$PREFIX" ] && command -v pkg &>/dev/null; then
+        PKG_MGR="pkg"
+    elif command -v apt &>/dev/null; then
         PKG_MGR="apt"
     elif command -v dnf &>/dev/null; then
         PKG_MGR="dnf"
@@ -21,7 +45,7 @@ detect_pkg_manager() {
     elif command -v brew &>/dev/null; then
         PKG_MGR="brew"
     else
-        echo "[!] Cannot detect package manager. Supported: apt, dnf, yum, pacman, apk, zypper, brew."
+        echo "[!] Cannot detect package manager. Supported: apt, dnf, yum, pacman, apk, zypper, brew, pkg."
         exit 1
     fi
 
@@ -52,7 +76,30 @@ pkg_install() {
         apk)     apk add --no-cache "$pkg" ;;
         zypper)  zypper install -y "$pkg" ;;
         brew)    brew install "$pkg" ;;
+        pkg)     pkg install -y "$pkg" ;;
     esac
+}
+
+# File download function with wget/curl fallback and retry
+download_file() {
+    local url="$1"
+    local output="$2"
+    local retries=3
+    local count=0
+    
+    while [ $count -lt $retries ]; do
+        if command -v wget &>/dev/null; then
+            wget -qO "$output" "$url" && return 0
+        elif command -v curl &>/dev/null; then
+            curl -fsSL "$url" -o "$output" && return 0
+        else
+            echo "[!] wget or curl is required to download files!"
+            return 1
+        fi
+        count=$((count + 1))
+        [ $count -lt $retries ] && echo "[!] Download failed, retrying ($count/$retries)..." && sleep 2
+    done
+    return 1
 }
 
 if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
@@ -112,36 +159,23 @@ install_dependencies() {
         read -p "[?] Do you want to install FFmpeg? (y/n): " install_ffmpeg
         [ "$install_ffmpeg" == "y" ] && pkg_install "ffmpeg"
 
-        # Install Cloudflared if not present
-        if ! command -v cloudflared &>/dev/null; then
-            echo "[+] Installing Cloudflared..."
-            if [ "$OS_TYPE" == "macos" ]; then
-                brew install cloudflared || { echo "[!] Failed to install cloudflared via brew!"; return 1; }
-            else
-                ARCH=$(uname -m)
-                case "$ARCH" in
-                    x86_64)        ARCH="amd64" ;;
-                    aarch64|arm64) ARCH="arm64" ;;
-                    armv7l|armhf)  ARCH="armv7" ;;
-                    *)
-                        echo "[!] Unsupported architecture for Cloudflared: $ARCH"
-                        return 1
-                    ;;
-                esac
+        # Only install Cloudflared if using Cloudflare Tunnel
+        if [ "${TUNNEL_METHOD:-}" == "cloudflare" ]; then
+            if ! command -v cloudflared &>/dev/null; then
+                echo "[+] Installing Cloudflared..."
+                ARCH=$(normalize_arch)
                 CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
-                # Try wget first, fallback to curl
-                if command -v wget &>/dev/null; then
-                    wget -qO /usr/local/bin/cloudflared "$CF_URL" || { echo "[!] Failed to download cloudflared!"; return 1; }
-                elif command -v curl &>/dev/null; then
-                    curl -fsSL "$CF_URL" -o /usr/local/bin/cloudflared || { echo "[!] Failed to download cloudflared!"; return 1; }
-                else
-                    echo "[!] wget or curl is required to download Cloudflared!"; return 1
+                download_file "$CF_URL" "$BIN_DIR/cloudflared" || return 1
+                chmod +x "$BIN_DIR/cloudflared"
+                if ! "$BIN_DIR/cloudflared" --version &>/dev/null; then
+                    echo "[!] ERROR: cloudflared cannot run on this system (maybe noexec mount)."
+                    return 1
                 fi
-                chmod +x /usr/local/bin/cloudflared
+                hash -r 2>/dev/null
+                echo "[+] Cloudflared installed successfully!"
+            else
+                echo "[✓] cloudflared is already installed, skipping."
             fi
-            echo "[+] Cloudflared installed successfully!"
-        else
-            echo "[✓] cloudflared is already installed, skipping."
         fi
     else
         # Termux
@@ -150,16 +184,12 @@ install_dependencies() {
         echo "[!] On Exynos chips or weak devices, FFmpeg may cause errors or system hangs."
         read -p "[?] Do you want to install FFmpeg? (y/n): " install_ffmpeg
 
-        MAIN_PACKAGES="wget curl tar unzip tmux cloudflared jq nano"
+        MAIN_PACKAGES="wget curl tar unzip tmux jq nano"
+        [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
 
         for pkg in $MAIN_PACKAGES; do
-            if ! command -v "$pkg" &>/dev/null; then
-                echo "[+] Installing $pkg..."
-                pkg install -y "$pkg" || return 1
-            else
-                echo "[✓] $pkg is already installed, skipping."
-            fi
+            pkg_install "$pkg"
         done
     fi
 }
@@ -169,39 +199,41 @@ install_dependencies() {
 # =============================
 download_telecloud() {
     echo "[+] Fetching the latest release info from GitHub..."
-    API_DATA=$(curl -fsSL "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest")
+    API_DATA=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest" 2>/dev/null || echo "")
     
-    VERSION=$(echo "$API_DATA" | jq -r ".tag_name")
+    if [ -z "$API_DATA" ]; then
+        echo "[!] Cannot connect to GitHub API!"; return 1
+    fi
+
+    VERSION=$(echo "$API_DATA" | jq -r ".tag_name" 2>/dev/null || echo "null")
     if [ -z "$VERSION" ] || [ "$VERSION" == "null" ]; then
         echo "[!] Failed to fetch release info from GitHub!"; return 1
     fi
 
-    TARGET=$(uname -m)
+    TARGET=$(normalize_arch)
+    OS_NAME="linux"
+    [ "$OS_TYPE" == "macos" ] && OS_NAME="darwin"
 
-    if [[ "$TARGET" == "aarch64" || "$TARGET" == "arm64" ]]; then
-        TARGET="arm64"
-    elif [[ "$TARGET" == "x86_64" ]]; then
-        TARGET="amd64"
-    elif [[ "$TARGET" == "armv7l" || "$TARGET" == "armhf" ]]; then
-        TARGET="armv7"
-    fi
+    # Find suitable binary URL
+    URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" --arg arch "$TARGET" '
+        .assets[] | select(.name | contains($os) and contains($arch)) | .browser_download_url
+    ' | head -n 1)
 
-    if [ "$TARGET" == "arm64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_arm64")) | .browser_download_url')
-    elif [ "$TARGET" == "amd64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_amd64") or contains("linux_x86_64")) | .browser_download_url')
-    elif [ "$TARGET" == "armv7" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_armv7")) | .browser_download_url')
+    # Fallback for amd64/x86_64
+    if [ -z "$URL" ] && [ "$TARGET" == "amd64" ]; then
+        URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" '
+            .assets[] | select(.name | contains($os) and contains("x86_64")) | .browser_download_url
+        ' | head -n 1)
     fi
 
     if [ -z "$URL" ] || [ "$URL" == "null" ]; then
-        echo "[!] Binary not found for architecture $TARGET!"; return 1
+        echo "[!] Binary not found for suitable $OS_NAME $TARGET!"; return 1
     fi
 
     echo "[+] Downloading version $VERSION..."
-    wget -qO telecloud.tar.gz "$URL" || return 1
+    download_file "$URL" telecloud.tar.gz || return 1
     mkdir -p "$BASE_DIR"
-    tar -xzf telecloud.tar.gz -C "$BASE_DIR" || return 1
+    tar -xzf telecloud.tar.gz -C "$BASE_DIR" || { echo "[!] Extraction failed!"; return 1; }
 
     if [ ! -f "$BASE_DIR/telecloud" ]; then
         echo "[!] 'telecloud' binary not found!"; return 1
@@ -234,8 +266,8 @@ create_env() {
         read -p "LOG_GROUP_ID [Default me]: " LOG_GROUP_ID
         LOG_GROUP_ID=${LOG_GROUP_ID:-me}
 
-        read -p "MAX_UPLOAD_SIZE_MB [Default 2000]: " MAX_UPLOAD
-        MAX_UPLOAD=${MAX_UPLOAD:-2000}
+        read -p "MAX_UPLOAD_SIZE_MB [Default 0 - Auto-detect]: " MAX_UPLOAD
+        MAX_UPLOAD=${MAX_UPLOAD:-0}
 
         cat > "$BASE_DIR/.env" <<EOF
 API_ID=$API_ID
@@ -279,11 +311,12 @@ cloudflared_setup() {
     fi
 }
 
+
 # =============================
 # 6. INITIALIZE SERVICES / RUN SCRIPTS
 # =============================
 create_run_scripts() {
-    local APP_PORT=$(grep PORT "$BASE_DIR/.env" | cut -d'=' -f2)
+    local APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
     APP_PORT=${APP_PORT:-8091}
 
     if [ "$OS_TYPE" == "linux" ]; then
@@ -304,7 +337,9 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-        cat > /etc/systemd/system/telecloud-tunnel.service <<EOF
+        # Cloudflare Tunnel service (if configured)
+        if [ -f "$BASE_DIR/tunnel.txt" ]; then
+            cat > /etc/systemd/system/telecloud-tunnel.service <<EOF
 [Unit]
 Description=Telecloud Cloudflared Tunnel
 After=network.target
@@ -318,10 +353,14 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
+        fi
+
+
+        if command -v systemctl &>/dev/null; then
+            systemctl daemon-reload
+        fi
     else
         # Configure Tmux for Termux / macOS
-        # Termux needs wake-lock; macOS/others skip it
         WAKELOCK=""
         [ "$OS_TYPE" == "termux" ] && WAKELOCK="termux-wake-lock"
 
@@ -344,6 +383,7 @@ while true; do
 done
 EOF
         chmod +x "$BASE_DIR/run-cloudflared.sh"
+
     fi
 }
 
@@ -351,8 +391,41 @@ EOF
 # 7. CREATE MANAGEMENT MENU
 # =============================
 create_menu() {
+    # Backup old menu if it exists
+    [ -f "$BIN_DIR/telecloud" ] && cp "$BIN_DIR/telecloud" "$BIN_DIR/telecloud.bak" 2>/dev/null
     cat > "$BIN_DIR/telecloud" <<'EOF'
 #!/bin/bash
+set -e
+
+# --- HELPER FUNCTIONS ---
+normalize_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64)          echo "amd64" ;;
+        aarch64|arm64)   echo "arm64" ;;
+        armv7l|armhf)    echo "armv7" ;;
+        armv6l)          echo "armv6" ;;
+        i386|i686)       echo "386" ;;
+        *)               echo "$arch" ;;
+    esac
+}
+
+download_file() {
+    local url="$1"
+    local output="$2"
+    local retries=3
+    local count=0
+    while [ $count -lt $retries ]; do
+        if command -v wget &>/dev/null; then
+            wget -qO "$output" "$url" && return 0
+        elif command -v curl &>/dev/null; then
+            curl -fsSL "$url" -o "$output" && return 0
+        fi
+        count=$((count + 1))
+        [ $count -lt $retries ] && sleep 2
+    done
+    return 1
+}
 
 if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     OS_TYPE="termux"
@@ -383,20 +456,22 @@ check_status() {
     [ -f "$BASE_DIR/version.txt" ] && echo "📌 Version          : $(cat $BASE_DIR/version.txt)"
     
     if [ -f "$BASE_DIR/.env" ]; then
-        APP_PORT=$(grep PORT "$BASE_DIR/.env" | cut -d'=' -f2)
+        APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
         echo "📌 App Port         : ${APP_PORT:-8091}"
     fi
 
     if [ "$OS_TYPE" == "linux" ]; then
-        systemctl is-active --quiet telecloud && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        systemctl is-active --quiet telecloud-tunnel && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        if command -v systemctl &>/dev/null; then
+            (systemctl is-active --quiet telecloud) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+            (systemctl is-active --quiet telecloud-tunnel) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        else
+            (pgrep -x telecloud >/dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+        fi
     else
-        # Termux and macOS both use tmux
-        tmux has-session -t $SESSION 2>/dev/null && echo "✅ TMUX (Background): Running" || echo "❌ TMUX (Background): Stopped"
-        pgrep -f "\./telecloud" > /dev/null && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        pgrep -f "cloudflared tunnel run" > /dev/null && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Background): Running" || echo "❌ TMUX (Background): Stopped"
+        (pgrep -f "\./telecloud" > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || true
     fi
-    
     if [ -f "$BASE_DIR/domain.txt" ]; then
         echo "🔗 Domain           : https://$(cat $BASE_DIR/domain.txt)"
     else
@@ -414,23 +489,41 @@ start_app() {
 
     echo "[+] Starting the application..."
     if [ "$OS_TYPE" == "linux" ]; then
-        systemctl enable --now telecloud
-        [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel
+        if command -v systemctl &>/dev/null; then
+            [ -f /etc/systemd/system/telecloud.service ] && systemctl enable --now telecloud || true
+            [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
+        else
+            echo "[!] Your system does not support systemctl. Please run manually."
+        fi
     else
-        tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh"
-        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh"
+        # Prevent nested spawning if already inside tmux
+        if [ -n "$TMUX" ]; then
+            echo "[!] WARNING: You are running inside a TMUX session."
+            echo "Starting the application here will create nested TMUX sessions, which can be confusing."
+            read -p "Do you still want to continue? (y/n): " confirm_tmux
+            [ "$confirm_tmux" != "y" ] && return
+        fi
+
+        if ! tmux has-session -t $SESSION 2>/dev/null; then
+            tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
+        fi
+        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
     fi
-    echo "✅ Started successfully."
+    echo "✅ Application started successfully."
 }
 
 stop_app() {
     echo "[+] Stopping the application..."
     if [ "$OS_TYPE" == "linux" ]; then
-        systemctl stop telecloud telecloud-tunnel 2>/dev/null
+        if command -v systemctl &>/dev/null; then
+            systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
+        else
+            pkill -x telecloud 2>/dev/null || true
+        fi
     else
-        tmux kill-session -t $SESSION 2>/dev/null
-        pkill -f "\./telecloud" 2>/dev/null
-        pkill -f "cloudflared tunnel run" 2>/dev/null
+        tmux kill-session -t $SESSION 2>/dev/null || true
+        pkill -f "\./telecloud" 2>/dev/null || true
+        pkill -f "cloudflared tunnel run" 2>/dev/null || true
     fi
     echo "✅ Stopped everything."
 }
@@ -441,13 +534,34 @@ restart_app() {
 }
 
 manage_tunnel() {
-    echo "1. Install / Reconfigure Cloudflare Tunnel"
-    echo "2. Remove Cloudflare Tunnel"
-    echo "3. Go back"
+    echo "=========================================="
+    echo "        MANAGE REMOTE ACCESS"
+    echo "=========================================="
+    echo "--- Cloudflare Tunnel ---"
+    echo "  1. Install / Reconfigure Cloudflare Tunnel"
+    echo "  2. Remove Cloudflare Tunnel"
+    echo "  3. Go back"
     read -p "Choose an option (1-3): " tc
-    
     case $tc in
         1)
+            if ! command -v cloudflared &>/dev/null; then
+                echo "[+] Installing cloudflared..."
+                if [ "$OS_TYPE" == "termux" ]; then
+                    pkg install -y cloudflared
+                elif [ "$OS_TYPE" == "macos" ]; then
+                    brew install cloudflared
+                else
+                    local ARCH=$(normalize_arch)
+                    local CF_BIN="/usr/local/bin/cloudflared"
+                    download_file "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" "$CF_BIN"
+                    chmod +x "$CF_BIN"
+                fi
+                if ! command -v cloudflared &>/dev/null; then
+                    echo "❌ Error: Could not install cloudflared. Please install it manually."
+                    return 1
+                fi
+            fi
+
             if [ ! -f "$HOME/.cloudflared/cert.pem" ] && [ ! -f "/etc/cloudflared/cert.pem" ]; then
                 cloudflared tunnel login
             fi
@@ -466,20 +580,19 @@ manage_tunnel() {
             fi
             ;;
         2)
-            echo "[+] Deleting Tunnel..."
             if [ "$OS_TYPE" == "linux" ]; then
-                systemctl stop telecloud-tunnel 2>/dev/null
-                systemctl disable telecloud-tunnel 2>/dev/null
-            else  # termux and macos
+                if command -v systemctl &>/dev/null; then
+                    systemctl stop telecloud-tunnel 2>/dev/null
+                    systemctl disable telecloud-tunnel 2>/dev/null
+                fi
+            else
                 pkill -f "cloudflared tunnel run" 2>/dev/null
             fi
             cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
-            rm -f "$BASE_DIR/tunnel.txt" "$BASE_DIR/domain.txt"
+            rm -f "$BASE_DIR/tunnel.txt"
+            rm -f "$BASE_DIR/domain.txt"
             echo "✅ Tunnel removed."
-            echo "------------------------------------------------------"
-            echo "📢 NOTE: Please visit dash.cloudflare.com to remove"
-            echo "the DNS record for the old Tunnel if no longer used!"
-            echo "------------------------------------------------------"
+            echo "📢 Remember to remove the old DNS record at dash.cloudflare.com!"
             ;;
         *) return ;;
     esac
@@ -504,16 +617,24 @@ view_logs() {
     case $log_choice in
         1)
             if [ "$OS_TYPE" == "linux" ]; then
-                journalctl -u telecloud.service -f -n 50
+                if command -v systemctl &>/dev/null; then
+                    journalctl -u telecloud.service -f -n 50
+                else
+                    echo "[!] journalctl not available."
+                fi
             else
-                [ -f "$BASE_DIR/app.log" ] && tail -f -n 50 "$BASE_DIR/app.log" || echo "❌ No app log file found (make sure the app is running)."
+                [ -f "$BASE_DIR/app.log" ] && tail -f -n 50 "$BASE_DIR/app.log" || echo "❌ No app log file found."
             fi
             ;;
         2)
             if [ "$OS_TYPE" == "linux" ]; then
-                journalctl -u telecloud-tunnel.service -f -n 50
+                if command -v systemctl &>/dev/null; then
+                    journalctl -u telecloud-tunnel.service -f -n 50
+                else
+                    echo "[!] journalctl not available."
+                fi
             else
-                [ -f "$BASE_DIR/tunnel.log" ] && tail -f -n 50 "$BASE_DIR/tunnel.log" || echo "❌ No tunnel log file found (make sure tunnel is running)."
+                [ -f "$BASE_DIR/tunnel.log" ] && tail -f -n 50 "$BASE_DIR/tunnel.log" || echo "❌ No tunnel log file found."
             fi
             ;;
         *) return ;;
@@ -546,11 +667,84 @@ edit_env() {
     fi
 }
 
+backup_data() {
+    echo "=========================================="
+    echo "               DATA BACKUP                "
+    echo "=========================================="
+    mkdir -p "$HOME/telecloud_backups"
+    local BK_NAME="telecloud_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+    
+    echo "[+] Stopping application to ensure data integrity..."
+    stop_app
+    echo "[+] Creating backup..."
+    (cd "$BASE_DIR" && tar -czf "$HOME/telecloud_backups/$BK_NAME" session.json database.db* .env 2>/dev/null)
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Backup successful: $HOME/telecloud_backups/$BK_NAME"
+    else
+        echo "❌ Error: Required files (session.json, database.db) might be missing."
+    fi
+    start_app
+}
+
+restore_data() {
+    echo "=========================================="
+    echo "               DATA RESTORE               "
+    echo "=========================================="
+    if [ ! -d "$HOME/telecloud_backups" ] || [ -z "$(ls -A $HOME/telecloud_backups)" ]; then
+        echo "❌ No backups found in $HOME/telecloud_backups"
+        return
+    fi
+
+    echo "Available backups:"
+    ls -1 "$HOME/telecloud_backups"
+    echo ""
+    read -p "Enter filename to restore (e.g., telecloud_backup_...tar.gz): " FILE_NAME
+    
+    if [ ! -f "$HOME/telecloud_backups/$FILE_NAME" ]; then
+        echo "❌ File does not exist!"
+        return
+    fi
+
+    read -p "⚠️ Restoration will overwrite current data. Continue? (y/n): " cf
+    if [ "$cf" == "y" ]; then
+        stop_app
+        echo "[+] Cleaning up old data..."
+        rm -f "$BASE_DIR/database.db" "$BASE_DIR/database.db-wal" "$BASE_DIR/database.db-shm" 2>/dev/null || true
+        (cd "$BASE_DIR" && tar -xzf "$HOME/telecloud_backups/$FILE_NAME")
+        echo "✅ Restoration complete. Please restart the application."
+    fi
+}
+
+manage_backups() {
+    echo "=========================================="
+    echo "              MANAGE BACKUP               "
+    echo "=========================================="
+    echo "1. Create new backup"
+    echo "2. Restore from old backup"
+    echo "3. Go back"
+    read -p "Choose an option (1-3): " b_choice
+    case $b_choice in
+        1) backup_data ;;
+        2) restore_data ;;
+        *) return ;;
+    esac
+}
+
 update_app() {
     echo "[+] Checking for updates..."
-    API_DATA=$(curl -s "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest")
-    LATEST=$(echo "$API_DATA" | jq -r ".tag_name")
+    API_DATA=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/dabeecao/telecloud-go/releases/latest" 2>/dev/null || echo "")
+    
+    if [ -z "$API_DATA" ]; then
+        echo "❌ Error: Cannot fetch data from GitHub API!"; return
+    fi
+
+    LATEST=$(echo "$API_DATA" | jq -r ".tag_name" 2>/dev/null || echo "null")
     LOCAL=$(cat "$BASE_DIR/version.txt" 2>/dev/null)
+
+    if [ "$LATEST" == "null" ]; then
+        echo "❌ Error: Could not identify version from GitHub."; return
+    fi
 
     if [ "$LATEST" == "$LOCAL" ]; then
         echo "✅ You are on the latest version ($LOCAL)."
@@ -558,45 +752,50 @@ update_app() {
     fi
 
     echo "🔥 New version available: $LATEST. Updating..."
-    TARGET=$(uname -m)
+    TARGET=$(normalize_arch)
+    OS_NAME="linux"
+    [ "$OS_TYPE" == "macos" ] && OS_NAME="darwin"
 
-    if [[ "$TARGET" == "aarch64" || "$TARGET" == "arm64" ]]; then
-        TARGET="arm64"
-    elif [[ "$TARGET" == "x86_64" ]]; then
-        TARGET="amd64"
-    elif [[ "$TARGET" == "armv7l" || "$TARGET" == "armhf" ]]; then
-        TARGET="armv7"
-    fi
-    
-    if [ "$TARGET" == "arm64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_arm64")) | .browser_download_url')
-    elif [ "$TARGET" == "amd64" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_amd64") or contains("linux_x86_64")) | .browser_download_url')
-    elif [ "$TARGET" == "armv7" ]; then
-        URL=$(echo "$API_DATA" | jq -r '.assets[] | select(.name | contains("linux_armv7")) | .browser_download_url')
+    # Find suitable binary URL
+    URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" --arg arch "$TARGET" '
+        .assets[] | select(.name | contains($os) and contains($arch)) | .browser_download_url
+    ' | head -n 1)
+
+    # Fallback for amd64/x86_64
+    if [ -z "$URL" ] && [ "$TARGET" == "amd64" ]; then
+        URL=$(echo "$API_DATA" | jq -r --arg os "$OS_NAME" '
+            .assets[] | select(.name | contains($os) and contains("x86_64")) | .browser_download_url
+        ' | head -n 1)
     fi
 
     if [ -z "$URL" ] || [ "$URL" == "null" ]; then
-        echo "❌ Error: Executable not found for architecture $TARGET."
+        echo "❌ Error: Binary not found for $OS_NAME $TARGET."
         return
     fi
 
     echo "Downloading update..."
-    wget -qO telecloud.tar.gz "$URL" || { echo "❌ Error downloading file!"; return; }
+    download_file "$URL" telecloud.tar.gz || { echo "❌ Error downloading file!"; return; }
     
     stop_app
-    tar -xvzf telecloud.tar.gz -C "$BASE_DIR" || { echo "❌ Error extracting file!"; return; }
+    # Backup old file to avoid overwrite issues with running process
+    [ -f "$BASE_DIR/telecloud" ] && mv "$BASE_DIR/telecloud" "$BASE_DIR/telecloud.old"
+    tar -xzf telecloud.tar.gz -C "$BASE_DIR" || { 
+        echo "❌ Error extracting file!"
+        [ -f "$BASE_DIR/telecloud.old" ] && mv "$BASE_DIR/telecloud.old" "$BASE_DIR/telecloud"
+        return
+    }
     
     echo "$LATEST" > "$BASE_DIR/version.txt"
-    rm telecloud.tar.gz
-    echo "✅ Update completed. Please choose Restart."
+    rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
+    hash -r 2>/dev/null
+    echo "✅ Update complete. Please choose Restart."
 }
 
 update_setup_script() {
     echo "[+] Checking for management script updates..."
     local SCRIPT_URL="https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup-en.sh"
     # Download temporary file
-    if wget -qO "$BASE_DIR/auto-setup-en.sh.new" "$SCRIPT_URL"; then
+    if download_file "$SCRIPT_URL" "$BASE_DIR/auto-setup-en.sh.new"; then
         mv "$BASE_DIR/auto-setup-en.sh.new" "$BASE_DIR/auto-setup-en.sh"
         chmod +x "$BASE_DIR/auto-setup-en.sh"
         echo "✅ Updated auto-setup-en.sh successfully."
@@ -651,14 +850,18 @@ uninstall() {
         echo "delete the old DNS records to keep your setup clean."
         echo "------------------------------------------------------"
         
-        if [ "$OS_TYPE" == "linux" ]; then
-            systemctl disable telecloud telecloud-tunnel 2>/dev/null
-            rm -f /etc/systemd/system/telecloud.service
-            rm -f /etc/systemd/system/telecloud-tunnel.service
-            systemctl daemon-reload
+        if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null; then
+            systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
+            systemctl disable telecloud telecloud-tunnel 2>/dev/null || true
+            rm -f /etc/systemd/system/telecloud.service 2>/dev/null || true
+            rm -f /etc/systemd/system/telecloud-tunnel.service 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
         fi
         
-        rm -rf "$BASE_DIR" "$(command -v telecloud)"
+        echo "[+] Removing files..."
+        [ -n "$BASE_DIR" ] && rm -rf "$BASE_DIR" || true
+        [ -n "$BIN_DIR" ] && rm -f "$BIN_DIR/telecloud" || true
+        
         echo "✅ Uninstalled successfully. Script will exit."
         exit
     fi
@@ -678,10 +881,11 @@ while true; do
     echo "  7. Edit Config (.env)"
     echo "  8. Telecloud Commands (Auth / Reset Pass)"
     echo "  9. Check for Updates"
-    echo "  10. Uninstall"
-    echo "  11. Exit"
+    echo "  10. Manage Backup"
+    echo "  11. Uninstall"
+    echo "  12. Exit"
     echo "=========================================="
-    read -p "Choose an option (1-11): " c
+    read -p "Choose an option (1-12): " c
     case $c in
         1) check_status; pause ;;
         2) start_app; pause ;;
@@ -692,8 +896,9 @@ while true; do
         7) edit_env; pause ;;
         8) telecloud_commands; pause ;;
         9) update_app; pause ;;
-        10) uninstall ;;
-        11) clear; exit ;;
+        10) manage_backups; pause ;;
+        11) uninstall ;;
+        12) clear; exit ;;
         *) echo "[!] Invalid choice!"; pause ;;
     esac
 done
@@ -704,9 +909,11 @@ EOF
 # =============================
 # MAIN EXECUTION BLOCK
 # =============================
+set -e
 rollback() {
     echo -e "\n[!] INSTALLATION ERROR! Cleaning up..."
-    rm -rf "$BASE_DIR" telecloud.tar.gz 2>/dev/null
+    [ -n "$BASE_DIR" ] && [ "$BASE_DIR" != "/" ] && rm -rf "$BASE_DIR"
+    rm -f telecloud.tar.gz 2>/dev/null
     exit 1
 }
 
@@ -717,21 +924,32 @@ if [ "$1" == "--update-menu" ]; then
 fi
 
 if [ ! -f "$BASE_DIR/telecloud" ]; then
+    check_internet
     echo "--- FIRST TIME TELECLOUD INSTALLATION ---"
+    echo ""
+    echo "Use Cloudflare Tunnel for remote access?"
+    read -p "Choose (y/n) [Default y]: " _tm
+    _tm=${_tm:-y}
+    if [ "$_tm" == "y" ]; then
+        TUNNEL_METHOD="cloudflare"
+    else
+        TUNNEL_METHOD="none"
+    fi
+    export TUNNEL_METHOD
+
     trap rollback INT TERM
     install_dependencies || rollback
     download_telecloud || rollback
     create_env || rollback
-    
-    read -p "Do you want to set up Cloudflare Tunnel connection right now? (y/n): " setup_tnl
-    if [ "$setup_tnl" == "y" ]; then
+
+    if [ "$TUNNEL_METHOD" == "cloudflare" ]; then
         cloudflared_setup || rollback
     fi
-    
+
     create_run_scripts || rollback
     create_menu || rollback
     trap - INT TERM
-    
+
     echo "============================================="
     echo "✅ INSTALLATION SUCCESSFUL!"
     echo "Type the following command to open the Management Menu:"

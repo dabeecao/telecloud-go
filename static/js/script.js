@@ -292,7 +292,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                             if (dismissedDate !== today) {
                                 const choice = await this.showUIModal('update', this.t('update_title'), this.t('update_msg') + ` (${latestVersion})`);
                                 if (choice === 'confirm') {
-                                    window.open(latest.html_url, '_blank');
+                                    this.currentTab = 'changelog';
                                 } else if (choice === 'dismiss_today') {
                                     localStorage.setItem('tc_update_dismissed', today);
                                 }

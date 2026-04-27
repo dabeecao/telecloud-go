@@ -153,7 +153,7 @@ const TeleCloud = {
             dont_remind_today: 'Không nhắc lại hôm nay',
             changelog: 'Cập nhật',
             latest_release: 'Bản mới nhất',
-            update_now: 'Cập nhật ngay',
+            update_now: 'Xem bản cập nhật',
             // Upload API
             upload_api: 'Upload API',
             upload_api_desc: 'Cho phép upload file từ xa qua HTTP API với Bearer Token. Dùng cho tích hợp script, CI/CD, v.v.',
@@ -328,7 +328,7 @@ const TeleCloud = {
             dont_remind_today: "Don't remind today",
             changelog: 'Changelog',
             latest_release: 'Latest Release',
-            update_now: 'Update Now',
+            update_now: 'View Changelog',
             // Upload API
             upload_api: 'Upload API',
             upload_api_desc: 'Allow remote file uploads via HTTP API with Bearer Token. Use for scripts, CI/CD integrations, etc.',

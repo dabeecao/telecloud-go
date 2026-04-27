@@ -32,6 +32,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"path/filepath"
 	"telecloud/api"
 	"telecloud/config"
 	"telecloud/database"
@@ -80,6 +81,7 @@ func main() {
 	}
 	utils.InitCrypto(cryptoSecret)
 	utils.InitMedia(cfg.ThumbsDir)
+	startCleanupTask(cfg)
 
 	if err := tgclient.InitClient(cfg, *authFlag); err != nil {
 		log.Fatalf("Telegram client init error: %v", err)
@@ -162,4 +164,26 @@ func main() {
 
 	log.Println("TeleCloud shut down successfully.")
 	os.Exit(exitCode)
+}
+
+func startCleanupTask(cfg *config.Config) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		for range ticker.C {
+			files, err := os.ReadDir(cfg.TempDir)
+			if err != nil {
+				continue
+			}
+			now := time.Now()
+			for _, f := range files {
+				info, err := f.Info()
+				if err != nil {
+					continue
+				}
+				if now.Sub(info.ModTime()) > 24*time.Hour {
+					os.Remove(filepath.Join(cfg.TempDir, f.Name()))
+				}
+			}
+		}
+	}()
 }

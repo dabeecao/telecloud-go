@@ -25,7 +25,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var uploadMu sync.Mutex
+type chunkState struct {
+	sync.Mutex
+	received map[int]bool
+}
+
+var (
+	chunkTrackerSync sync.Map // map[string]*chunkState
+)
+
 
 const csrfCookieName = "csrf_token"
 const csrfHeaderName = "X-CSRF-Token"
@@ -325,7 +333,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 
-		filename := header.Filename
+		filename := filepath.Base(header.Filename)
 		path := c.PostForm("path")
 		if path == "" {
 			path = "/"
@@ -349,16 +357,34 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write file"})
 			return
 		}
-		defer os.Remove(tempFilePath)
-
+		
 		mimeType := header.Header.Get("Content-Type")
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
 
 		uniqueName := database.GetUniqueFilename(path, filename, false)
+		async := c.PostForm("async") == "true"
+
+		// If async is requested AND they don't need a public share link immediately,
+		// we can process this in the background.
+		if async && shareMode != "public" {
+			go func() {
+				tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, uniqueName, path, mimeType, taskID, cfg)
+				os.Remove(tempFilePath)
+			}()
+			
+			c.JSON(http.StatusOK, gin.H{
+				"status":   "processing",
+				"task_id":  taskID,
+				"filename": uniqueName,
+				"path":     path,
+			})
+			return
+		}
 
 		// Synchronous upload — block until Telegram upload + DB insert done
+		defer os.Remove(tempFilePath)
 		fileID, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, uniqueName, path, mimeType, cfg)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed: " + err.Error()})
@@ -402,13 +428,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			
 			dbHash := database.GetSetting("admin_password_hash")
 			if bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(oldPassword)) != nil {
-				c.JSON(http.StatusForbidden, gin.H{"error": "incorrect old password"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "incorrect_old_password"})
 				return
 			}
 			
 			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_hash_password"})
 				return
 			}
 			
@@ -506,67 +532,96 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 			defer file.Close()
 
-			filename := c.PostForm("filename")
+			filename := filepath.Base(c.PostForm("filename"))
 			path := c.PostForm("path")
 			if path == "" {
 				path = "/"
 			}
 			taskID := c.PostForm("task_id")
-			chunkIndex, _ := strconv.Atoi(c.PostForm("chunk_index"))
-			totalChunks, _ := strconv.Atoi(c.PostForm("total_chunks"))
+			chunkIndex, err := strconv.Atoi(c.PostForm("chunk_index"))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chunk_index"})
+				return
+			}
+			totalChunks, err := strconv.Atoi(c.PostForm("total_chunks"))
+			if err != nil || totalChunks <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid total_chunks"})
+				return
+			}
+
+			if chunkIndex < 0 || chunkIndex >= totalChunks {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "chunk_index out of range"})
+				return
+			}
 
 			tempDir := cfg.TempDir
 			os.MkdirAll(tempDir, os.ModePerm)
 			tempFilePath := filepath.Join(tempDir, taskID+"_"+filename)
 
-			serverPercent := int((float64(chunkIndex+1) / float64(totalChunks)) * 100)
-			tgclient.UpdateTask(taskID, "uploading_to_server", serverPercent, "")
-
-			// Use mutex to prevent concurrent writes to the same file
-			uploadMu.Lock()
-			out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				uploadMu.Unlock()
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open temp file: " + err.Error()})
-				return
-			}
-			
 			// Constant chunk size from frontend is 10MB
 			const chunkSize = 10 * 1024 * 1024
 			offset := int64(chunkIndex) * int64(chunkSize)
+
+			// Use a per-task mutex to synchronize writes and completion check
+			val, _ := chunkTrackerSync.LoadOrStore(taskID, &chunkState{
+				received: make(map[int]bool),
+			})
+			state := val.(*chunkState)
+
+			state.Lock()
 			
-			// Read the chunk data
-			chunkData, err := io.ReadAll(file)
+			// Open file inside the lock to ensure we don't have multiple writers
+			// interfering with Seek/Write if something goes weird with the FS.
+			out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
+				state.Unlock()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_open_temp_file"})
+				return
+			}
+
+			if _, err := out.Seek(offset, 0); err != nil {
 				out.Close()
-				uploadMu.Unlock()
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read chunk: " + err.Error()})
+				state.Unlock()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_seek_file"})
 				return
 			}
-
-			_, err = out.WriteAt(chunkData, offset)
-			out.Close()
-			uploadMu.Unlock()
 			
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write chunk: " + err.Error()})
+			if _, err = io.Copy(out, file); err != nil {
+				out.Close()
+				state.Unlock()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_write_chunk"})
 				return
 			}
+			out.Close()
 
-			if chunkIndex == totalChunks-1 {
+			state.received[chunkIndex] = true
+			actualReceived := len(state.received)
+			
+			isDone := actualReceived == totalChunks
+			if isDone {
+				chunkTrackerSync.Delete(taskID) // Clean up early
+			}
+			state.Unlock()
+
+			if isDone {
+				tgclient.UpdateTask(taskID, "uploading_to_server", 100, "")
+				
 				mimeType := header.Header.Get("Content-Type")
 				if mimeType == "" {
 					mimeType = "application/octet-stream"
 				}
 
 				go func() {
+					defer os.Remove(tempFilePath)
 					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg)
-					os.Remove(tempFilePath)
 				}()
 
 				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "Received all, pushing to Telegram"})
 				return
 			}
+
+			serverPercent := int((float64(actualReceived) / float64(totalChunks)) * 100)
+			tgclient.UpdateTask(taskID, "uploading_to_server", serverPercent, "")
 
 			c.JSON(http.StatusOK, gin.H{"status": "chunk_received", "chunk": chunkIndex})
 		})

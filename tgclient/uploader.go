@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"telecloud/config"
 	"telecloud/database"
@@ -198,7 +199,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
 		WithProgress(uploadProgress{taskID: taskID}).
-		WithThreads(3)
+		WithThreads(4) // Increased from 2 to speed up larger file uploads
 
 	file, err := up.FromPath(ctx, filePath)
 	if err != nil {
@@ -243,6 +244,11 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		}
 	}
 
+	if msgID <= 0 {
+		UpdateTask(taskID, "error", 0, "err_tg_msgid")
+		return
+	}
+
 	fileInfo, err := os.Stat(filePath)
 	var size int64 = 0
 	if err == nil {
@@ -257,11 +263,18 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		msgID, uniqueFilename, path, size, mimeType, localThumb,
 	)
 	if err != nil {
-		UpdateTask(taskID, "error", 0, "DB Error: "+err.Error())
+		UpdateTask(taskID, "error", 0, "err_db_error")
 		return
 	}
 
 	UpdateTask(taskID, "done", 100, "")
+
+	// Add a small cool-down delay before releasing the semaphore slot
+	// to prevent hitting rate limits when uploading many small files in sequence.
+	select {
+	case <-time.After(1000 * time.Millisecond):
+	case <-ctx.Done():
+	}
 }
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
@@ -279,7 +292,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	api := Client.API()
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
-		WithThreads(3)
+		WithThreads(4) // Increased from 2 to speed up larger file uploads
 
 	file, err := up.FromPath(ctx, filePath)
 	if err != nil {
@@ -317,6 +330,10 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		}
 	}
 
+	if msgID <= 0 {
+		return 0, fmt.Errorf("err_tg_msgid")
+	}
+
 	fileInfo, _ := os.Stat(filePath)
 	var size int64
 	if fileInfo != nil {
@@ -332,6 +349,12 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	).Scan(&newID)
 	if err != nil {
 		return 0, fmt.Errorf("db insert: %w", err)
+	}
+
+	// Add a small cool-down delay before releasing the semaphore slot
+	select {
+	case <-time.After(1000 * time.Millisecond):
+	case <-ctx.Done():
 	}
 
 	return newID, nil

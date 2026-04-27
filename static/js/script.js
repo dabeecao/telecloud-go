@@ -22,6 +22,12 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         ws: null,
         lang: TeleCloud.lang,
         t(key, params) { return TeleCloud.t(key, params, this.lang); },
+        handleCommonError(errorStr, defaultKey) {
+            if (!errorStr) return this.t(defaultKey);
+            const errorKey = 'err_' + errorStr.toLowerCase().replace(/ /g, '_');
+            const translated = this.t(errorKey);
+            return (translated !== errorKey) ? translated : (this.t(defaultKey) + ' (' + errorStr + ')');
+        },
         async setupAdmin() {
             if (this.password !== this.confirmPassword) {
                 this.showToast(this.t('toast_pass_mismatch'), 'error');
@@ -35,7 +41,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 if (res.ok) window.location.href = '/';
                 else {
                     let d = await res.json();
-                    this.showToast(d.error || this.t('setup_failed'), 'error');
+                    this.showToast(this.handleCommonError(d.error, 'setup_failed'), 'error');
                 }
             } catch (e) {
                 this.showToast(this.t('setup_error'), 'error');
@@ -56,8 +62,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     this.settingsForm = { oldPassword: '', newPassword: '', confirmPassword: '' };
                 } else {
                     let d = await res.json();
-                    let errorKey = 'err_' + (d.error || '').toLowerCase().replace(/ /g, '_');
-                    this.showToast(this.t(errorKey), 'error');
+                    this.showToast(this.handleCommonError(d.error, 'status_error'), 'error');
                 }
             } catch (e) {
                 this.showToast(this.t('conn_error'), 'error');
@@ -316,9 +321,15 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     const data = JSON.parse(event.data);
                     let task = this.uploadQueue.find(t => t.id === data.task_id);
                     if (task) {
-                        if (data.message === 'waiting_slot') {
+                        if (data.status === 'uploading_to_server') {
+                            // Let the client handle the first 50% of progress to avoid jumping during parallel uploads
+                            if (!task.hasError) {
+                                task.statusText = data.message || task.statusText;
+                            }
+                        } else if (data.message === 'waiting_slot') {
                             task.statusText = this.t('waiting_slot');
                             task.hasError = false;
+                            task.progress = 50;
                         } else if (data.status === 'telegram' || data.status === 'done') {
                             task.progress = 50 + Math.round(data.percent / 2);
                             task.hasError = false;
@@ -331,7 +342,6 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                             this.fetchFiles(true);
                         } else if (data.status === 'error') {
                             const errorMsg = data.message;
-                            // Check if message is a translation key
                             const translated = this.t(errorMsg);
                             task.statusText = this.t('status_error') + ': ' + (translated !== errorMsg ? translated : errorMsg);
                             task.hasError = true;
@@ -391,9 +401,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 window.location.href = '/'; 
             } else {
                 const data = await res.json();
-                const errorKey = data.error === 'too_many_requests' ? 'err_too_many_requests' : 
-                                 data.error === 'ip_blocked' ? 'err_ip_blocked' : 'toast_login_fail';
-                this.showToast(this.t(errorKey), 'error');
+                this.showToast(this.handleCommonError(data.error, 'toast_login_fail'), 'error');
             }
         },
         async logout() { await fetch('/logout', { method: 'POST', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } }); window.location.href = '/login'; },
@@ -494,49 +502,73 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const CHUNK_SIZE = 10 * 1024 * 1024;
             const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
             let hasError = false;
+            let uploadedChunks = 0;
 
-            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-                if (hasError) break;
-                let taskObj = this.uploadQueue.find(t => t.id === taskId);
-                if (taskObj && taskObj.isCancelled) break;
+            // Worker pool for parallel chunks
+            const CHUNK_CONCURRENCY = 3;
+            const chunkQueue = Array.from({ length: totalChunks }, (_, i) => i);
+            
+            const uploadWorker = async () => {
+                while (chunkQueue.length > 0 && !hasError) {
+                    const chunkIndex = chunkQueue.shift();
+                    let taskObj = this.uploadQueue.find(t => t.id === taskId);
+                    if (taskObj && taskObj.isCancelled) break;
 
-                const start = chunkIndex * CHUNK_SIZE;
-                const end = Math.min(start + CHUNK_SIZE, file.size);
-                const chunk = file.slice(start, end);
-                const fd = new FormData(); 
-                fd.append('file', chunk); fd.append('filename', file.name); fd.append('path', this.currentPath); 
-                fd.append('task_id', taskId); fd.append('chunk_index', chunkIndex); fd.append('total_chunks', totalChunks);
+                    const start = chunkIndex * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, file.size);
+                    const chunk = file.slice(start, end);
+                    const fd = new FormData(); 
+                    fd.append('file', chunk); fd.append('filename', file.name); fd.append('path', this.currentPath); 
+                    fd.append('task_id', taskId); fd.append('chunk_index', chunkIndex); fd.append('total_chunks', totalChunks);
 
-                try {
-                    let task = this.uploadQueue.find(t => t.id === taskId);
-                    if (task && !task.statusText.includes(this.t('status_error'))) {
-                        task.statusText = `${this.t('pushing')} (${chunkIndex + 1}/${totalChunks})...`;
+                    let retries = 3;
+                    let success = false;
+                    while (retries > 0 && !success) {
+                        try {
+                            let task = this.uploadQueue.find(t => t.id === taskId);
+                            if (task && !task.statusText.includes(this.t('status_error'))) {
+                                task.statusText = `${this.t('pushing')} (${uploadedChunks + 1}/${totalChunks})... ${retries < 3 ? '(' + this.t('retry') + ' ' + (3 - retries) + ')' : ''}`;
+                            }
+
+                            const response = await fetch('/api/upload', { 
+                                method: 'POST', 
+                                body: fd, 
+                                headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } 
+                            });
+                            
+                            if (!response.ok) throw new Error("Upload failed");
+                            const result = await response.json();
+                            
+                            uploadedChunks++;
+                            if (task) task.progress = Math.round((uploadedChunks / totalChunks) * 50);
+                            
+                            if (result.status === "processing_telegram") {
+                                if (task) task.statusText = this.t('syncing_tg');
+                            }
+                            success = true;
+                        } catch (err) { 
+                            retries--;
+                            console.error(`Upload chunk ${chunkIndex} error (retries left: ${retries}):`, err);
+                            if (retries === 0) {
+                                let task = this.uploadQueue.find(t => t.id === taskId); 
+                                if(task) {
+                                    task.statusText = this.t('conn_error');
+                                    task.hasError = true;
+                                }
+                                hasError = true;
+                            } else {
+                                await new Promise(r => setTimeout(r, 2000)); // Wait before retry
+                            }
+                        }
                     }
-
-                    const response = await fetch('/api/upload', { 
-                        method: 'POST', 
-                        body: fd, 
-                        headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } 
-                    });
-                    
-                    if (!response.ok) throw new Error("Upload failed");
-                    const result = await response.json();
-                    
-                    if (task) task.progress = Math.round(((chunkIndex + 1) / totalChunks) * 50);
-                    
-                    if (result.status === "processing_telegram") {
-                        if (task) task.statusText = this.t('syncing_tg');
-                    }
-                } catch (err) { 
-                    console.error("Upload chunk error:", err);
-                    let task = this.uploadQueue.find(t => t.id === taskId); 
-                    if(task) {
-                        task.statusText = this.t('conn_error');
-                        task.hasError = true;
-                    }
-                    hasError = true;
                 }
+            };
+
+            const workers = [];
+            for (let i = 0; i < Math.min(CHUNK_CONCURRENCY, totalChunks); i++) {
+                workers.push(uploadWorker());
             }
+            await Promise.all(workers);
         },
         async toggleShare(file) {
             const targetFile = this.files.find(f => f.id === file.id);
@@ -559,7 +591,8 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const link = type === 'direct' ? `${window.location.origin}/dl/${file.direct_token}` : `${window.location.origin}/s/${file.share_token}`;
             try {
                 await TeleCloud.copyToClipboard(link);
-                this.showToast(this.t('toast_copied', {t: type === 'direct' ? 'Direct' : 'Share'}));
+                const label = type === 'direct' ? this.t('link_direct') : this.t('link_share');
+                this.showToast(this.t('toast_copied', {t: label}));
             } catch (err) {
                 console.error('Failed to copy link:', err);
             }

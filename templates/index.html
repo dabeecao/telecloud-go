@@ -469,7 +469,7 @@
                                                     <div class="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-xs truncate"
                                                         x-text="webdavUser"></div>
                                                     <button
-                                                        @click="TeleCloud.copyToClipboard(webdavUser); showToast(t('toast_copied', {t: 'Username'}), 'success')"
+                                                        @click="TeleCloud.copyToClipboard(webdavUser); showToast(t('toast_copied', {t: t('webdav_user')}), 'success')"
                                                         class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-600 hover:text-white transition-all shrink-0">
                                                         <i class="fa-solid fa-copy"></i>
                                                     </button>
@@ -546,7 +546,7 @@
                                                             :title="showAPIKey ? t('upload_api_hide_key') : t('upload_api_show_key')">
                                                             <i class="fa-solid text-sm" :class="showAPIKey ? 'fa-eye-slash' : 'fa-eye'"></i>
                                                         </button>
-                                                        <button @click="TeleCloud.copyToClipboard(uploadAPIKey); showToast(t('upload_api_copy_key'), 'success')"
+                                                        <button @click="TeleCloud.copyToClipboard(uploadAPIKey); showToast(t('toast_copied', {t: t('label_api_key')}), 'success')"
                                                             class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-violet-600 hover:text-white transition-all"
                                                             :title="t('upload_api_copy_key')">
                                                             <i class="fa-solid fa-copy text-sm"></i>
@@ -615,6 +615,22 @@
                                                 </div>
                                             </div>
 
+                                            <!-- cURL example with async -->
+                                            <div>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5" x-text="t('curl_async')"></p>
+                                                <div class="relative group">
+                                                    <pre class="bg-slate-900 dark:bg-slate-950 text-emerald-400 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto whitespace-pre-wrap break-all"><code x-text="`curl -X POST ${window.location.origin}/api/upload-api/upload \\
+  -H 'Authorization: Bearer <YOUR_API_KEY>' \\
+  -F 'file=@/path/to/yourfile.txt' \\
+  -F 'path=/' \\
+  -F 'async=true'`"></code></pre>
+                                                    <button @click="TeleCloud.copyToClipboard(`curl -X POST ${window.location.origin}/api/upload-api/upload -H 'Authorization: Bearer ${uploadAPIKey}' -F 'file=@/path/to/yourfile.txt' -F 'path=/' -F 'async=true'`); showToast(t('toast_copied', {t: 'cURL'}), 'success')"
+                                                        class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 bg-slate-700 hover:bg-violet-600 text-white rounded-lg transition-all text-[10px]">
+                                                        <i class="fa-solid fa-copy"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+
                                             <!-- Parameters -->
                                             <div>
                                                 <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5" x-text="t('upload_api_params')"></p>
@@ -630,6 +646,10 @@
                                                     <div class="flex items-start gap-2">
                                                         <span class="font-mono bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded text-[10px] shrink-0">share</span>
                                                         <span class="text-slate-500 dark:text-slate-400" x-text="t('upload_api_param_share')"></span>
+                                                    </div>
+                                                    <div class="flex items-start gap-2">
+                                                        <span class="font-mono bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded text-[10px] shrink-0">async</span>
+                                                        <span class="text-slate-500 dark:text-slate-400" x-text="t('upload_api_param_async')"></span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -652,6 +672,13 @@
   "share_token":  "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "share_link":   "https://yourhost/s/&lt;token&gt;",
   "direct_link":  "https://yourhost/dl/&lt;signed-token&gt;"
+}</code></pre>
+                                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-1" x-text="t('response_async')"></p>
+                                                <pre class="bg-slate-900 dark:bg-slate-950 text-blue-300 p-3 rounded-xl text-[10px] leading-relaxed overflow-x-auto"><code>{
+  "status":   "processing",
+  "task_id":  "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "filename": "yourfile.txt",
+  "path":     "/"
 }</code></pre>
                                                 <div class="flex items-start gap-2 p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-800/30 text-emerald-200 text-[10px]">
                                                     <i class="fa-solid fa-circle-check text-emerald-400 mt-0.5 shrink-0"></i>
@@ -1127,8 +1154,8 @@
 
             <button @click="toastModal.show = false"
                 class="mt-4 w-full py-3 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95"
-                :class="toastModal.type === 'error' ? 'bg-red-600 hover:bg-red-500 shadow-red-500/25' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/25'">
-                OK
+                :class="toastModal.type === 'error' ? 'bg-red-600 hover:bg-red-500 shadow-red-500/25' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/25'"
+                x-text="t('close')">
             </button>
         </div>
     </div>

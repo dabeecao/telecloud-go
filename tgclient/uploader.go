@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,10 +23,6 @@ var (
 	TaskCancels = make(map[string]context.CancelFunc)
 	taskMutex   sync.Mutex
 
-	resolvedPeer   tg.InputPeerClass
-	resolvedPeerID string
-	resolvedPeerMu sync.RWMutex
-	
 	// Limit concurrent uploads to Telegram to prevent floodwait
 	uploadSemaphore = make(chan struct{}, 3)
 )
@@ -72,87 +66,6 @@ func CancelTask(taskID string) {
 	}
 }
 
-func resolveLogGroup(ctx context.Context, api *tg.Client, logGroupIDStr string) (tg.InputPeerClass, error) {
-	resolvedPeerMu.RLock()
-	if resolvedPeerID == logGroupIDStr && resolvedPeer != nil {
-		p := resolvedPeer
-		resolvedPeerMu.RUnlock()
-		return p, nil
-	}
-	resolvedPeerMu.RUnlock()
-
-	resolvedPeerMu.Lock()
-	defer resolvedPeerMu.Unlock()
-
-	// Double check
-	if resolvedPeerID == logGroupIDStr && resolvedPeer != nil {
-		return resolvedPeer, nil
-	}
-
-	var peer tg.InputPeerClass
-	var err error
-
-	if logGroupIDStr == "me" || logGroupIDStr == "self" {
-		peer = &tg.InputPeerSelf{}
-	} else {
-		logGroupID, errParse := strconv.ParseInt(logGroupIDStr, 10, 64)
-		if errParse != nil {
-			return nil, fmt.Errorf("invalid LOG_GROUP_ID: %v", errParse)
-		}
-
-		if logGroupID < 0 {
-			strID := strconv.FormatInt(logGroupID, 10)
-			if strings.HasPrefix(strID, "-100") {
-				channelID, _ := strconv.ParseInt(strID[4:], 10, 64)
-				dialogs, errDlg := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-					OffsetPeer: &tg.InputPeerEmpty{},
-					Limit:      100,
-				})
-				if errDlg == nil {
-					switch d := dialogs.(type) {
-					case *tg.MessagesDialogs:
-						for _, chat := range d.Chats {
-							if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
-								peer = &tg.InputPeerChannel{
-									ChannelID:  c.ID,
-									AccessHash: c.AccessHash,
-								}
-								break
-							}
-						}
-					case *tg.MessagesDialogsSlice:
-						for _, chat := range d.Chats {
-							if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
-								peer = &tg.InputPeerChannel{
-									ChannelID:  c.ID,
-									AccessHash: c.AccessHash,
-								}
-								break
-							}
-						}
-					}
-				} else {
-					err = errDlg
-				}
-			} else {
-				peer = &tg.InputPeerChat{ChatID: -logGroupID}
-			}
-		} else {
-			peer = &tg.InputPeerUser{UserID: logGroupID}
-		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-	if peer == nil {
-		return nil, fmt.Errorf("could not resolve peer for ID %s", logGroupIDStr)
-	}
-
-	resolvedPeer = peer
-	resolvedPeerID = logGroupIDStr
-	return peer, nil
-}
 
 type uploadProgress struct {
 	taskID string

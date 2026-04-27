@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/net/proxy"
 	"golang.org/x/term"
@@ -19,10 +21,17 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/dcs"
+	"github.com/gotd/td/telegram/message"
 	"github.com/gotd/td/tg"
 )
 
-var Client *telegram.Client
+var (
+	Client *telegram.Client
+
+	resolvedPeer   tg.InputPeerClass
+	resolvedPeerID string
+	resolvedPeerMu sync.RWMutex
+)
 
 type termAuth struct{}
 
@@ -156,6 +165,114 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 			}
 		}
 
+		// Verify Log Group connectivity
+		if err := VerifyLogGroup(ctx, cfg); err != nil {
+			return fmt.Errorf("failed to verify Log Group: %w", err)
+		}
+
 		return cb(ctx)
 	})
+}
+
+func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {
+	if cfg.LogGroupID == "" {
+		return fmt.Errorf("LOG_GROUP_ID is not set in .env")
+	}
+
+	api := Client.API()
+	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
+	if err != nil {
+		return fmt.Errorf("could not resolve log group: %w", err)
+	}
+
+	sender := message.NewSender(api)
+	_, err = sender.To(peer).Text(ctx, "🚀 TeleCloud is starting...\nConnectivity check: OK")
+	if err != nil {
+		return fmt.Errorf("could not send test message to log group: %w", err)
+	}
+
+	log.Println("Log Group connectivity verified successfully.")
+	return nil
+}
+
+func resolveLogGroup(ctx context.Context, api *tg.Client, logGroupIDStr string) (tg.InputPeerClass, error) {
+	resolvedPeerMu.RLock()
+	if resolvedPeerID == logGroupIDStr && resolvedPeer != nil {
+		p := resolvedPeer
+		resolvedPeerMu.RUnlock()
+		return p, nil
+	}
+	resolvedPeerMu.RUnlock()
+
+	resolvedPeerMu.Lock()
+	defer resolvedPeerMu.Unlock()
+
+	// Double check
+	if resolvedPeerID == logGroupIDStr && resolvedPeer != nil {
+		return resolvedPeer, nil
+	}
+
+	var peer tg.InputPeerClass
+	var err error
+
+	if logGroupIDStr == "me" || logGroupIDStr == "self" {
+		peer = &tg.InputPeerSelf{}
+	} else {
+		logGroupID, errParse := strconv.ParseInt(logGroupIDStr, 10, 64)
+		if errParse != nil {
+			return nil, fmt.Errorf("invalid LOG_GROUP_ID: %v", errParse)
+		}
+
+		if logGroupID < 0 {
+			strID := strconv.FormatInt(logGroupID, 10)
+			if strings.HasPrefix(strID, "-100") {
+				channelID, _ := strconv.ParseInt(strID[4:], 10, 64)
+				dialogs, errDlg := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+					OffsetPeer: &tg.InputPeerEmpty{},
+					Limit:      100,
+				})
+				if errDlg == nil {
+					switch d := dialogs.(type) {
+					case *tg.MessagesDialogs:
+						for _, chat := range d.Chats {
+							if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
+								peer = &tg.InputPeerChannel{
+									ChannelID:  c.ID,
+									AccessHash: c.AccessHash,
+								}
+								break
+							}
+						}
+					case *tg.MessagesDialogsSlice:
+						for _, chat := range d.Chats {
+							if c, ok := chat.(*tg.Channel); ok && c.ID == channelID {
+								peer = &tg.InputPeerChannel{
+									ChannelID:  c.ID,
+									AccessHash: c.AccessHash,
+								}
+								break
+							}
+						}
+					}
+				} else {
+					err = errDlg
+				}
+			} else {
+				peer = &tg.InputPeerChat{ChatID: -logGroupID}
+			}
+		} else {
+			peer = &tg.InputPeerUser{UserID: logGroupID}
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	if peer == nil {
+		return nil, fmt.Errorf("could not resolve peer for ID %s", logGroupIDStr)
+	}
+
+	resolvedPeer = peer
+	resolvedPeerID = logGroupIDStr
+	return peer, nil
 }

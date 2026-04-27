@@ -150,6 +150,10 @@ const TeleCloud = {
             file_not_found_msg: 'Tệp không tồn tại hoặc link đã bị thu hồi.',
             update_title: 'Cập nhật TeleCloud',
             update_msg: 'Có phiên bản mới trên GitHub. Bạn có muốn xem không?',
+            dont_remind_today: 'Không nhắc lại hôm nay',
+            changelog: 'Cập nhật',
+            latest_release: 'Bản mới nhất',
+            update_now: 'Cập nhật ngay',
             // Upload API
             upload_api: 'Upload API',
             upload_api_desc: 'Cho phép upload file từ xa qua HTTP API với Bearer Token. Dùng cho tích hợp script, CI/CD, v.v.',
@@ -321,6 +325,10 @@ const TeleCloud = {
             file_not_found_msg: 'File not found or link has been revoked.',
             update_title: 'TeleCloud Update',
             update_msg: 'A new version is available on GitHub. Do you want to check it out?',
+            dont_remind_today: "Don't remind today",
+            changelog: 'Changelog',
+            latest_release: 'Latest Release',
+            update_now: 'Update Now',
             // Upload API
             upload_api: 'Upload API',
             upload_api_desc: 'Allow remote file uploads via HTTP API with Bearer Token. Use for scripts, CI/CD integrations, etc.',
@@ -382,14 +390,33 @@ const TeleCloud = {
 
     formatDate(dateStr, lang = this.lang) {
         if (!dateStr) return '--';
-        const safeString = dateStr.replace(' ', 'T') + 'Z';
-        const d = new Date(safeString);
-        if (isNaN(d)) return dateStr;
+        let d;
+        if (dateStr.includes('T')) {
+            d = new Date(dateStr);
+        } else {
+            const safeString = dateStr.replace(' ', 'T') + 'Z';
+            d = new Date(safeString);
+        }
+        if (isNaN(d.getTime())) return dateStr;
         const options = { hour: '2-digit', minute: '2-digit' };
         if (lang === 'vi') {
             return d.toLocaleDateString('vi-VN') + ' ' + this.t('at_time', {}, lang) + ' ' + d.toLocaleTimeString('vi-VN', options);
         }
         return d.toLocaleDateString('en-US') + ' ' + this.t('at_time', {}, lang) + ' ' + d.toLocaleTimeString('en-US', options);
+    },
+
+    parseMarkdown(text) {
+        if (!text) return '';
+        return text
+            .replace(/^### (.*$)/gim, '<h3 class="text-base font-bold mt-3 mb-1">$1</h3>')
+            .replace(/^## (.*$)/gim, '<h2 class="text-lg font-bold mt-4 mb-2">$1</h2>')
+            .replace(/^# (.*$)/gim, '<h1 class="text-xl font-bold mt-5 mb-2">$1</h1>')
+            .replace(/^\* (.*$)/gim, '<li class="ml-4 list-disc">$1</li>')
+            .replace(/^\- (.*$)/gim, '<li class="ml-4 list-disc">$1</li>')
+            .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+            .replace(/\*(.*)\*/gim, '<em>$1</em>')
+            .replace(/`(.*?)`/gim, '<code class="bg-slate-200 dark:bg-slate-800 px-1 rounded font-mono text-xs">$1</code>')
+            .replace(/\n/gim, '<br>');
     },
 
     getFileTypeData(filename) {

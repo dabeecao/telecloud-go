@@ -102,16 +102,34 @@
                 <input type="text" x-model="modal.input" x-ref="modalInput" @keydown.enter="closeUIModal(modal.input)"
                     class="w-full p-3 rounded-xl bg-white/50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white mb-5 transition-all">
             </template>
-            <div class="flex justify-end gap-3 mt-2">
-                <template x-if="modal.type !== 'alert'">
+            <div class="flex flex-col gap-2 mt-2" x-show="modal.type === 'update'">
+                <button @click="closeUIModal('confirm')"
+                    class="w-full px-5 py-4 rounded-2xl text-white font-bold bg-blue-600 hover:bg-blue-500 shadow-xl shadow-blue-500/25 transition-all active:scale-95 flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-cloud-arrow-down"></i>
+                    <span x-text="t('update_now')"></span>
+                </button>
+                <div class="grid grid-cols-2 gap-2">
+                    <button @click="closeUIModal('dismiss_today')"
+                        class="px-3 py-3 rounded-2xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-[10px] font-bold transition-colors uppercase tracking-wider border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+                        x-text="t('dont_remind_today')"></button>
                     <button @click="closeUIModal(null)"
-                        class="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors"
-                        x-text="t('cancel')"></button>
-                </template>
+                        class="px-3 py-3 rounded-2xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-[10px] font-bold transition-colors uppercase tracking-wider border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+                        x-text="t('close')"></button>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-2" x-show="modal.type !== 'alert' && modal.type !== 'update'">
+                <button @click="closeUIModal(null)"
+                    class="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors"
+                    x-text="t('cancel')"></button>
                 <button @click="closeUIModal(modal.type === 'prompt' ? modal.input : true)"
                     class="px-5 py-2 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95"
                     :class="modal.isDanger ? 'bg-red-600 hover:bg-red-500 shadow-red-500/25' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/25'"
-                    x-text="modal.type === 'alert' ? t('close') : t('confirm')"></button>
+                    x-text="t('confirm')"></button>
+            </div>
+            <div class="flex justify-end gap-3 mt-2" x-show="modal.type === 'alert'">
+                <button @click="closeUIModal(true)"
+                    class="px-5 py-2 rounded-xl text-white font-medium shadow-lg transition-transform active:scale-95 bg-blue-600 hover:bg-blue-500 shadow-blue-500/25"
+                    x-text="t('close')"></button>
             </div>
         </div>
     </div>
@@ -289,6 +307,12 @@
                             class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all"
                             :class="currentTab === 'settings' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'">
                             <i class="fa-solid fa-gear mr-1.5"></i><span x-text="t('settings')"></span>
+                        </button>
+                        <button @click="currentTab = 'changelog'" x-show="updateAvailable" x-cloak
+                            class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all relative"
+                            :class="currentTab === 'changelog' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'">
+                            <i class="fa-solid fa-clock-rotate-left mr-1.5"></i><span x-text="t('changelog')"></span>
+                            <span class="absolute top-1 -right-0.5 w-2 h-2 bg-red-500 border-2 border-white dark:border-slate-700 rounded-full animate-pulse"></span>
                         </button>
                     </div>
                 </div>
@@ -687,6 +711,38 @@
                     </div>
                 </div>
 
+                <div x-show="currentTab === 'changelog'" x-cloak class="max-w-3xl mx-auto py-4 md:py-6 animate-fade-in-up">
+                    <div class="bg-indigo-600 rounded-[1.5rem] p-6 text-white mb-6 shadow-xl shadow-indigo-500/20 relative overflow-hidden">
+                        <div class="absolute -right-10 -top-10 opacity-10 rotate-12">
+                            <i class="fa-solid fa-clock-rotate-left text-[10rem]"></i>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-2 relative z-10" x-text="t('changelog')">Changelog</h2>
+                        <p class="text-sm text-indigo-100 relative z-10 max-w-lg" x-text="t('latest_release') + ': ' + (changelog[0]?.tag || '...')"></p>
+                    </div>
+
+                    <div class="space-y-6">
+                        <template x-for="rel in changelog" :key="rel.tag">
+                            <div class="glass-panel p-6 rounded-3xl border border-white/10">
+                                <div class="flex items-center justify-between mb-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                                            <i class="fa-solid fa-tag text-xl"></i>
+                                        </div>
+                                        <div>
+                                            <h3 class="font-bold text-lg" x-text="rel.name || rel.tag"></h3>
+                                            <p class="text-xs text-slate-500" x-text="formatDate(rel.date)"></p>
+                                        </div>
+                                    </div>
+                                    <a :href="rel.url" target="_blank" class="px-4 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-indigo-600 hover:text-white transition-all text-xs font-bold">
+                                        GitHub <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i>
+                                    </a>
+                                </div>
+                                <div class="changelog-body text-slate-600 dark:text-slate-300 text-sm" x-html="parseMarkdown(rel.body)"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
                 <div x-show="currentTab === 'files'" x-transition.opacity>
                     <div x-show="isLoading" x-cloak class="space-y-4 w-full h-full p-4 animate-pulse">
                         <div class="h-12 bg-slate-200 dark:bg-slate-800 rounded-xl w-full"></div>
@@ -992,6 +1048,14 @@
                     x-text="t('settings')"></span>
             </button>
 
+            <button @click="currentTab = 'changelog'" x-show="updateAvailable" x-cloak
+                class="flex-1 flex flex-col items-center gap-1.5 py-2 transition-colors relative"
+                :class="currentTab === 'changelog' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'">
+                <i class="fa-solid fa-clock-rotate-left text-xl"></i>
+                <span class="text-[10px] font-semibold" x-text="t('changelog')"></span>
+                <span class="absolute top-2 right-[calc(50%-1.25rem)] w-2.5 h-2.5 bg-red-500 border-2 border-white dark:border-slate-900 rounded-full animate-pulse"></span>
+            </button>
+
         </div>
     </nav>
     </div>
@@ -1105,7 +1169,7 @@
                             :class="task.isCancelled ? 'line-through' : ''"></span>
                         <span class="font-bold"
                             :class="task.isCancelled ? 'text-red-500' : (task.progress === 100 ? 'text-emerald-500' : 'text-blue-600 dark:text-blue-400')"
-                            x-text="task.isCancelled ? 'Đã hủy' : task.progress + '%'"></span>
+                            x-text="task.isCancelled ? t('cancelled') : task.progress + '%'"></span>
                     </div>
                     <div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
                         <div class="h-1.5 rounded-full transition-all duration-300 ease-out"

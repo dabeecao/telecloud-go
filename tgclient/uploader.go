@@ -177,6 +177,9 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	UpdateTask(taskID, "telegram", 0, "")
 
+	// Recalculate unique filename inside the telegram processing block to reduce race window
+	uniqueFilename := database.GetUniqueFilename(path, filename, false)
+
 	api := Client.API()
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
@@ -197,9 +200,9 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	}
 
 	// Create caption
-	caption := fmt.Sprintf("Path: %s\nFilename: %s", path, filename)
+	caption := fmt.Sprintf("Path: %s\nFilename: %s", path, uniqueFilename)
 
-	docBuilder := message.UploadedDocument(file, html.String(nil, caption)).Filename(filename).MIME(mimeType)
+	docBuilder := message.UploadedDocument(file, html.String(nil, caption)).Filename(uniqueFilename).MIME(mimeType)
 	
 	msgBuilder := sender.To(peer)
 
@@ -237,7 +240,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	// Save to DB
 	_, err = database.DB.Exec(
 		"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)",
-		msgID, filename, path, size, mimeType, localThumb,
+		msgID, uniqueFilename, path, size, mimeType, localThumb,
 	)
 	if err != nil {
 		UpdateTask(taskID, "error", 0, "DB Error: "+err.Error())

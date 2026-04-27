@@ -25,6 +25,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+var uploadMu sync.Mutex
+
 const csrfCookieName = "csrf_token"
 const csrfHeaderName = "X-CSRF-Token"
 
@@ -517,20 +519,39 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			os.MkdirAll(tempDir, os.ModePerm)
 			tempFilePath := filepath.Join(tempDir, taskID+"_"+filename)
 
-			out, err := os.OpenFile(tempFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			_, err = io.Copy(out, file)
-			out.Close()
-
-			if totalChunks == 0 {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "totalChunks is 0"})
-				return
-			}
 			serverPercent := int((float64(chunkIndex+1) / float64(totalChunks)) * 100)
 			tgclient.UpdateTask(taskID, "uploading_to_server", serverPercent, "")
+
+			// Use mutex to prevent concurrent writes to the same file
+			uploadMu.Lock()
+			out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				uploadMu.Unlock()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open temp file: " + err.Error()})
+				return
+			}
+			
+			// Constant chunk size from frontend is 10MB
+			const chunkSize = 10 * 1024 * 1024
+			offset := int64(chunkIndex) * int64(chunkSize)
+			
+			// Read the chunk data
+			chunkData, err := io.ReadAll(file)
+			if err != nil {
+				out.Close()
+				uploadMu.Unlock()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read chunk: " + err.Error()})
+				return
+			}
+
+			_, err = out.WriteAt(chunkData, offset)
+			out.Close()
+			uploadMu.Unlock()
+			
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write chunk: " + err.Error()})
+				return
+			}
 
 			if chunkIndex == totalChunks-1 {
 				mimeType := header.Header.Get("Content-Type")
@@ -539,8 +560,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 
 				go func() {
-					uniqueName := database.GetUniqueFilename(path, filename, false)
-					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, uniqueName, path, mimeType, taskID, cfg)
+					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg)
 					os.Remove(tempFilePath)
 				}()
 

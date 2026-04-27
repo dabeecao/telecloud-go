@@ -9,6 +9,9 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         uploadAPIKey: uploadAPIKey,
         showAPIKey: false,
         currentTab: 'files',
+        updateAvailable: false,
+        changelog: [],
+        latestReleaseUrl: '',
         username: '',
         password: '', 
         confirmPassword: '',
@@ -129,6 +132,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         formatBytes(b, d) { return TeleCloud.formatBytes(b, d); },
         formatDate(d) { return TeleCloud.formatDate(d, this.lang); },
         getFileTypeData(f) { return TeleCloud.getFileTypeData(f); },
+        parseMarkdown(t) { return TeleCloud.parseMarkdown(t); },
 
         startDownload(fileId) {
             this.isPreparingDownload = true;
@@ -263,15 +267,37 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             };
 
             try {
-                const res = await fetch('https://api.github.com/repos/dabeecao/telecloud-go/releases/latest');
+                const res = await fetch('https://api.github.com/repos/dabeecao/telecloud-go/releases');
                 if (res.ok) {
-                    const data = await res.json();
-                    const latestVersion = data.tag_name;
-                    const currentVersion = TeleCloud.version || 'v1.0.0';
-                    
-                    if (latestVersion && compareVersions(latestVersion, currentVersion) === 1) {
-                        const confirmed = await this.customConfirm(this.t('update_title'), this.t('update_msg') + ` (${latestVersion})`, false);
-                        if (confirmed) window.open(data.html_url, '_blank');
+                    const releases = await res.json();
+                    if (releases && releases.length > 0) {
+                        const latest = releases[0];
+                        const latestVersion = latest.tag_name;
+                        const currentVersion = TeleCloud.version || 'v1.0.0';
+                        
+                        if (latestVersion && compareVersions(latestVersion, currentVersion) === 1) {
+                            this.updateAvailable = true;
+                            this.latestReleaseUrl = latest.html_url;
+                            this.changelog = releases.slice(0, 5).map(r => ({
+                                tag: r.tag_name,
+                                name: r.name,
+                                body: r.body,
+                                url: r.html_url,
+                                date: r.published_at
+                            }));
+
+                            const dismissedDate = localStorage.getItem('tc_update_dismissed');
+                            const today = new Date().toDateString();
+                            
+                            if (dismissedDate !== today) {
+                                const choice = await this.showUIModal('update', this.t('update_title'), this.t('update_msg') + ` (${latestVersion})`);
+                                if (choice === 'confirm') {
+                                    window.open(latest.html_url, '_blank');
+                                } else if (choice === 'dismiss_today') {
+                                    localStorage.setItem('tc_update_dismissed', today);
+                                }
+                            }
+                        }
                     }
                 }
             } catch (e) { console.error('Failed to check for updates', e); }
@@ -406,9 +432,13 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         async uploadFiles(fileList) {
             const maxSizeBytes = this.maxUploadSizeMB * 1024 * 1024;
             const CHUNK_SIZE = 10 * 1024 * 1024;
-            for (let i = 0; i < fileList.length; i++) {
-                let file = fileList[i];
-                if (file.size > maxSizeBytes) { await this.customAlert(this.t('file_too_large_title'), this.t('file_too_large_msg', {f: file.name})); continue; }
+            const CONCURRENCY = 3;
+
+            const uploadSingleFile = async (file, i) => {
+                if (file.size > maxSizeBytes) { 
+                    await this.customAlert(this.t('file_too_large_title'), this.t('file_too_large_msg', {f: file.name})); 
+                    return; 
+                }
                 let taskId = 'task_' + Date.now() + '_' + i;
                 this.uploadQueue.unshift({ id: taskId, name: file.name, progress: 0, statusText: this.t('preparing_upload'), isCancelled: false });
                 const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
@@ -432,7 +462,6 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                         if (task) task.progress = Math.round(((chunkIndex + 1) / totalChunks) * 50);
                         if (result.status === "processing_telegram") {
                             if (task) task.statusText = this.t('syncing_tg');
-                            // Polling removed - handled by WebSocket
                         }
                     } catch (err) { 
                         console.error("Upload chunk error:", err);
@@ -441,7 +470,23 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                         hasError = true;
                     }
                 }
+            };
+
+            // Limit concurrency
+            const queue = [...fileList];
+            const processQueue = async () => {
+                while (queue.length > 0) {
+                    const file = queue.shift();
+                    const originalIndex = fileList.indexOf(file);
+                    await uploadSingleFile(file, originalIndex);
+                }
+            };
+
+            const workers = [];
+            for (let i = 0; i < Math.min(CONCURRENCY, fileList.length); i++) {
+                workers.push(processQueue());
             }
+            await Promise.all(workers);
         },
         async toggleShare(file) {
             const targetFile = this.files.find(f => f.id === file.id);

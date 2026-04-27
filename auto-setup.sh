@@ -493,6 +493,15 @@ start_app() {
         if command -v systemctl &>/dev/null; then
             [ -f /etc/systemd/system/telecloud.service ] && systemctl enable --now telecloud || true
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
+            
+            echo "[+] Đang kiểm tra trạng thái..."
+            sleep 3
+            if systemctl is-active --quiet telecloud; then
+                echo "✅ Đã khởi động."
+            else
+                echo "❌ LỖI: Ứng dụng không thể khởi chạy. Vui lòng kiểm tra log (Mục 5)."
+                return 1
+            fi
         else
             echo "[!] Hệ thống không hỗ trợ systemctl. Vui lòng chạy thủ công."
         fi
@@ -509,8 +518,16 @@ start_app() {
             tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
         fi
         [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
+        
+        echo "[+] Đang kiểm tra trạng thái..."
+        sleep 3
+        if pgrep -f "\./telecloud" > /dev/null; then
+            echo "✅ Đã khởi động."
+        else
+            echo "❌ LỖI: Ứng dụng không thể khởi chạy. Vui lòng kiểm tra log (Mục 5)."
+            return 1
+        fi
     fi
-    echo "✅ Đã khởi động."
 }
 
 stop_app() {

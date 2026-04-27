@@ -492,6 +492,15 @@ start_app() {
         if command -v systemctl &>/dev/null; then
             [ -f /etc/systemd/system/telecloud.service ] && systemctl enable --now telecloud || true
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
+            
+            echo "[+] Checking status..."
+            sleep 3
+            if systemctl is-active --quiet telecloud; then
+                echo "✅ Application started successfully."
+            else
+                echo "❌ ERROR: Application failed to start. Please check the logs (Option 5)."
+                return 1
+            fi
         else
             echo "[!] Your system does not support systemctl. Please run manually."
         fi
@@ -508,8 +517,16 @@ start_app() {
             tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
         fi
         [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
+        
+        echo "[+] Checking status..."
+        sleep 3
+        if pgrep -f "\./telecloud" > /dev/null; then
+            echo "✅ Application started successfully."
+        else
+            echo "❌ ERROR: Application failed to start. Please check the logs (Option 5)."
+            return 1
+        fi
     fi
-    echo "✅ Application started successfully."
 }
 
 stop_app() {

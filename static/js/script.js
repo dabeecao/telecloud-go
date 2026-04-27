@@ -251,6 +251,9 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 this.fetchFiles(false);
                 this.checkUpdate();
                 this.initWebSocket();
+                
+                // Add hasError to existing tasks if any (for persistence, though queue is currently memory-only)
+                this.uploadQueue.forEach(t => { if(t.hasError === undefined) t.hasError = false; });
             }
         },
         async checkUpdate() {
@@ -313,17 +316,28 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     const data = JSON.parse(event.data);
                     let task = this.uploadQueue.find(t => t.id === data.task_id);
                     if (task) {
-                        if (data.status === 'telegram' || data.status === 'done') {
+                        if (data.message === 'waiting_slot') {
+                            task.statusText = this.t('waiting_slot');
+                            task.hasError = false;
+                        } else if (data.status === 'telegram' || data.status === 'done') {
                             task.progress = 50 + Math.round(data.percent / 2);
+                            task.hasError = false;
                         }
+                        
                         if (data.status === 'done') {
                             task.progress = 100;
                             task.statusText = this.t('done');
+                            task.hasError = false;
                             this.fetchFiles(true);
                         } else if (data.status === 'error') {
-                            task.statusText = this.t('status_error') + ': ' + (data.message || 'Unknown');
+                            const errorMsg = data.message;
+                            // Check if message is a translation key
+                            const translated = this.t(errorMsg);
+                            task.statusText = this.t('status_error') + ': ' + (translated !== errorMsg ? translated : errorMsg);
+                            task.hasError = true;
                         } else if (data.status === 'telegram') {
                             task.statusText = this.t('syncing_tg');
+                            task.hasError = false;
                         }
                     }
                 } catch (e) {
@@ -430,55 +444,31 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         handleUploadModalSelect(e) { this.uploadFiles(Array.from(e.target.files)); e.target.value = ''; this.uploadModal = false; },
         handleUploadModalDrop(e) { this.uploadDragOver = false; this.uploadModal = false; this.uploadFiles(Array.from(e.dataTransfer.files)); },
         async uploadFiles(fileList) {
-            const maxSizeBytes = this.maxUploadSizeMB * 1024 * 1024;
-            const CHUNK_SIZE = 10 * 1024 * 1024;
+            const queue = [...fileList];
             const CONCURRENCY = 3;
 
-            const uploadSingleFile = async (file, i) => {
-                if (file.size > maxSizeBytes) { 
-                    await this.customAlert(this.t('file_too_large_title'), this.t('file_too_large_msg', {f: file.name})); 
-                    return; 
-                }
-                let taskId = 'task_' + Date.now() + '_' + i;
-                this.uploadQueue.unshift({ id: taskId, name: file.name, progress: 0, statusText: this.t('preparing_upload'), isCancelled: false });
-                const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
-                let hasError = false;
-                for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-                    if (hasError) break;
-                    let taskObj = this.uploadQueue.find(t => t.id === taskId);
-                    if (taskObj && taskObj.isCancelled) break;
-                    const start = chunkIndex * CHUNK_SIZE;
-                    const end = Math.min(start + CHUNK_SIZE, file.size);
-                    const chunk = file.slice(start, end);
-                    const fd = new FormData(); 
-                    fd.append('file', chunk); fd.append('filename', file.name); fd.append('path', this.currentPath); 
-                    fd.append('task_id', taskId); fd.append('chunk_index', chunkIndex); fd.append('total_chunks', totalChunks);
-                    try {
-                        let task = this.uploadQueue.find(t => t.id === taskId);
-                        if (task && !task.statusText.includes(this.t('status_error'))) task.statusText = `${this.t('pushing')} (${chunkIndex + 1}/${totalChunks})...`;
-                        const response = await fetch('/api/upload', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
-                        if (!response.ok) throw new Error("Upload failed");
-                        const result = await response.json();
-                        if (task) task.progress = Math.round(((chunkIndex + 1) / totalChunks) * 50);
-                        if (result.status === "processing_telegram") {
-                            if (task) task.statusText = this.t('syncing_tg');
-                        }
-                    } catch (err) { 
-                        console.error("Upload chunk error:", err);
-                        let task = this.uploadQueue.find(t => t.id === taskId); 
-                        if(task) task.statusText = this.t('conn_error'); 
-                        hasError = true;
-                    }
-                }
-            };
-
-            // Limit concurrency
-            const queue = [...fileList];
             const processQueue = async () => {
                 while (queue.length > 0) {
                     const file = queue.shift();
-                    const originalIndex = fileList.indexOf(file);
-                    await uploadSingleFile(file, originalIndex);
+                    const i = fileList.indexOf(file);
+                    
+                    const maxSizeBytes = this.maxUploadSizeMB * 1024 * 1024;
+                    if (file.size > maxSizeBytes) { 
+                        await this.customAlert(this.t('file_too_large_title'), this.t('file_too_large_msg', {f: file.name})); 
+                        continue; 
+                    }
+
+                    let taskId = 'task_' + Date.now() + '_' + i;
+                    this.uploadQueue.unshift({ 
+                        id: taskId, 
+                        name: file.name, 
+                        progress: 0, 
+                        statusText: this.t('preparing_upload'), 
+                        isCancelled: false,
+                        file: file // Store the file for retry
+                    });
+                    
+                    await this.uploadSingleFile(file, taskId);
                 }
             };
 
@@ -487,6 +477,66 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 workers.push(processQueue());
             }
             await Promise.all(workers);
+        },
+
+        async retryUpload(taskId) {
+            const task = this.uploadQueue.find(t => t.id === taskId);
+            if (!task || !task.file) return;
+            
+            task.progress = 0;
+            task.statusText = this.t('preparing_upload');
+            task.isCancelled = false;
+            
+            await this.uploadSingleFile(task.file, taskId);
+        },
+
+        async uploadSingleFile(file, taskId) {
+            const CHUNK_SIZE = 10 * 1024 * 1024;
+            const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+            let hasError = false;
+
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                if (hasError) break;
+                let taskObj = this.uploadQueue.find(t => t.id === taskId);
+                if (taskObj && taskObj.isCancelled) break;
+
+                const start = chunkIndex * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, file.size);
+                const chunk = file.slice(start, end);
+                const fd = new FormData(); 
+                fd.append('file', chunk); fd.append('filename', file.name); fd.append('path', this.currentPath); 
+                fd.append('task_id', taskId); fd.append('chunk_index', chunkIndex); fd.append('total_chunks', totalChunks);
+
+                try {
+                    let task = this.uploadQueue.find(t => t.id === taskId);
+                    if (task && !task.statusText.includes(this.t('status_error'))) {
+                        task.statusText = `${this.t('pushing')} (${chunkIndex + 1}/${totalChunks})...`;
+                    }
+
+                    const response = await fetch('/api/upload', { 
+                        method: 'POST', 
+                        body: fd, 
+                        headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } 
+                    });
+                    
+                    if (!response.ok) throw new Error("Upload failed");
+                    const result = await response.json();
+                    
+                    if (task) task.progress = Math.round(((chunkIndex + 1) / totalChunks) * 50);
+                    
+                    if (result.status === "processing_telegram") {
+                        if (task) task.statusText = this.t('syncing_tg');
+                    }
+                } catch (err) { 
+                    console.error("Upload chunk error:", err);
+                    let task = this.uploadQueue.find(t => t.id === taskId); 
+                    if(task) {
+                        task.statusText = this.t('conn_error');
+                        task.hasError = true;
+                    }
+                    hasError = true;
+                }
+            }
         },
         async toggleShare(file) {
             const targetFile = this.files.find(f => f.id === file.id);

@@ -1178,12 +1178,19 @@
                     </div>
                     <div class="flex justify-between items-center mt-1.5">
                         <div class="text-[10px] text-slate-400" x-text="task.statusText"
-                            :class="task.isCancelled ? 'text-red-400' : ''"></div>
+                            :class="task.hasError || task.isCancelled ? 'text-red-400' : ''"></div>
 
-                        <button x-show="task.progress < 100 && !task.isCancelled" @click="cancelUpload(task.id)"
-                            class="text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 -mr-1 -mb-1">
-                            <i class="fa-solid fa-circle-xmark text-sm"></i>
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button x-show="(task.hasError || task.isCancelled) && task.progress < 100" @click="retryUpload(task.id)"
+                                class="text-blue-500 hover:text-blue-600 transition-colors flex items-center gap-1 text-[10px] font-bold">
+                                <i class="fa-solid fa-rotate-right"></i> <span x-text="t('retry')"></span>
+                            </button>
+
+                            <button x-show="task.progress < 100 && !task.isCancelled" @click="cancelUpload(task.id)"
+                                class="text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 -mr-1 -mb-1">
+                                <i class="fa-solid fa-circle-xmark text-sm"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </template>

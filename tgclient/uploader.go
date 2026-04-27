@@ -27,6 +27,9 @@ var (
 	resolvedPeer   tg.InputPeerClass
 	resolvedPeerID string
 	resolvedPeerMu sync.RWMutex
+	
+	// Limit concurrent uploads to Telegram to prevent floodwait
+	uploadSemaphore = make(chan struct{}, 3)
 )
 
 type UploadStatus struct {
@@ -175,6 +178,17 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		cancel()
 	}()
 
+	UpdateTask(taskID, "telegram", 0, "waiting_slot")
+
+	// Wait for a slot in the upload queue
+	select {
+	case uploadSemaphore <- struct{}{}:
+		defer func() { <-uploadSemaphore }()
+	case <-ctx.Done():
+		UpdateTask(taskID, "error", 0, "upload_cancelled_waiting")
+		return
+	}
+
 	UpdateTask(taskID, "telegram", 0, "")
 
 	// Recalculate unique filename inside the telegram processing block to reduce race window
@@ -254,6 +268,14 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 // It blocks until the Telegram upload and DB insert are complete, then returns
 // the newly created file ID (for attaching a share token) or an error.
 func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType string, cfg *config.Config) (fileID int64, err error) {
+	// Wait for a slot in the upload queue
+	select {
+	case uploadSemaphore <- struct{}{}:
+		defer func() { <-uploadSemaphore }()
+	case <-ctx.Done():
+		return 0, fmt.Errorf("upload cancelled while waiting for queue")
+	}
+
 	api := Client.API()
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).

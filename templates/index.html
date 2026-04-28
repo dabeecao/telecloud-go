@@ -108,6 +108,7 @@
                     <i class="fa-solid fa-clock-rotate-left"></i>
                     <span x-text="t('update_now')"></span>
                 </button>
+                <p class="text-[10px] text-amber-600 dark:text-amber-400 font-medium bg-amber-50 dark:bg-amber-500/10 p-2 rounded-xl border border-amber-200/50 dark:border-amber-500/20 text-center" x-text="t('cloudflare_purge')"></p>
                 <div class="grid grid-cols-2 gap-2">
                     <button @click="closeUIModal('dismiss_today')"
                         class="px-3 py-3 rounded-2xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-[10px] font-bold transition-colors uppercase tracking-wider border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
@@ -745,6 +746,7 @@
                         </div>
                         <h2 class="text-2xl font-bold mb-2 relative z-10" x-text="t('changelog')">Changelog</h2>
                         <p class="text-sm text-indigo-100 relative z-10 max-w-lg" x-text="t('latest_release') + ': ' + (changelog[0]?.tag || '...')"></p>
+                        <p class="text-[11px] text-white/70 mt-2 relative z-10 italic" x-text="t('cloudflare_purge')"></p>
                     </div>
 
                     <div class="space-y-6">

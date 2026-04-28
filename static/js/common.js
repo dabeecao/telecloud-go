@@ -169,6 +169,7 @@ const TeleCloud = {
             changelog: 'Cập nhật',
             latest_release: 'Bản mới nhất',
             update_now: 'Xem bản cập nhật',
+            cloudflare_purge: 'Lưu ý: Nếu bạn dùng Cloudflare, hãy Purge Cache để cập nhật giao diện mới nhất.',
             // Upload API
             upload_api: 'Upload API',
             upload_api_desc: 'Cho phép upload file từ xa qua HTTP API với Bearer Token. Dùng cho tích hợp script, CI/CD, v.v.',
@@ -363,6 +364,7 @@ const TeleCloud = {
             changelog: 'Changelog',
             latest_release: 'Latest Release',
             update_now: 'View Changelog',
+            cloudflare_purge: 'Note: If you use Cloudflare, please Purge Cache to get the latest interface.',
             // Upload API
             upload_api: 'Upload API',
             upload_api_desc: 'Allow remote file uploads via HTTP API with Bearer Token. Use for scripts, CI/CD integrations, etc.',

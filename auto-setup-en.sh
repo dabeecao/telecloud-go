@@ -806,6 +806,7 @@ update_app() {
     rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
     hash -r 2>/dev/null
     echo "✅ Update complete. Please choose Restart."
+    echo "[!] Note: If you use Cloudflare, please Purge Cache to get the latest interface."
 }
 
 update_setup_script() {

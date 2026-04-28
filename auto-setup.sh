@@ -807,6 +807,7 @@ update_app() {
     rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
     hash -r 2>/dev/null
     echo "✅ Đã cập nhật xong. Vui lòng chọn Khởi động lại."
+    echo "[!] Lưu ý: Nếu bạn dùng Cloudflare, hãy Purge Cache để cập nhật giao diện mới nhất."
 }
 
 update_setup_script() {

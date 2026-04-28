@@ -127,7 +127,7 @@ body {
 .plyr-fixed-video video {
     max-height: 100%;
     width: 100%;
-    object-contain: contain;
+    object-fit: contain;
 }
 .plyr--video {
     height: 100%;

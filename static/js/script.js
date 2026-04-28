@@ -452,36 +452,49 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         handleUploadModalSelect(e) { this.uploadFiles(Array.from(e.target.files)); e.target.value = ''; this.uploadModal = false; },
         handleUploadModalDrop(e) { this.uploadDragOver = false; this.uploadModal = false; this.uploadFiles(Array.from(e.dataTransfer.files)); },
         async uploadFiles(fileList) {
-            const queue = [...fileList];
+            const maxSizeBytes = this.maxUploadSizeMB * 1024 * 1024;
+            const newTasks = [];
+            
+            for (let i = 0; i < fileList.length; i++) {
+                const file = fileList[i];
+                const taskId = 'task_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+                const task = { 
+                    id: taskId, 
+                    name: file.name, 
+                    progress: 0, 
+                    statusText: this.t('waiting_slot'), 
+                    isCancelled: false,
+                    file: file,
+                    hasError: false
+                };
+                
+                if (file.size > maxSizeBytes) {
+                    task.statusText = this.t('status_error') + ': ' + this.t('file_too_large_title');
+                    task.hasError = true;
+                    task.progress = 0;
+                }
+                
+                newTasks.push(task);
+            }
+            
+            // Add all to queue at once for better performance
+            this.uploadQueue.unshift(...newTasks);
+            
             const CONCURRENCY = 3;
+            const activeQueue = newTasks.filter(t => !t.hasError);
 
             const processQueue = async () => {
-                while (queue.length > 0) {
-                    const file = queue.shift();
-                    const i = fileList.indexOf(file);
+                while (activeQueue.length > 0) {
+                    const task = activeQueue.shift();
+                    if (task.isCancelled) continue;
                     
-                    const maxSizeBytes = this.maxUploadSizeMB * 1024 * 1024;
-                    if (file.size > maxSizeBytes) { 
-                        await this.customAlert(this.t('file_too_large_title'), this.t('file_too_large_msg', {f: file.name})); 
-                        continue; 
-                    }
-
-                    let taskId = 'task_' + Date.now() + '_' + i;
-                    this.uploadQueue.unshift({ 
-                        id: taskId, 
-                        name: file.name, 
-                        progress: 0, 
-                        statusText: this.t('preparing_upload'), 
-                        isCancelled: false,
-                        file: file // Store the file for retry
-                    });
-                    
-                    await this.uploadSingleFile(file, taskId);
+                    task.statusText = this.t('preparing_upload');
+                    await this.uploadSingleFile(task.file, task.id);
                 }
             };
 
             const workers = [];
-            for (let i = 0; i < Math.min(CONCURRENCY, fileList.length); i++) {
+            for (let i = 0; i < Math.min(CONCURRENCY, activeQueue.length); i++) {
                 workers.push(processQueue());
             }
             await Promise.all(workers);

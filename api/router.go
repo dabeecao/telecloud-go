@@ -363,21 +363,21 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			mimeType = "application/octet-stream"
 		}
 
-		uniqueName := database.GetUniqueFilename(path, filename, false)
 		async := c.PostForm("async") == "true"
-
+		overwrite := c.PostForm("overwrite") == "true"
+		
 		// If async is requested AND they don't need a public share link immediately,
 		// we can process this in the background.
 		if async && shareMode != "public" {
 			go func() {
-				tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, uniqueName, path, mimeType, taskID, cfg)
+				tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg, overwrite)
 				os.Remove(tempFilePath)
 			}()
 			
 			c.JSON(http.StatusOK, gin.H{
 				"status":   "processing",
 				"task_id":  taskID,
-				"filename": uniqueName,
+				"filename": filename,
 				"path":     path,
 			})
 			return
@@ -385,7 +385,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		// Synchronous upload — block until Telegram upload + DB insert done
 		defer os.Remove(tempFilePath)
-		fileID, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, uniqueName, path, mimeType, cfg)
+		fileID, finalName, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, filename, path, mimeType, cfg, overwrite)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed: " + err.Error()})
 			return
@@ -393,7 +393,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		resp := gin.H{
 			"status":   "done",
-			"filename": uniqueName,
+			"filename": finalName,
 			"path":     path,
 			"file_id":  fileID,
 		}
@@ -515,7 +515,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			if path == "" {
 				path = "/"
 			}
-			uniqueName := database.GetUniqueFilename(path, name, true)
+			uniqueName := database.GetUniqueFilename(database.DB, path, name, true, 0)
 			_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, path)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -613,7 +613,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 				go func() {
 					defer os.Remove(tempFilePath)
-					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg)
+					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg, false)
 				}()
 
 				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "Received all, pushing to Telegram"})
@@ -651,7 +651,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
-			tx, _ := database.DB.Beginx()
+			tx, err := database.DB.Beginx()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+				return
+			}
+			defer tx.Rollback()
+
 			for _, id := range req.ItemIDs {
 				var item database.File
 				err := tx.Get(&item, "SELECT * FROM files WHERE id = ?", id)
@@ -664,45 +670,92 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					if item.Path == "/" {
 						oldPrefix = "/" + item.Filename
 					}
-					if req.Destination == oldPrefix || strings.HasPrefix(req.Destination, oldPrefix+"/") {
+					// Prevent moving a folder into itself or its own subfolder
+					if req.Action == "move" && (req.Destination == oldPrefix || strings.HasPrefix(req.Destination, oldPrefix+"/")) {
 						continue
 					}
 				}
 
+				// If moving to the same destination, it's a no-op
+				if req.Action == "move" && req.Destination == item.Path {
+					continue
+				}
+
+				// Use item.ID as excludeID for move to allow no-op (same name in same/diff folder)
+				// Actually for copy, excludeID is 0.
+				var excludeID int
 				if req.Action == "move" {
-					tx.Exec("UPDATE files SET path = ? WHERE id = ?", req.Destination, id)
+					excludeID = item.ID
+				}
+				uniqueName := database.GetUniqueFilename(tx, req.Destination, item.Filename, item.IsFolder, excludeID)
+
+				switch req.Action {
+				case "move":
 					if item.IsFolder {
 						oldPrefix := item.Path + "/" + item.Filename
 						if item.Path == "/" {
 							oldPrefix = "/" + item.Filename
 						}
-						newPrefix := req.Destination + "/" + item.Filename
+						newPrefix := req.Destination + "/" + uniqueName
 						if req.Destination == "/" {
-							newPrefix = "/" + item.Filename
+							newPrefix = "/" + uniqueName
 						}
-						tx.Exec("UPDATE files SET path = ? || SUBSTR(path, ?) WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+						
+						_, err = tx.Exec("UPDATE files SET path = ?, filename = ? WHERE id = ?", req.Destination, uniqueName, id)
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+							return
+						}
+						_, err = tx.Exec("UPDATE files SET path = ? || SUBSTR(path, ?) WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+							return
+						}
+					} else {
+						_, err = tx.Exec("UPDATE files SET path = ?, filename = ? WHERE id = ?", req.Destination, uniqueName, id)
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+							return
+						}
 					}
-				} else if req.Action == "copy" {
+				case "copy":
 					if item.IsFolder {
-						tx.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", item.Filename, req.Destination)
+						_, err = tx.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, req.Destination)
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+							return
+						}
+						
 						oldPrefix := item.Path + "/" + item.Filename
 						if item.Path == "/" {
 							oldPrefix = "/" + item.Filename
 						}
-						newPrefix := req.Destination + "/" + item.Filename
+						newPrefix := req.Destination + "/" + uniqueName
 						if req.Destination == "/" {
-							newPrefix = "/" + item.Filename
+							newPrefix = "/" + uniqueName
 						}
-						tx.Exec(`INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, share_token)
+						
+						_, err = tx.Exec(`INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, share_token)
                             SELECT message_id, filename, ? || SUBSTR(path, ?), size, mime_type, is_folder, thumb_path, NULL
                             FROM files WHERE path = ? OR path LIKE ?`, newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+							return
+						}
 					} else {
-						uniqueName := database.GetUniqueFilename(req.Destination, item.Filename, false)
-						tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath)
+						_, err = tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath)
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+							return
+						}
 					}
 				}
 			}
-			tx.Commit()
+			
+			if err := tx.Commit(); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit transaction"})
+				return
+			}
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 
@@ -772,8 +825,19 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			id, _ := strconv.Atoi(c.Param("id"))
 			newName := c.PostForm("new_name")
 
+			tx, err := database.DB.Beginx()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+				return
+			}
+			defer tx.Rollback()
+
 			var item database.File
-			database.DB.Get(&item, "SELECT filename, path, is_folder FROM files WHERE id = ?", id)
+			err = tx.Get(&item, "SELECT filename, path, is_folder FROM files WHERE id = ?", id)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+				return
+			}
 
 			if !item.IsFolder {
 				oldExt := filepath.Ext(item.Filename)
@@ -781,22 +845,38 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				if oldExt != "" && newExt == "" {
 					newName += oldExt
 				}
-			} else {
+			}
+
+			uniqueName := database.GetUniqueFilename(tx, item.Path, newName, item.IsFolder, id)
+
+			if item.IsFolder {
 				basePath := item.Path
 				oldPrefix := basePath + "/" + item.Filename
 				if basePath == "/" {
 					oldPrefix = "/" + item.Filename
 				}
-				newPrefix := basePath + "/" + newName
+				newPrefix := basePath + "/" + uniqueName
 				if basePath == "/" {
-					newPrefix = "/" + newName
+					newPrefix = "/" + uniqueName
 				}
-				database.DB.Exec("UPDATE files SET path = ? || SUBSTR(path, ?) WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+				_, err = tx.Exec("UPDATE files SET path = ? || SUBSTR(path, ?) WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
 			}
 
-			uniqueName := database.GetUniqueFilename(item.Path, newName, item.IsFolder)
-			database.DB.Exec("UPDATE files SET filename = ? WHERE id = ?", uniqueName, id)
-			c.JSON(http.StatusOK, gin.H{"status": "renamed"})
+			_, err = tx.Exec("UPDATE files SET filename = ? WHERE id = ?", uniqueName, id)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			if err := tx.Commit(); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit transaction"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "renamed", "new_name": uniqueName})
 		})
 
 		api.POST("/files/:id/share", func(c *gin.Context) {

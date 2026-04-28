@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -18,9 +18,9 @@
     <script src="/static/js/plyr.polyfilled.js"></script>
 
     <!-- SEO & Social Meta Tags -->
-    <meta name="description" content="Tải xuống tệp {{ .filename }} từ TeleCloud OS">
+    <meta name="description" content="Download file {{ .filename }} from TeleCloud OS">
     <meta property="og:title" content="{{ .filename }} - TeleCloud">
-    <meta property="og:description" content="Kích thước: {{ .size }} - Ngày tạo: {{ .created_at }}">
+    <meta property="og:description" content="Size: {{ .size }} - Created: {{ .created_at }}">
     <meta property="og:type" content="website">
     {{ if .has_thumb }}
     <meta property="og:image" content="/s/{{ .token }}/thumb">
@@ -149,12 +149,16 @@
             const previewContainer = document.getElementById('media-preview-container');
             const streamUrl = '/s/{{ .token }}/stream';
             const thumbUrl = '/s/{{ .token }}/thumb'; 
-            const hasThumb = {{ if .has_thumb }}true{{ else }}false{{ end }};
+            const hasThumb = '{{ .has_thumb }}' === 'true' || '{{ .has_thumb }}' === '1';
 
             const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov'];
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac'];
-            const mimeTypes = { 'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg', 'mov': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac', 'm4a': 'audio/mp4' };
+            const mimeTypes = { 
+                'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg', 
+                'mov': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 
+                'flac': 'audio/flac', 'm4a': 'audio/mp4' 
+            };
 
             let isMedia = false;
             let playerTarget = null;
@@ -182,37 +186,82 @@
                 const mainCard = document.getElementById('main-card');
                 const contentGrid = document.getElementById('main-content-grid');
                 const iconContainer = document.getElementById('file-icon-container');
+                
                 iconContainer.classList.remove('w-24', 'h-24', 'mb-6', 'rounded-[2rem]');
                 iconContainer.classList.add('w-16', 'h-16', 'mb-4', 'rounded-[1.2rem]');
+                
                 const icon = iconContainer.querySelector('i');
-                if (icon) { icon.classList.remove('text-5xl'); icon.classList.add('text-3xl'); }
+                if (icon) { 
+                    icon.classList.remove('text-5xl'); 
+                    icon.classList.add('text-3xl'); 
+                }
+                
                 const filenameEl = document.getElementById('raw-filename');
                 filenameEl.classList.remove('text-2xl', 'sm:text-3xl', 'mb-2');
                 filenameEl.classList.add('text-xl', 'mb-1');
+                
                 const typeEl = document.getElementById('file-type-name');
                 typeEl.classList.remove('mb-6', 'text-sm');
                 typeEl.classList.add('mb-4', 'text-xs');
+                
                 const detailsBox = document.querySelector('#file-type-name').nextElementSibling;
-                if (detailsBox && detailsBox.tagName === 'DIV') { detailsBox.classList.remove('p-4', 'space-y-3'); detailsBox.classList.add('p-3', 'space-y-2'); }
-                if (audioExts.includes(ext)) { mainCard.classList.remove('max-w-lg'); mainCard.classList.add('max-w-xl'); contentGrid.className = "flex flex-col gap-6 w-full"; } 
-                else { mainCard.classList.remove('max-w-lg'); mainCard.classList.add('max-w-4xl'); contentGrid.className = "grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-8 w-full items-center"; }
-                if (playerTarget) { setTimeout(() => { new Plyr(playerTarget, { ratio: '16:9', controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings', 'pip', 'fullscreen'], settings: ['speed'], speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] } }); }, 50); }
+                if (detailsBox && detailsBox.tagName === 'DIV') { 
+                    detailsBox.classList.remove('p-4', 'space-y-3'); 
+                    detailsBox.classList.add('p-3', 'space-y-2'); 
+                }
+                
+                if (audioExts.includes(ext)) { 
+                    mainCard.classList.remove('max-w-lg'); 
+                    mainCard.classList.add('max-w-xl'); 
+                    contentGrid.className = "flex flex-col gap-6 w-full"; 
+                } else { 
+                    mainCard.classList.remove('max-w-lg'); 
+                    mainCard.classList.add('max-w-4xl'); 
+                    contentGrid.className = "grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-8 w-full items-center"; 
+                }
+
+                if (playerTarget) { 
+                    setTimeout(() => { 
+                        new Plyr(playerTarget, { 
+                            ratio: '16:9', 
+                            controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings', 'pip', 'fullscreen'], 
+                            settings: ['speed'], 
+                            speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] } 
+                        }); 
+                    }, 50); 
+                }
             }
             
             const form = document.getElementById('download-form');
             const overlay = document.getElementById('download-overlay');
+            
             form.addEventListener('submit', () => {
-                overlay.classList.remove('hidden'); overlay.classList.add('flex');
+                overlay.classList.remove('hidden'); 
+                overlay.classList.add('flex');
                 setTimeout(() => overlay.classList.remove('opacity-0'), 10);
+                
                 document.cookie = "dl_started=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+                
                 let checkCookie = setInterval(() => {
                     if (document.cookie.includes('dl_started=1')) {
-                        clearInterval(checkCookie); overlay.classList.add('opacity-0');
-                        setTimeout(() => { overlay.classList.add('hidden'); overlay.classList.remove('flex'); }, 300); 
+                        clearInterval(checkCookie); 
+                        overlay.classList.add('opacity-0');
+                        setTimeout(() => { 
+                            overlay.classList.add('hidden'); 
+                            overlay.classList.remove('flex'); 
+                        }, 300); 
                         document.cookie = "dl_started=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
                     }
                 }, 500);
-                setTimeout(() => { clearInterval(checkCookie); overlay.classList.add('opacity-0'); setTimeout(() => { overlay.classList.add('hidden'); overlay.classList.remove('flex'); }, 300); }, 15000);
+                
+                setTimeout(() => { 
+                    clearInterval(checkCookie); 
+                    overlay.classList.add('opacity-0'); 
+                    setTimeout(() => { 
+                        overlay.classList.add('hidden'); 
+                        overlay.classList.remove('flex'); 
+                    }, 300); 
+                }, 15000);
             });
         });
     </script>

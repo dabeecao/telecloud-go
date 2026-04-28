@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi" class="h-full">
+<html lang="en" class="h-full">
 
 <head>
     <meta charset="UTF-8">
@@ -24,15 +24,15 @@
     <script src="/static/js/plyr.polyfilled.js"></script>
 
     <!-- SEO & Social Meta Tags -->
-    <meta name="description" content="TeleCloud OS - Quản lý tệp tin đám mây qua Telegram">
+    <meta name="description" content="TeleCloud OS - Cloud file management via Telegram">
     <meta property="og:title" content="TeleCloud OS">
     <meta property="og:description"
-        content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API. Bảo mật, tốc độ cao và không giới hạn.">
+        content="Personal cloud storage system using Telegram API. Secure, high-speed and unlimited.">
     <meta property="og:type" content="website">
     <meta property="og:image" content="/static/favicon.ico">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="TeleCloud OS">
-    <meta name="twitter:description" content="Hệ thống lưu trữ đám mây cá nhân sử dụng Telegram API.">
+    <meta name="twitter:description" content="Personal cloud storage system using Telegram API.">
 </head>
 
 <body
@@ -1177,6 +1177,11 @@
                 <button x-show="!isAllUploadsDone" @click.stop="isQueueMinimized = !isQueueMinimized"
                     class="hover:text-blue-200 transition-colors w-6 h-6 flex items-center justify-center">
                     <i class="fa-solid" :class="isQueueMinimized ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                </button>
+
+                <button x-show="!isAllUploadsDone && uploadQueue.some(f => f.progress === 100)" @click.stop="uploadQueue = uploadQueue.filter(f => f.progress < 100)"
+                    class="hover:text-emerald-200 transition-colors w-6 h-6 flex items-center justify-center mr-1" :title="t('clear_finished')">
+                    <i class="fa-solid fa-broom text-xs"></i>
                 </button>
 
                 <button x-show="isAllUploadsDone" @click.stop="uploadQueue = []; isQueueMinimized = false"

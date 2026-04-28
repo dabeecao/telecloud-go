@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"telecloud/config"
@@ -45,8 +46,18 @@ func splitPath(p string) (string, string) {
 
 func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
 	dir, base := splitPath(name)
-	uniqueName := database.GetUniqueFilename(dir, base, true)
-	_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, dir)
+	
+	// Check if parent directory exists
+	if dir != "/" {
+		var parent database.File
+		pDir, pBase := splitPath(dir)
+		err := database.DB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1", pDir, pBase)
+		if err != nil {
+			return os.ErrNotExist // maps to 409 Conflict in webdav
+		}
+	}
+
+	_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", base, dir)
 	return err
 }
 
@@ -59,7 +70,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 
 	// Writing a new file
 	if err != nil && (flag&os.O_CREATE) != 0 {
-		return newFileWriter(ctx, fs.cfg, dir, base), nil
+		return newFileWriter(ctx, fs.cfg, dir, base, false), nil
 	}
 
 	if err != nil {
@@ -86,7 +97,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 
 	if (flag & os.O_WRONLY) != 0 || (flag & os.O_RDWR) != 0 {
 		// Existing file being overwritten
-		return newFileWriter(ctx, fs.cfg, dir, base), nil
+		return newFileWriter(ctx, fs.cfg, dir, base, true), nil
 	}
 
 	// Reading an existing file
@@ -169,26 +180,46 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 	oldDir, oldBase := splitPath(oldName)
 	newDir, newBase := splitPath(newName)
 
+	tx, err := database.DB.Beginx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", oldDir, oldBase); err != nil {
+	if err := tx.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", oldDir, oldBase); err != nil {
 		return os.ErrNotExist
 	}
 
+	uniqueName := database.GetUniqueFilename(tx, newDir, newBase, item.IsFolder, item.ID)
+	
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
 			oldPrefix = "/" + item.Filename
 		}
-		newPrefix := newDir + "/" + newBase
-		if newDir == "/" {
-			newPrefix = "/" + newBase
+
+		// Prevent moving folder into itself or its own subfolder
+		if newDir == oldPrefix || strings.HasPrefix(newDir, oldPrefix+"/") {
+			return fmt.Errorf("cannot move folder into itself")
 		}
-		database.DB.Exec("UPDATE files SET path = ? || SUBSTR(path, ?) WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+
+		newPrefix := newDir + "/" + uniqueName
+		if newDir == "/" {
+			newPrefix = "/" + uniqueName
+		}
+		_, err = tx.Exec("UPDATE files SET path = ? || SUBSTR(path, ?) WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+		if err != nil {
+			return err
+		}
 	}
 
-	uniqueName := database.GetUniqueFilename(newDir, newBase, item.IsFolder)
-	_, err := database.DB.Exec("UPDATE files SET filename = ?, path = ? WHERE id = ?", uniqueName, newDir, item.ID)
-	return err
+	_, err = tx.Exec("UPDATE files SET filename = ?, path = ? WHERE id = ?", uniqueName, newDir, item.ID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, error) {

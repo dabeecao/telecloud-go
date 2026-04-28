@@ -10,6 +10,7 @@ import (
 	"telecloud/config"
 	"telecloud/database"
 	"telecloud/tgclient"
+	"mime"
 
 	"github.com/google/uuid"
 )
@@ -129,10 +130,11 @@ type fileWriter struct {
 	filename string
 	tempPath string
 	file     *os.File
-	taskID   string
+	taskID    string
+	overwrite bool
 }
 
-func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string) *fileWriter {
+func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string, overwrite bool) *fileWriter {
 	taskID := uuid.New().String()
 	tempDir := filepath.Join(cfg.TempDir, "webdav")
 	os.MkdirAll(tempDir, os.ModePerm)
@@ -141,13 +143,14 @@ func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string
 	f, _ := os.OpenFile(tempPath, os.O_CREATE|os.O_RDWR, 0644)
 
 	return &fileWriter{
-		ctx:      ctx,
-		cfg:      cfg,
-		dir:      dir,
-		filename: filename,
-		tempPath: tempPath,
-		file:     f,
-		taskID:   taskID,
+		ctx:       ctx,
+		cfg:       cfg,
+		dir:       dir,
+		filename:  filename,
+		tempPath:  tempPath,
+		file:      f,
+		taskID:    taskID,
+		overwrite: overwrite,
 	}
 }
 
@@ -165,9 +168,13 @@ func (w *fileWriter) Close() error {
 
 		// Push to Telegram in background
 		go func() {
-			uniqueName := database.GetUniqueFilename(w.dir, w.filename, false)
-			// we don't have mime-type from WebDAV easily, assume octet-stream
-			tgclient.ProcessCompleteUpload(context.Background(), w.tempPath, uniqueName, w.dir, "application/octet-stream", w.taskID, w.cfg)
+			// Detect MIME type from extension
+			mimeType := mime.TypeByExtension(filepath.Ext(w.filename))
+			if mimeType == "" {
+				mimeType = "application/octet-stream"
+			}
+			
+			tgclient.ProcessCompleteUpload(context.Background(), w.tempPath, w.filename, w.dir, mimeType, w.taskID, w.cfg, w.overwrite)
 			os.Remove(w.tempPath)
 		}()
 	}

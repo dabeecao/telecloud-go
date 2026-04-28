@@ -79,7 +79,7 @@ func (p uploadProgress) Chunk(ctx context.Context, state uploader.ProgressState)
 	return nil
 }
 
-func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config) {
+func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool) {
 	ctx, cancel := context.WithCancel(ctx)
 	taskMutex.Lock()
 	TaskCancels[taskID] = cancel
@@ -105,8 +105,22 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	UpdateTask(taskID, "telegram", 0, "")
 
-	// Recalculate unique filename inside the telegram processing block to reduce race window
-	uniqueFilename := database.GetUniqueFilename(path, filename, false)
+	// Handle overwriting if requested
+	var existingID int
+	var existingMsgID *int
+	var existingThumb *string
+	if overwrite {
+		err := database.DB.Get(&database.File{}, "SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename)
+		if err == nil {
+			// Found existing file to replace
+			database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
+		}
+	}
+
+	uniqueFilename := filename
+	if !overwrite || existingID == 0 {
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+	}
 
 	api := Client.API()
 	up := uploader.NewUploader(api).
@@ -170,20 +184,47 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
 
-	// Save to DB
-	_, err = database.DB.Exec(
-		"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)",
-		msgID, uniqueFilename, path, size, mimeType, localThumb,
-	)
+	// Save to DB with retry logic for unique filename
+	for i := 0; i < 5; i++ {
+		_, err = database.DB.Exec(
+			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)",
+			msgID, uniqueFilename, path, size, mimeType, localThumb,
+		)
+		if err == nil {
+			break
+		}
+		// If it's a unique constraint error, try again with a new unique name
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	if err != nil {
-		UpdateTask(taskID, "error", 0, "err_db_error")
+		UpdateTask(taskID, "error", 0, "err_db_error: "+err.Error())
 		return
+	}
+
+	// If we successfully inserted the new one and were in overwrite mode, clean up the old one
+	if overwrite && existingID > 0 {
+		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		if existingMsgID != nil {
+			var count int
+			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *existingMsgID)
+			if count == 0 {
+				DeleteMessages(context.Background(), cfg, []int{*existingMsgID})
+			}
+		}
+		if existingThumb != nil {
+			var count int
+			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
+			if count == 0 {
+				os.Remove(*existingThumb)
+			}
+		}
 	}
 
 	UpdateTask(taskID, "done", 100, "")
 
 	// Add a small cool-down delay before releasing the semaphore slot
-	// to prevent hitting rate limits when uploading many small files in sequence.
 	select {
 	case <-time.After(1000 * time.Millisecond):
 	case <-ctx.Done():
@@ -191,39 +232,52 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 }
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
-// It blocks until the Telegram upload and DB insert are complete, then returns
-// the newly created file ID (for attaching a share token) or an error.
-func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType string, cfg *config.Config) (fileID int64, err error) {
+func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType string, cfg *config.Config, overwrite bool) (fileID int64, finalName string, err error) {
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
-		return 0, fmt.Errorf("upload cancelled while waiting for queue")
+		return 0, "", fmt.Errorf("upload cancelled while waiting for queue")
 	}
 
 	api := Client.API()
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
-		WithThreads(4) // Increased from 2 to speed up larger file uploads
+		WithThreads(4)
 
 	file, err := up.FromPath(ctx, filePath)
 	if err != nil {
-		return 0, fmt.Errorf("upload to telegram: %w", err)
+		return 0, "", fmt.Errorf("upload to telegram: %w", err)
 	}
 
 	sender := message.NewSender(api)
 	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
 	if err != nil {
-		return 0, fmt.Errorf("resolve peer: %w", err)
+		return 0, "", fmt.Errorf("resolve peer: %w", err)
 	}
 
-	caption := fmt.Sprintf("Path: %s\nFilename: %s", path, filename)
-	docBuilder := message.UploadedDocument(file, html.String(nil, caption)).Filename(filename).MIME(mimeType)
+	// Handle overwriting if requested
+	var existingID int
+	var existingMsgID *int
+	var existingThumb *string
+	if overwrite {
+		err := database.DB.Get(&database.File{}, "SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename)
+		if err == nil {
+			database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
+		}
+	}
+
+	uniqueFilename := filename
+	if !overwrite || existingID == 0 {
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+	}
+	caption := fmt.Sprintf("Path: %s\nFilename: %s", path, uniqueFilename)
+	docBuilder := message.UploadedDocument(file, html.String(nil, caption)).Filename(uniqueFilename).MIME(mimeType)
 
 	res, err := sender.To(peer).Media(ctx, docBuilder)
 	if err != nil {
-		return 0, fmt.Errorf("send media: %w", err)
+		return 0, "", fmt.Errorf("send media: %w", err)
 	}
 
 	var msgID int
@@ -244,7 +298,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	}
 
 	if msgID <= 0 {
-		return 0, fmt.Errorf("err_tg_msgid")
+		return 0, "", fmt.Errorf("err_tg_msgid")
 	}
 
 	fileInfo, _ := os.Stat(filePath)
@@ -256,21 +310,42 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
 
 	var newID int64
-	err = database.DB.QueryRow(
-		"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?) RETURNING id",
-		msgID, filename, path, size, mimeType, localThumb,
-	).Scan(&newID)
+	for i := 0; i < 5; i++ {
+		res, err := database.DB.Exec(
+			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)",
+			msgID, uniqueFilename, path, size, mimeType, localThumb,
+		)
+		if err == nil {
+			newID, _ = res.LastInsertId()
+			break
+		}
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		time.Sleep(100 * time.Millisecond)
+	}
 	if err != nil {
-		return 0, fmt.Errorf("db insert: %w", err)
+		return 0, "", fmt.Errorf("db insert: %w", err)
 	}
 
-	// Add a small cool-down delay before releasing the semaphore slot
-	select {
-	case <-time.After(1000 * time.Millisecond):
-	case <-ctx.Done():
+	// Clean up old file if overwriting
+	if overwrite && existingID > 0 {
+		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		if existingMsgID != nil {
+			var count int
+			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *existingMsgID)
+			if count == 0 {
+				DeleteMessages(context.Background(), cfg, []int{*existingMsgID})
+			}
+		}
+		if existingThumb != nil {
+			var count int
+			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
+			if count == 0 {
+				os.Remove(*existingThumb)
+			}
+		}
 	}
 
-	return newID, nil
+	return newID, uniqueFilename, nil
 }
 
 

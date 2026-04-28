@@ -66,6 +66,7 @@ func InitDB(dbPath string) {
 
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename ON files(path, filename);
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
@@ -92,7 +93,11 @@ func DeleteSetting(key string) error {
 	return err
 }
 
-func GetUniqueFilename(path, filename string, isFolder bool) string {
+type Queryer interface {
+	Get(dest interface{}, query string, args ...interface{}) error
+}
+
+func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeID int) string {
 	if filename == "" {
 		return "unnamed"
 	}
@@ -102,7 +107,7 @@ func GetUniqueFilename(path, filename string, isFolder bool) string {
 
 	for {
 		var id int
-		err := DB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? LIMIT 1", path, finalName)
+		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND id != ? LIMIT 1", path, finalName, excludeID)
 		if err != nil { // Not found or error
 			break
 		}

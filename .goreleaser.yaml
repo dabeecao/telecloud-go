@@ -38,12 +38,12 @@ builds:
 
 archives:
   - id: nix
-    builds: [nix]
+    ids: [nix]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
 
   - id: win
-    builds: [win]
+    ids: [win]
     formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
 

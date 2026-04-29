@@ -676,7 +676,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             if (file.is_folder) return;
             const typeData = this.getFileTypeData(file.filename);
             const ext = file.filename.split('.').pop().toLowerCase();
-            const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'];
+            const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'tiff', 'tif'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov'];
             if (TeleCloud.enableTranscoding) videoExts.push('mkv');
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'alac'];

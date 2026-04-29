@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -56,15 +57,12 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	chunkSize := int64(1024 * 1024) // 1MB chunks — max supported by Telegram UploadGetFile
-	chunkStart := (r.offset / chunkSize) * chunkSize
-
-	if r.chunkData == nil || r.chunkOffset != chunkStart {
+	if r.chunkData == nil || r.offset < r.chunkOffset || r.offset >= r.chunkOffset+int64(len(r.chunkData)) {
 		req := &tg.UploadGetFileRequest{
 			Precise:  true,
 			Location: r.loc,
-			Offset:   chunkStart,
-			Limit:    int(chunkSize),
+			Offset:   r.offset,
+			Limit:    int(1024 * 1024), // 1MB chunks
 		}
 
 		res, err := r.api.UploadGetFile(r.ctx, req)
@@ -75,7 +73,7 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 		switch result := res.(type) {
 		case *tg.UploadFile:
 			r.chunkData = result.Bytes
-			r.chunkOffset = chunkStart
+			r.chunkOffset = r.offset
 			if len(r.chunkData) == 0 {
 				return 0, io.EOF
 			}
@@ -87,10 +85,6 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 	}
 
 	inChunkOffset := r.offset - r.chunkOffset
-	if inChunkOffset >= int64(len(r.chunkData)) {
-		return 0, io.EOF
-	}
-
 	n := copy(p, r.chunkData[inChunkOffset:])
 	r.offset += int64(n)
 	return n, nil
@@ -141,22 +135,53 @@ func TranscodeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, si
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	// Use a pipe to capture ffmpeg output and allow flushing
+	pr, pw := io.Pipe()
 
 	cmd := exec.CommandContext(ctx, cfg.FFMPEGPath,
 		"-i", "pipe:0",
 		"-c:v", "copy",
 		"-c:a", "aac",
-		"-movflags", "frag_keyframe+empty_moov",
+		"-b:a", "128k",
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
 		"-f", "mp4",
 		"pipe:1",
 	)
 
 	cmd.Stdin = reader
-	cmd.Stdout = w
+	cmd.Stdout = pw
+	// Redirect stderr to system stderr for debugging
+	cmd.Stderr = os.Stderr
 
-	err = cmd.Run()
-	if err != nil && err.Error() != "signal: killed" {
-		return fmt.Errorf("ffmpeg error: %v", err)
+	if err := cmd.Start(); err != nil {
+		pw.Close()
+		return fmt.Errorf("failed to start ffmpeg: %v", err)
+	}
+
+	// Helper to flush data
+	go func() {
+		defer pw.Close()
+		cmd.Wait()
+	}()
+
+	// Stream to client with flushing
+	flusher, ok := w.(http.Flusher)
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := pr.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				break
+			}
+			if ok {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			break
+		}
 	}
 
 	return nil

@@ -151,7 +151,7 @@
             const thumbUrl = '/s/{{ .token }}/thumb'; 
             const hasThumb = '{{ .has_thumb }}' === 'true' || '{{ .has_thumb }}' === '1';
 
-            const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'];
+            const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'tiff', 'tif'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov'];
             if ({{ .enable_transcoding }}) videoExts.push('mkv');
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'alac'];

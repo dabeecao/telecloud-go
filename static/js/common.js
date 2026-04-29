@@ -103,7 +103,13 @@ const TeleCloud = {
             type_code: 'Mã nguồn',
             type_archive: 'Tệp nén',
             type_doc: 'Tài liệu',
+            type_text: 'Văn bản',
             type_unknown: 'Tập tin',
+            loading_preview: 'Đang tải bản xem trước...',
+            preview_error: 'Không thể tải bản xem trước. Vui lòng tải xuống để xem.',
+            preview_manual: 'Bạn có muốn xem trước nội dung tệp này không?',
+            preview_blocked: 'Tệp quá lớn để xem trước. Vui lòng tải xuống để xem nội dung đầy đủ.',
+            load_preview: 'Xem trước nội dung',
             // WebDAV Guide
             webdav_guide: 'WebDAV',
             webdav_desc: 'Sử dụng TeleCloud như một ổ đĩa mạng trên máy tính của bạn.',
@@ -298,7 +304,13 @@ const TeleCloud = {
             type_code: 'Source Code',
             type_archive: 'Archive',
             type_doc: 'Document',
+            type_text: 'Text/Code',
             type_unknown: 'File',
+            loading_preview: 'Loading preview...',
+            preview_error: 'Could not load preview. Please download to view.',
+            preview_manual: 'Do you want to preview the content of this file?',
+            preview_blocked: 'File is too large to preview. Please download to view full content.',
+            load_preview: 'Load Preview',
             // WebDAV Guide
             webdav_guide: 'WebDAV',
             webdav_desc: 'Use TeleCloud as a network drive on your computer.',
@@ -474,7 +486,9 @@ const TeleCloud = {
             'zip': { n: this.t('type_archive'), c: 'bg-orange-100 text-orange-500 dark:bg-orange-500/20 dark:text-orange-400', i: '<i class="fa-solid fa-file-zipper text-2xl"></i>' },
             'rar': 'zip', 'ipa': 'zip', 'tar': 'zip', 'gz': 'zip', '7z': 'zip', 'apk': 'zip',
             'pdf': { n: this.t('type_doc'), c: 'bg-red-100 text-red-500 dark:bg-red-500/20 dark:text-red-400', i: '<i class="fa-solid fa-file-pdf text-2xl"></i>' },
-            'doc': 'pdf', 'docx': 'pdf', 'xls': 'pdf', 'xlsx': 'pdf', 'txt': 'pdf'
+            'doc': 'pdf', 'docx': 'pdf', 'xls': 'pdf', 'xlsx': 'pdf',
+            'txt': { n: this.t('type_text'), c: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400', i: '<i class="fa-solid fa-file-lines text-2xl"></i>' },
+            'md': 'txt', 'log': 'txt', 'json': 'txt', 'js': 'txt', 'py': 'txt', 'go': 'txt', 'html': 'txt', 'css': 'txt', 'yml': 'txt', 'yaml': 'txt', 'sql': 'txt', 'sh': 'txt', 'conf': 'txt', 'ini': 'txt'
         };
         let result = types[ext];
         if (typeof result === 'string') result = types[result];

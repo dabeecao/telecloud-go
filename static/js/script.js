@@ -248,7 +248,8 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         toastModal: { show: false, message: '', type: 'success' },
         toastTimeout: null,
         plyrInstance: null,
-        fileInfoModal: { show: false, file: null, typeName: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '' },
+        plyrInstance: null,
+        fileInfoModal: { show: false, file: null, typeName: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '', isLarge: false, isPreviewLoading: false, needsLoad: false, tooLarge: false },
         modal: { show: false, type: 'alert', title: '', message: '', input: '', resolve: null, isDanger: false },
         contextMenu: { show: false, x: 0, y: 0, file: null },
         init() { 
@@ -636,21 +637,33 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         closeFileInfoModal() {
             this.fileInfoModal.show = false;
             if (this.plyrInstance) { this.plyrInstance.destroy(); this.plyrInstance = null; }
-            setTimeout(() => { if (!this.fileInfoModal.show) { this.fileInfoModal.isMedia = false; this.fileInfoModal.mediaHtml = ''; } }, 300);
+            setTimeout(() => { if (!this.fileInfoModal.show) { this.fileInfoModal.isMedia = false; this.fileInfoModal.mediaHtml = ''; this.fileInfoModal.isLarge = false; this.fileInfoModal.isPreviewLoading = false; this.fileInfoModal.needsLoad = false; this.fileInfoModal.tooLarge = false; } }, 300);
         },
-        showFileInfo(file) {
+        async showFileInfo(file) {
             if (file.is_folder) return;
             const typeData = this.getFileTypeData(file.filename);
             const ext = file.filename.split('.').pop().toLowerCase();
             const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov'];
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac'];
+            const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini'];
+            
+            const langMap = {
+                'js': 'javascript', 'json': 'json', 'py': 'python', 'go': 'go', 
+                'html': 'markup', 'css': 'css', 'yml': 'yaml', 'yaml': 'yaml',
+                'sql': 'sql', 'sh': 'bash', 'md': 'markdown'
+            };
+
             const mimeTypes = { 'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg', 'mov': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac', 'm4a': 'audio/mp4' };
             let isMedia = false; let mediaHtml = ''; let playerTarget = null;
+            let isLarge = false;
             const streamUrl = `/api/files/${file.id}/stream`;
             const thumbUrl = `/api/files/${file.id}/thumb`;
-            if (imgExts.includes(ext)) { mediaHtml = '<img src="' + streamUrl + '" alt="' + file.filename + '" class="max-h-64 object-contain rounded-[1rem] w-full shadow-md">'; isMedia = true; } 
-            else if (videoExts.includes(ext)) {
+            
+            if (imgExts.includes(ext)) { 
+                mediaHtml = '<img src="' + streamUrl + '" alt="' + file.filename + '" class="max-h-64 object-contain rounded-[1rem] w-full shadow-md">'; 
+                isMedia = true; 
+            } else if (videoExts.includes(ext)) {
                 const typeAttr = mimeTypes[ext] || 'video/mp4';
                 mediaHtml = '<div class="w-full relative z-20 rounded-[1rem] bg-black shadow-md"><video id="index-tele-player" playsinline controls preload="none" ' + (file.has_thumb ? 'data-poster="' + thumbUrl + '"' : '') + '><source src="' + streamUrl + '" type="' + typeAttr + '"></video></div>';
                 isMedia = true; playerTarget = '#index-tele-player';
@@ -658,9 +671,55 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 const typeAttr = mimeTypes[ext] || 'audio/mpeg';
                 mediaHtml = '<div class="w-full relative z-20 rounded-[1rem] p-2 sm:p-4 bg-slate-100 dark:bg-slate-800/50 shadow-inner">' + (file.has_thumb ? '<img src="' + thumbUrl + '" class="w-32 h-32 mx-auto rounded-2xl mb-4 object-cover shadow-md">' : '<div class="w-32 h-32 mx-auto rounded-2xl mb-4 flex items-center justify-center bg-white dark:bg-slate-700 shadow-sm"><i class="fa-solid fa-music text-5xl text-slate-300 dark:text-slate-500"></i></div>') + '<audio id="index-tele-player" controls preload="none"><source src="' + streamUrl + '" type="' + typeAttr + '"></audio></div>';
                 isMedia = true; playerTarget = '#index-tele-player';
+            } else if (textExts.includes(ext)) {
+                this.fileInfoModal = { show: true, file: file, typeName: typeData.n, svgIcon: typeData.i, bgColor: typeData.c, isMedia: false, mediaHtml: '', isLarge: true, isPreviewLoading: false, needsLoad: false, tooLarge: false };
+                
+                if (file.size > 10 * 1024 * 1024) {
+                    this.fileInfoModal.tooLarge = true;
+                } else {
+                    this.fileInfoModal.needsLoad = true;
+                }
+                return;
             }
-            this.fileInfoModal = { show: true, file: file, typeName: typeData.n, svgIcon: typeData.i, bgColor: typeData.c, isMedia: isMedia, mediaHtml: mediaHtml };
+            
+            this.fileInfoModal = { show: true, file: file, typeName: typeData.n, svgIcon: typeData.i, bgColor: typeData.c, isMedia: isMedia, mediaHtml: mediaHtml, isLarge: isLarge, isPreviewLoading: false };
             if (playerTarget) { setTimeout(() => { if (this.plyrInstance) this.plyrInstance.destroy(); this.plyrInstance = new Plyr(playerTarget, { ratio: '16:9', controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings', 'fullscreen'], settings: ['speed'] }); }, 50); }
+        },
+        async loadFilePreview() {
+            this.fileInfoModal.needsLoad = false;
+            const file = this.fileInfoModal.file;
+            const ext = file.filename.split('.').pop().toLowerCase();
+            const streamUrl = `/api/files/${file.id}/stream`;
+            const langMap = { 'js': 'javascript', 'json': 'json', 'py': 'python', 'go': 'go', 'html': 'markup', 'css': 'css', 'yml': 'yaml', 'yaml': 'yaml', 'sql': 'sql', 'sh': 'bash', 'md': 'markdown' };
+
+            this.fileInfoModal.isPreviewLoading = true;
+            this.fileInfoModal.isMedia = false;
+
+            try {
+                const response = await fetch(streamUrl, { headers: { 'Range': 'bytes=0-262144' } });
+                if (!response.ok && response.status !== 206) throw new Error("Failed to fetch");
+                const content = await response.text();
+                
+                let mediaHtml = '';
+                if (ext === 'md') {
+                    mediaHtml = `<div class="text-preview-container markdown-preview">${this.parseMarkdown(content)}</div>`;
+                } else {
+                    const lang = langMap[ext] || 'none';
+                    mediaHtml = `<div class="text-preview-container"><pre><code class="language-${lang}">${content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre></div>`;
+                }
+                this.fileInfoModal.mediaHtml = mediaHtml;
+                this.fileInfoModal.isMedia = true;
+                
+                if (ext !== 'md' && window.Prism) {
+                    setTimeout(() => Prism.highlightAllUnder(document.querySelector('.text-preview-container')), 50);
+                }
+            } catch (e) {
+                console.error("Preview failed", e);
+                this.fileInfoModal.mediaHtml = `<div class="p-4 text-center text-red-500 text-sm">${this.t('preview_error')}</div>`;
+                this.fileInfoModal.isMedia = true;
+            } finally {
+                this.fileInfoModal.isPreviewLoading = false;
+            }
         }
     }
 }

@@ -48,4 +48,6 @@ static/css/plyr.css
 static/js/plyr.polyfilled.js
 static/js/alpine.min.js
 static/js/alpine-collapse.min.js
+static/css/prism.css
+static/js/prism.js
 node_modules/

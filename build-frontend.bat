@@ -10,4 +10,13 @@ curl -sSL https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js 
 curl -sSL https://cdn.plyr.io/3.7.8/plyr.css -o static/css/plyr.css
 curl -sSL https://cdn.plyr.io/3.7.8/plyr.polyfilled.js -o static/js/plyr.polyfilled.js
 
+echo Building Prism.js locally...
+curl -sSL https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css -o static/css/prism.css
+curl -sSL https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js -o static/js/prism.js
+for %%l in (json javascript python go bash yaml sql) do (
+  echo Adding Prism language: %%l
+  echo. >> static/js/prism.js
+  curl -sSL https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-%%l.min.js >> static/js/prism.js
+)
+
 echo Frontend build complete!

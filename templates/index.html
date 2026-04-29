@@ -22,6 +22,8 @@
     <script defer src="/static/js/alpine.min.js"></script>
     <link rel="stylesheet" href="/static/css/plyr.css" />
     <script src="/static/js/plyr.polyfilled.js"></script>
+    <link rel="stylesheet" href="/static/css/prism.css">
+    <script src="/static/js/prism.js"></script>
 
     <!-- SEO & Social Meta Tags -->
     <meta name="description" content="TeleCloud OS - Cloud file management via Telegram">
@@ -193,7 +195,8 @@
         class="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
         x-transition.opacity>
         <div @click.outside="closeFileInfoModal()"
-            class="glass-menu w-[90%] max-w-sm max-h-[90vh] overflow-y-auto hide-scrollbar rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20">
+            class="glass-menu w-[90%] max-h-[90vh] overflow-y-auto hide-scrollbar rounded-[2rem] p-6 shadow-2xl animate-modal-in border border-white/20 transition-all duration-300"
+            :class="fileInfoModal.isLarge ? 'modal-wide' : 'max-w-sm'">
 
             <div class="flex items-start gap-4 mb-2">
                 <div class="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner shrink-0 transition-colors overflow-hidden relative"
@@ -222,6 +225,31 @@
             <div x-show="fileInfoModal.isMedia"
                 class="w-full mt-4 mb-2 flex flex-col items-center justify-center transition-all"
                 x-html="fileInfoModal.mediaHtml"></div>
+
+            <div x-show="fileInfoModal.needsLoad" class="w-full mt-4 mb-2">
+                <div class="w-full p-6 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
+                    <i class="fa-solid fa-file-lines text-4xl text-slate-300 dark:text-slate-600 mb-3"></i>
+                    <p class="text-sm text-slate-500 mb-4 text-center" x-text="t('preview_manual')"></p>
+                    <button @click="loadFilePreview()" class="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-blue-500/20 active:scale-95">
+                        <span x-text="t('load_preview')"></span>
+                    </button>
+                </div>
+            </div>
+
+            <div x-show="fileInfoModal.tooLarge" class="w-full mt-4 mb-2">
+                <div class="w-full p-6 flex flex-col items-center justify-center bg-red-50 dark:bg-red-500/10 rounded-2xl border border-dashed border-red-200 dark:border-red-500/30">
+                    <i class="fa-solid fa-file-circle-exclamation text-4xl text-red-400 mb-3"></i>
+                    <p class="text-sm text-red-600 dark:text-red-400 mb-4 text-center" x-text="t('preview_blocked')"></p>
+                    <a :href="fileInfoModal.file ? '/download/' + fileInfoModal.file.id : '#'" class="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-red-500/20 active:scale-95">
+                        <i class="fa-solid fa-download mr-2"></i><span x-text="t('download')"></span>
+                    </a>
+                </div>
+            </div>
+
+            <div x-show="fileInfoModal.isPreviewLoading" class="w-full mt-6 mb-4 flex flex-col items-center justify-center py-10">
+                <i class="fa-solid fa-circle-notch fa-spin text-3xl text-blue-500 mb-3"></i>
+                <p class="text-sm text-slate-500" x-text="t('loading_preview')"></p>
+            </div>
 
             <div
                 class="space-y-3 mt-5 bg-white/50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">

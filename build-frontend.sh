@@ -25,4 +25,13 @@ download_lib "https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min
 download_lib "https://cdn.plyr.io/3.7.8/plyr.css" "static/css/plyr.css"
 download_lib "https://cdn.plyr.io/3.7.8/plyr.polyfilled.js" "static/js/plyr.polyfilled.js"
 
+echo "Building Prism.js locally..."
+download_lib "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" "static/css/prism.css"
+download_lib "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js" "static/js/prism.js"
+for lang in json javascript python go bash yaml sql; do
+  echo "Adding Prism language: $lang..."
+  echo "" >> static/js/prism.js
+  curl -sSL "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-$lang.min.js" >> static/js/prism.js
+done
+
 echo "Frontend build complete!"

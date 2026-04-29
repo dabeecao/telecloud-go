@@ -193,3 +193,73 @@ body {
         background-color: rgba(255, 255, 255, 0.1);
     }
 }
+
+/* =========================================
+   8. TEXT PREVIEW STYLES
+   ========================================= */
+.text-preview-container {
+    width: 100%;
+    max-height: 400px;
+    overflow-y: auto;
+    border-radius: 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    padding: 1rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+@media (prefers-color-scheme: dark) {
+    .text-preview-container {
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #e2e8f0;
+    }
+}
+
+/* Prism Overrides */
+pre[class*="language-"] {
+    margin: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
+
+code[class*="language-"] {
+    text-shadow: none !important;
+    font-size: 0.85rem !important;
+}
+
+.markdown-preview {
+    font-family: inherit;
+    line-height: 1.6;
+}
+
+.markdown-preview h1, .markdown-preview h2, .markdown-preview h3 {
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+}
+
+.markdown-preview p {
+    margin-bottom: 0.75rem;
+}
+
+.markdown-preview ul {
+    list-style-type: disc;
+    margin-left: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+/* Responsive Modal Widths */
+.modal-wide {
+    max-width: 48rem !important; /* max-w-3xl */
+}
+
+@media (min-width: 768px) {
+    .modal-wide {
+        width: 80% !important;
+    }
+}

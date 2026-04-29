@@ -133,9 +133,26 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
 		WithProgress(uploadProgress{taskID: taskID}).
-		WithThreads(4)
+		WithThreads(cfg.UploadThreads)
 
-	file, err := up.FromPath(ctx, filePath)
+	var file tg.InputFileClass
+	var err error
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		file, err = up.FromPath(ctx, filePath)
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			break // Bị huỷ do user cancel
+		}
+		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("upload_failed_retrying_attempt_%d", attempt))
+		select {
+		case <-time.After(3 * time.Second):
+		case <-ctx.Done():
+		}
+	}
+
 	if err != nil {
 		UpdateTask(taskID, "error", 0, err.Error())
 		return
@@ -251,9 +268,25 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	api := Client.API()
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
-		WithThreads(4)
+		WithThreads(cfg.UploadThreads)
 
-	file, err := up.FromPath(ctx, filePath)
+	var file tg.InputFileClass
+	var err error
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		file, err = up.FromPath(ctx, filePath)
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-time.After(3 * time.Second):
+		case <-ctx.Done():
+		}
+	}
+
 	if err != nil {
 		return 0, "", fmt.Errorf("upload to telegram: %w", err)
 	}

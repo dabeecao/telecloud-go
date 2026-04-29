@@ -12,6 +12,7 @@ type Config struct {
 	APIID           int
 	APIHash         string
 	MaxUploadSizeMB int
+	UploadThreads   int
 	DatabasePath    string
 	ThumbsDir       string
 	LogGroupID      string
@@ -38,12 +39,18 @@ func Load() *Config {
 
 	maxUploadSizeMB, _ := strconv.Atoi(getEnv("MAX_UPLOAD_SIZE_MB", "0"))
 
+	uploadThreads, _ := strconv.Atoi(getEnv("TG_UPLOAD_THREADS", "2"))
+	if uploadThreads <= 0 {
+		uploadThreads = 2
+	}
+
 	logGroupID := os.Getenv("LOG_GROUP_ID")
 
 	return &Config{
 		APIID:           apiID,
 		APIHash:         apiHash,
 		MaxUploadSizeMB: maxUploadSizeMB,
+		UploadThreads:   uploadThreads,
 		DatabasePath:    getEnv("DATABASE_PATH", "database.db"),
 		ThumbsDir:       getEnv("THUMBS_DIR", "static/thumbs"),
 		LogGroupID:      logGroupID,

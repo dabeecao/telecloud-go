@@ -95,6 +95,7 @@ Nội dung chính trong tệp `.env`:
 *   `LOG_GROUP_ID`: ID nhóm/kênh lưu file hoặc điền `me` để lưu vào Saved Messages.
 *   `PORT`: Cổng muốn chạy ứng dụng.
 *   `MAX_UPLOAD_SIZE_MB`: Kích thước file tối đa được phép upload. Đặt là `0` để hệ thống tự động nhận diện (2GB cho tài khoản thường, 4GB cho Premium).
+*   `TG_UPLOAD_THREADS`: (Tùy chọn) Số luồng upload đồng thời. Mặc định là `2`. Có thể tăng lên `4` nếu mạng mạnh, hoặc giảm xuống `1` nếu bị Telegram ngắt kết nối liên tục khi upload file lớn.
 *   `DATABASE_PATH`: (Tùy chọn) Đường dẫn tới file database (mặc định: `database.db`).
 *   `THUMBS_DIR`: (Tùy chọn) Đường dẫn tới thư mục chứa ảnh thumbnail (mặc định: `./static/thumbs`).
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).

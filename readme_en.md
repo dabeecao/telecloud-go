@@ -104,6 +104,7 @@ Main fields in `.env`:
 * `LOG_GROUP_ID`: ID of the group/channel storing files or use `me` for Saved Messages
 * `PORT`: Port to run the application
 * `MAX_UPLOAD_SIZE_MB`: Maximum upload file size. Set to `0` for automatic detection (2GB for Normal, 4GB for Premium accounts)
+* `TG_UPLOAD_THREADS`: (Optional) Number of concurrent upload threads. Default is `2`. Increase to `4` for maximum speed, or decrease to `1` if Telegram forcefully closes your connection during large uploads.
 * `DATABASE_PATH`: (Optional) Path to the database file (default: `database.db`)
 * `THUMBS_DIR`: (Optional) Directory for storing thumbnails (default: `./static/thumbs`)
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process.

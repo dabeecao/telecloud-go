@@ -200,11 +200,6 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # WebSocket support (Required for WebDAV and real-time features)
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
         # IMPORTANT: Disable buffering for large uploads and smooth streaming
         proxy_request_buffering off;
         proxy_buffering off;
@@ -218,6 +213,16 @@ server {
         proxy_connect_timeout 3600s;
         proxy_send_timeout 3600s;
         send_timeout 3600s;
+    }
+
+    # WebSocket support for real-time progress notifications
+    location /api/ws {
+        proxy_pass http://127.0.0.1:8091/api/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
     }
 }
 ```

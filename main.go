@@ -41,11 +41,11 @@ import (
 	"telecloud/ws"
 )
 
-//go:embed templates/* static/css/* static/js/* static/fonts/* static/webfonts/* static/favicon.ico
+//go:embed templates/* static/css/*.min.css static/css/tailwind.css static/js/*.min.js static/js/plyr.polyfilled.js static/fonts/* static/webfonts/* static/favicon.ico
 var contentFS embed.FS
 
 var (
-	version = "v2.6.1"
+	version = "v2.8.2"
 	commit  = "none"
 	date    = "unknown"
 )

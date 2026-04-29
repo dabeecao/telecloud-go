@@ -13,17 +13,17 @@
 
     <link rel="stylesheet" href="/static/css/fontawesome.min.css">
 
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.min.css">
 
-    <script src="/static/js/common.js"></script>
+    <script src="/static/js/common.min.js"></script>
     <script>TeleCloud.version = '{{ .version }}';</script>
-    <script src="/static/js/script.js"></script>
+    <script src="/static/js/script.min.js"></script>
     <script defer src="/static/js/alpine-collapse.min.js"></script>
     <script defer src="/static/js/alpine.min.js"></script>
-    <link rel="stylesheet" href="/static/css/plyr.css" />
+    <link rel="stylesheet" href="/static/css/plyr.min.css" />
     <script src="/static/js/plyr.polyfilled.js"></script>
-    <link rel="stylesheet" href="/static/css/prism.css">
-    <script src="/static/js/prism.js"></script>
+    <link rel="stylesheet" href="/static/css/prism.min.css">
+    <script src="/static/js/prism.min.js"></script>
 
     <!-- SEO & Social Meta Tags -->
     <meta name="description" content="TeleCloud OS - Cloud file management via Telegram">
@@ -443,7 +443,7 @@
                 </div>
             </div>
 
-            <div class="flex-1 min-h-0 overflow-y-auto p-2 md:p-6 md:pt-2 pb-[calc(16rem+env(safe-area-inset-bottom))] md:pb-6 relative"
+            <div class="flex-1 min-h-0 overflow-y-auto p-2 md:p-6 md:pt-2 pb-[calc(6.5rem+env(safe-area-inset-bottom))] md:pb-6 relative"
                 @click.self="closeContextMenu">
 
                 <div x-show="currentTab === 'settings'" x-cloak
@@ -1124,7 +1124,7 @@
     </div>
 
     <div x-show="selectedIds.length > 0" x-cloak
-        class="fixed bottom-28 md:bottom-8 left-1/2 -translate-x-1/2 glass-menu px-3 py-3 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.8)] flex items-center gap-2 md:gap-6 z-[55] md:z-50 border border-slate-200 dark:border-slate-700/50"
+        class="fixed bottom-[calc(7rem+env(safe-area-inset-bottom))] md:bottom-8 left-1/2 -translate-x-1/2 glass-menu px-3 py-3 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.2)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.8)] flex items-center gap-2 md:gap-6 z-[55] md:z-50 border border-slate-200 dark:border-slate-700/50"
         x-transition.scale.origin.bottom>
         <span class="text-sm font-bold bg-blue-600 text-white px-3 py-1.5 rounded-full shadow-inner"
             x-text="selectedIds.length"></span>
@@ -1199,8 +1199,8 @@
     <div x-show="uploadQueue.length > 0" x-cloak
         class="fixed z-40 md:z-50 transition-all duration-500 ease-in-out shadow-2xl border border-slate-200 dark:border-slate-700"
         :class="isQueueMinimized ? 
-            'bottom-20 md:bottom-6 right-4 md:right-6 w-14 h-14 rounded-full bg-blue-600 border-2 border-white dark:border-slate-800' : 
-            'bottom-28 md:bottom-6 right-4 md:right-6 w-[calc(100%-2rem)] md:w-80 glass-menu rounded-2xl overflow-hidden'"
+            'bottom-[calc(6rem+env(safe-area-inset-bottom))] md:bottom-6 right-4 md:right-6 w-14 h-14 rounded-full bg-blue-600 border-2 border-white dark:border-slate-800' : 
+            'bottom-[calc(7rem+env(safe-area-inset-bottom))] md:bottom-6 right-4 md:right-6 w-[calc(100%-2rem)] md:w-80 glass-menu rounded-2xl overflow-hidden'"
         x-transition:enter="transition ease-out duration-300"
         x-transition:enter-start="opacity-0 scale-90 translate-y-10"
         x-transition:enter-end="opacity-100 scale-100 translate-y-0">

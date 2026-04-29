@@ -19,4 +19,14 @@ for %%l in (json javascript python go bash yaml sql) do (
   curl -sSL https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-%%l.min.js >> static/js/prism.js
 )
 
+echo Minifying JS and CSS files...
+call npx -y esbuild static/js/common.js --minify --outfile=static/js/common.min.js
+call npx -y esbuild static/js/script.js --minify --outfile=static/js/script.min.js
+call npx -y esbuild static/js/prism.js --minify --outfile=static/js/prism.min.js
+
+call npx -y esbuild static/css/style.css --bundle --minify --external:/static/* --outfile=static/css/style.min.css
+call npx -y esbuild static/css/nunito.css --minify --outfile=static/css/nunito.min.css
+call npx -y esbuild static/css/prism.css --minify --outfile=static/css/prism.min.css
+call npx -y esbuild static/css/plyr.css --minify --outfile=static/css/plyr.min.css
+
 echo Frontend build complete!

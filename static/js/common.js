@@ -488,7 +488,7 @@ const TeleCloud = {
             'pdf': { n: this.t('type_doc'), c: 'bg-red-100 text-red-500 dark:bg-red-500/20 dark:text-red-400', i: '<i class="fa-solid fa-file-pdf text-2xl"></i>' },
             'doc': 'pdf', 'docx': 'pdf', 'xls': 'pdf', 'xlsx': 'pdf',
             'txt': { n: this.t('type_text'), c: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400', i: '<i class="fa-solid fa-file-lines text-2xl"></i>' },
-            'md': 'txt', 'log': 'txt', 'json': 'txt', 'js': 'txt', 'py': 'txt', 'go': 'txt', 'html': 'txt', 'css': 'txt', 'yml': 'txt', 'yaml': 'txt', 'sql': 'txt', 'sh': 'txt', 'conf': 'txt', 'ini': 'txt'
+            'md': 'txt', 'log': 'txt', 'go': 'txt', 'yml': 'txt', 'yaml': 'txt', 'sh': 'txt', 'conf': 'txt', 'ini': 'txt'
         };
         let result = types[ext];
         if (typeof result === 'string') result = types[result];

@@ -341,10 +341,11 @@ Nếu bạn muốn tự biên dịch dự án, hãy làm theo các bước sau:
 
 4. Chạy lệnh `go mod tidy` để tải về các thư viện cần thiết.
 
-5. Build giao diện (Tailwind CSS và tải các thư viện):
+5. Build giao diện (Tailwind CSS, tải thư viện và Minify JS/CSS):
+   * Yêu cầu: Đã cài đặt **Node.js** và **npm** trên máy để thực hiện minify (sử dụng `esbuild` qua `npx`).
    * Tải **Tailwind CLI** phù hợp với hệ điều hành của bạn tại [Tailwind CSS Releases](https://github.com/tailwindlabs/tailwindcss/releases/latest).
    * Đổi tên file vừa tải thành `tailwindcss` (hoặc `tailwindcss.exe` trên Windows) và đặt vào thư mục gốc của dự án.
-   * Chạy lệnh build (script này sẽ tự động tải các thư viện như Alpine.js và Plyr):
+   * Chạy lệnh build (script này sẽ tự động tải thư viện và thực hiện minify):
      ```bash
      # Linux/macOS
      chmod +x build-frontend.sh

@@ -1,7 +1,7 @@
 /* =========================================
    1. IMPORTS & VARIABLES
    ========================================= */
-@import url('/static/css/nunito.css');
+@import './nunito.css';
 
 :root {
     --plyr-color-main: #3b82f6; 

@@ -370,10 +370,11 @@ git clone https://github.com/dabeecao/telecloud-go.git
 go mod tidy
 ```
 
-5. Build UI (Tailwind CSS and download libraries):
+5. Build UI (Tailwind CSS, download libraries and Minify JS/CSS):
+   * Requirement: **Node.js** and **npm** installed on your machine for minification (uses `esbuild` via `npx`).
    * Download the **Tailwind CLI** for your OS from [Tailwind CSS Releases](https://github.com/tailwindlabs/tailwindcss/releases/latest).
    * Rename the downloaded file to `tailwindcss` (or `tailwindcss.exe` on Windows) and place it in the project root.
-   * Run the build command (this script will automatically download libraries like Alpine.js and Plyr):
+   * Run the build command (this script will automatically download libraries and perform minification):
      ```bash
      # Linux/macOS
      chmod +x build-frontend.sh

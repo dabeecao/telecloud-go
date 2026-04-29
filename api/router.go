@@ -938,7 +938,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			if item.MimeType != nil {
-				c.Header("Content-Type", *item.MimeType)
+				mime := *item.MimeType
+				if strings.HasSuffix(strings.ToLower(item.Filename), ".mkv") {
+					mime = "video/webm"
+				}
+				c.Header("Content-Type", mime)
 			}
 			tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
 		})
@@ -1021,7 +1025,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 		
 		if item.MimeType != nil {
-			c.Header("Content-Type", *item.MimeType)
+			mime := *item.MimeType
+			if strings.HasSuffix(strings.ToLower(item.Filename), ".mkv") {
+				mime = "video/webm"
+			}
+			c.Header("Content-Type", mime)
 		}
 		
 		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)

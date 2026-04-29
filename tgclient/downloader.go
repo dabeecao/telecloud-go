@@ -55,7 +55,7 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	chunkSize := int64(512 * 1024)
+	chunkSize := int64(1024 * 1024) // 1MB chunks — max supported by Telegram UploadGetFile
 	chunkStart := (r.offset / chunkSize) * chunkSize
 
 	if r.chunkData == nil || r.chunkOffset != chunkStart {
@@ -112,20 +112,19 @@ func (r *tgFileReader) Seek(offset int64, whence int) (int64, error) {
 
 func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filename string, size int64, cfg *config.Config) error {
 	ctx := c.Context()
-	
-	// Add some logging for debugging Range requests
-	if rangeHeader := c.Header.Get("Range"); rangeHeader != "" {
-		fmt.Printf("[Stream] Range request for %s: %s\n", filename, rangeHeader)
-	}
 
 	reader, err := GetTelegramFileReader(ctx, msgID, size, cfg)
 	if err != nil {
 		return err
 	}
 
-	// Set Accept-Ranges explicitly just in case
+	// Allow browser/player to seek and cache the stream
 	w.Header().Set("Accept-Ranges", "bytes")
-	
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+
+	// Serve inline so browsers play it directly instead of downloading
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
+
 	http.ServeContent(w, c, filename, time.Time{}, reader)
 	return nil
 }

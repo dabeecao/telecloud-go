@@ -209,10 +209,15 @@ server {
         proxy_request_buffering off;
         proxy_buffering off;
 
-        # Increase timeouts to avoid disconnection when processing large files
+        # Tell Nginx to disable acceleration buffering — required for video/audio seeking
+        proxy_hide_header X-Accel-Buffering;
+        add_header X-Accel-Buffering no;
+
+        # Increase timeouts to avoid disconnection when processing large files or long streams
         proxy_read_timeout 3600s;
         proxy_connect_timeout 3600s;
         proxy_send_timeout 3600s;
+        send_timeout 3600s;
     }
 }
 ```
@@ -397,6 +402,7 @@ This project uses amazing libraries:
 * [AlpineJS](https://github.com/alpinejs/alpine): Minimal JS framework
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): Utility-first CSS framework
 * [plyr](https://github.com/sampotts/plyr): HTML5 media player
+* [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter — used for code highlighting in file preview.
 * [FontAwesome](https://fontawesome.com): The world's most popular icon set.
 * [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): A modern and clean sans-serif typeface.
 

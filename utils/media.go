@@ -41,8 +41,8 @@ func CreateLocalThumbnail(sourcePath, mimeType, ffmpegPath string) *string {
 			return nil
 		}
 		cmd := exec.Command(
-			ffmpegPath, "-y", "-i", sourcePath,
-			"-ss", "00:00:00.000", "-vframes", "1",
+			ffmpegPath, "-y", "-ss", "00:00:01.000", "-i", sourcePath,
+			"-vframes", "1",
 			"-vf", "scale=320:-1", thumbPath,
 		)
 		if err := cmd.Run(); err == nil {

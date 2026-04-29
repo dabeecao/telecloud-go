@@ -184,10 +184,15 @@ server {
         proxy_request_buffering off;
         proxy_buffering off;
 
-        # Tăng timeout để tránh đứt kết nối khi xử lý file lớn
+        # Báo cho Nginx tắt acceleration buffering — bắt buộc để video/nhạc seek được
+        proxy_hide_header X-Accel-Buffering;
+        add_header X-Accel-Buffering no;
+
+        # Tăng timeout để tránh đứt kết nối khi xử lý file lớn hoặc stream dài
         proxy_read_timeout 3600s;
         proxy_connect_timeout 3600s;
         proxy_send_timeout 3600s;
+        send_timeout 3600s;
     }
 }
 ```
@@ -359,6 +364,7 @@ Dự án sử dụng các thư viện tuyệt vời:
 * [AlpineJS](https://github.com/alpinejs/alpine): A rugged, minimal framework for composing JavaScript behavior in your markup.
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): A utility-first CSS framework for rapid UI development.
 * [plyr](https://github.com/sampotts/plyr): A simple HTML5, YouTube and Vimeo player
+* [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter — dùng để tô màu code trong tính năng xem trước tệp.
 * [FontAwesome](https://fontawesome.com): Bộ biểu tượng phổ biến nhất thế giới.
 * [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): Một bộ font chữ sans-serif hiện đại và dễ đọc.
 

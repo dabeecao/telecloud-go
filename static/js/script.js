@@ -248,7 +248,6 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         toastModal: { show: false, message: '', type: 'success' },
         toastTimeout: null,
         plyrInstance: null,
-        plyrInstance: null,
         fileInfoModal: { show: false, file: null, typeName: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '', isLarge: false, isPreviewLoading: false, needsLoad: false, tooLarge: false },
         modal: { show: false, type: 'alert', title: '', message: '', input: '', resolve: null, isDanger: false },
         contextMenu: { show: false, x: 0, y: 0, file: null },
@@ -666,11 +665,11 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             } else if (videoExts.includes(ext)) {
                 const typeAttr = mimeTypes[ext] || 'video/mp4';
                 mediaHtml = '<div class="w-full relative z-20 rounded-[1rem] bg-black shadow-md"><video id="index-tele-player" playsinline controls preload="none" ' + (file.has_thumb ? 'data-poster="' + thumbUrl + '"' : '') + '><source src="' + streamUrl + '" type="' + typeAttr + '"></video></div>';
-                isMedia = true; playerTarget = '#index-tele-player';
+                isMedia = true; playerTarget = { el: '#index-tele-player', type: 'video' };
             } else if (audioExts.includes(ext)) {
                 const typeAttr = mimeTypes[ext] || 'audio/mpeg';
                 mediaHtml = '<div class="w-full relative z-20 rounded-[1rem] p-2 sm:p-4 bg-slate-100 dark:bg-slate-800/50 shadow-inner">' + (file.has_thumb ? '<img src="' + thumbUrl + '" class="w-32 h-32 mx-auto rounded-2xl mb-4 object-cover shadow-md">' : '<div class="w-32 h-32 mx-auto rounded-2xl mb-4 flex items-center justify-center bg-white dark:bg-slate-700 shadow-sm"><i class="fa-solid fa-music text-5xl text-slate-300 dark:text-slate-500"></i></div>') + '<audio id="index-tele-player" controls preload="none"><source src="' + streamUrl + '" type="' + typeAttr + '"></audio></div>';
-                isMedia = true; playerTarget = '#index-tele-player';
+                isMedia = true; playerTarget = { el: '#index-tele-player', type: 'audio' };
             } else if (textExts.includes(ext)) {
                 this.fileInfoModal = { show: true, file: file, typeName: typeData.n, svgIcon: typeData.i, bgColor: typeData.c, isMedia: false, mediaHtml: '', isLarge: true, isPreviewLoading: false, needsLoad: false, tooLarge: false };
                 
@@ -683,7 +682,15 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             }
             
             this.fileInfoModal = { show: true, file: file, typeName: typeData.n, svgIcon: typeData.i, bgColor: typeData.c, isMedia: isMedia, mediaHtml: mediaHtml, isLarge: isLarge, isPreviewLoading: false };
-            if (playerTarget) { setTimeout(() => { if (this.plyrInstance) this.plyrInstance.destroy(); this.plyrInstance = new Plyr(playerTarget, { ratio: '16:9', controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings', 'fullscreen'], settings: ['speed'] }); }, 50); }
+            if (playerTarget) {
+                setTimeout(() => {
+                    if (this.plyrInstance) this.plyrInstance.destroy();
+                    const plyrOpts = playerTarget.type === 'audio'
+                        ? { controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings'], settings: ['speed'], speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] } }
+                        : { ratio: '16:9', controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings', 'fullscreen'], settings: ['speed'], speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] } };
+                    this.plyrInstance = new Plyr(playerTarget.el, plyrOpts);
+                }, 50);
+            }
         },
         async loadFilePreview() {
             this.fileInfoModal.needsLoad = false;

@@ -222,12 +222,11 @@
 
                 if (playerTarget) { 
                     setTimeout(() => { 
-                        new Plyr(playerTarget, { 
-                            ratio: '16:9', 
-                            controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings', 'pip', 'fullscreen'], 
-                            settings: ['speed'], 
-                            speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] } 
-                        }); 
+                        const isAudio = audioExts.includes(ext);
+                        const plyrOpts = isAudio
+                            ? { controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings'], settings: ['speed'], speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] } }
+                            : { ratio: '16:9', controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'settings', 'pip', 'fullscreen'], settings: ['speed'], speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] } };
+                        new Plyr(playerTarget, plyrOpts);
                     }, 50); 
                 }
             }

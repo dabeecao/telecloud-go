@@ -195,18 +195,22 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:8091;
+
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # Support Range requests for streaming (seeking)
+        proxy_set_header Range $http_range;
+        proxy_set_header If-Range $http_if_range;
+
+        # Prevent Connection errors when proxying
+        proxy_set_header Connection "";
+
         # IMPORTANT: Disable buffering for large uploads and smooth streaming
         proxy_request_buffering off;
         proxy_buffering off;
-
-        # Tell Nginx to disable acceleration buffering — required for video/audio seeking
-        proxy_hide_header X-Accel-Buffering;
-        add_header X-Accel-Buffering no;
 
         # Increase timeouts to avoid disconnection when processing large files or long streams
         proxy_read_timeout 3600s;
@@ -218,9 +222,11 @@ server {
     # WebSocket support for real-time progress notifications
     location /api/ws {
         proxy_pass http://127.0.0.1:8091/api/ws;
+
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+
         proxy_set_header Host $host;
         proxy_read_timeout 3600s;
     }

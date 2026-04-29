@@ -170,18 +170,22 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:8091;
+
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # Hỗ trợ Range requests cho streaming (seek)
+        proxy_set_header Range $http_range;
+        proxy_set_header If-Range $http_if_range;
+
+        # Tránh lỗi Connection khi proxy
+        proxy_set_header Connection "";
+
         # QUAN TRỌNG: Tắt buffering để hỗ trợ upload file lớn và streaming mượt hơn
         proxy_request_buffering off;
         proxy_buffering off;
-
-        # Báo cho Nginx tắt acceleration buffering — bắt buộc để video/nhạc seek được
-        proxy_hide_header X-Accel-Buffering;
-        add_header X-Accel-Buffering no;
 
         # Tăng timeout để tránh đứt kết nối khi xử lý file lớn hoặc stream dài
         proxy_read_timeout 3600s;
@@ -193,9 +197,11 @@ server {
     # Hỗ trợ WebSockets cho tính năng thông báo tiến trình real-time
     location /api/ws {
         proxy_pass http://127.0.0.1:8091/api/ws;
+
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+
         proxy_set_header Host $host;
         proxy_read_timeout 3600s;
     }

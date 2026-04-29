@@ -355,6 +355,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     const data = JSON.parse(event.data);
                     let task = this.uploadQueue.find(t => t.id === data.task_id);
                     if (task) {
+                        if (task.isCancelled) return;
                         if (data.status === 'uploading_to_server') {
                             // Let the client handle the first 50% of progress to avoid jumping during parallel uploads
                             if (!task.hasError) {
@@ -598,7 +599,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                             console.error(`Upload chunk ${chunkIndex} error (retries left: ${retries}):`, err);
                             if (retries === 0) {
                                 let task = this.uploadQueue.find(t => t.id === taskId); 
-                                if(task) {
+                                if(task && !task.isCancelled) {
                                     task.statusText = this.t('conn_error');
                                     task.hasError = true;
                                 }

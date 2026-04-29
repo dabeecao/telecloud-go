@@ -420,8 +420,8 @@
                 <!-- Unified Table Header -->
                 <div x-show="files.length > 0 && !isLoading"
                     class="grid grid-cols-12 gap-4 px-4 md:px-10 py-3 text-[10px] md:text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-t border-slate-200/50 dark:border-white/5">
-                    <div class="col-span-8 md:col-span-5 flex items-center gap-3">
-                        <input type="checkbox" class="w-4 h-4 accent-blue-600 cursor-pointer rounded" @change="
+                    <div class="col-span-8 md:col-span-5 flex items-center gap-3 cursor-pointer select-none group" @click="toggleSort('name')">
+                        <input type="checkbox" class="w-4 h-4 accent-blue-600 cursor-pointer rounded" @click.stop @change="
                                 let pageIds = displayedFiles.map(f => f.id); 
                                 selectedIds = $event.target.checked 
                                     ? [...new Set([...selectedIds, ...pageIds])] 
@@ -429,9 +429,16 @@
                             "
                             :checked="displayedFiles.length > 0 && displayedFiles.every(f => selectedIds.includes(f.id))">
                         <span x-text="t('name_placeholder')"></span>
+                        <i class="fa-solid" :class="sortBy === 'name' ? (sortOrder === 'asc' ? 'fa-sort-up text-blue-500' : 'fa-sort-down text-blue-500') : 'fa-sort opacity-0 group-hover:opacity-40 transition-opacity'"></i>
                     </div>
-                    <div class="col-span-3 hidden md:block" x-text="t('date')"></div>
-                    <div class="col-span-2 hidden md:block" x-text="t('size')"></div>
+                    <div class="col-span-3 hidden md:flex items-center gap-1.5 cursor-pointer select-none group" @click="toggleSort('date')">
+                        <span x-text="t('date')"></span>
+                        <i class="fa-solid" :class="sortBy === 'date' ? (sortOrder === 'asc' ? 'fa-sort-up text-blue-500' : 'fa-sort-down text-blue-500') : 'fa-sort opacity-0 group-hover:opacity-40 transition-opacity'"></i>
+                    </div>
+                    <div class="col-span-2 hidden md:flex items-center gap-1.5 cursor-pointer select-none group" @click="toggleSort('size')">
+                        <span x-text="t('size')"></span>
+                        <i class="fa-solid" :class="sortBy === 'size' ? (sortOrder === 'asc' ? 'fa-sort-up text-blue-500' : 'fa-sort-down text-blue-500') : 'fa-sort opacity-0 group-hover:opacity-40 transition-opacity'"></i>
+                    </div>
                     <div class="col-span-4 md:col-span-2 text-right md:text-center" x-text="t('actions')"></div>
                 </div>
             </div>

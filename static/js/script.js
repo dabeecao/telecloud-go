@@ -12,6 +12,8 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         updateAvailable: false,
         changelog: [],
         latestReleaseUrl: '',
+        sortBy: 'name',
+        sortOrder: 'asc',
         username: '',
         password: '', 
         confirmPassword: '',
@@ -207,9 +209,41 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
         currentPage: 1,
         itemsPerPage: 15,
         get filteredFiles() {
-            if (this.searchQuery.trim() === '') return this.files;
-            const query = this.searchQuery.toLowerCase();
-            return this.files.filter(f => f.filename.toLowerCase().includes(query));
+            let results = [...this.files];
+            if (this.searchQuery.trim() !== '') {
+                const query = this.searchQuery.toLowerCase();
+                results = results.filter(f => f.filename.toLowerCase().includes(query));
+            }
+
+            return results.sort((a, b) => {
+                // Folders always first
+                if (a.is_folder && !b.is_folder) return -1;
+                if (!a.is_folder && b.is_folder) return 1;
+
+                let valA, valB;
+                if (this.sortBy === 'name') {
+                    valA = a.filename.toLowerCase();
+                    valB = b.filename.toLowerCase();
+                } else if (this.sortBy === 'date') {
+                    valA = new Date(a.created_at).getTime() || 0;
+                    valB = new Date(b.created_at).getTime() || 0;
+                } else if (this.sortBy === 'size') {
+                    valA = a.size || 0;
+                    valB = b.size || 0;
+                }
+
+                if (valA < valB) return this.sortOrder === 'asc' ? -1 : 1;
+                if (valA > valB) return this.sortOrder === 'asc' ? 1 : -1;
+                return 0;
+            });
+        },
+        toggleSort(field) {
+            if (this.sortBy === field) {
+                this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.sortBy = field;
+                this.sortOrder = 'asc';
+            }
         },
         get totalPages() {
             return Math.ceil(this.filteredFiles.length / this.itemsPerPage) || 1;

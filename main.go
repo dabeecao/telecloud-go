@@ -38,6 +38,7 @@ import (
 	"telecloud/database"
 	"telecloud/tgclient"
 	"telecloud/utils"
+	"telecloud/ws"
 )
 
 //go:embed templates/* static/css/* static/js/* static/fonts/* static/webfonts/* static/favicon.ico
@@ -101,6 +102,9 @@ func main() {
 	// Catch OS signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Initialise the WebSocket hub with the app context so it shuts down gracefully
+	ws.InitHub(appCtx)
 
 	router := api.SetupRouter(cfg, contentFS)
 

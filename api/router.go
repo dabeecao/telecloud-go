@@ -318,8 +318,22 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 
+		// Limit request body to prevent OOM / disk-exhaustion attacks.
+		// Allow max upload size + 32 KB overhead for multipart form fields.
+		maxBytes := int64(cfg.MaxUploadSizeMB) * 1024 * 1024
+		if maxBytes <= 0 {
+			maxBytes = 4000 * 1024 * 1024 // fallback: 4 GB (premium Telegram limit)
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes+32*1024)
+
 		file, header, err := c.Request.FormFile("file")
 		if err != nil {
+			if err.Error() == "http: request body too large" {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error": fmt.Sprintf("File too large. Maximum allowed size is %d MB", cfg.MaxUploadSizeMB),
+				})
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided"})
 			return
 		}

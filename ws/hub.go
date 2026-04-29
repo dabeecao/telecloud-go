@@ -66,7 +66,18 @@ func (h *Hub) Run(ctx context.Context) {
 var globalHub *Hub
 var once sync.Once
 
+// InitHub initialises the singleton hub with the given context.
+// Must be called once before any call to GetHub or HandleWebSocket.
+// When ctx is cancelled (e.g. on graceful shutdown), the hub goroutine exits.
+func InitHub(ctx context.Context) {
+	once.Do(func() {
+		globalHub = NewHub()
+		go globalHub.Run(ctx)
+	})
+}
+
 func GetHub() *Hub {
+	// Fallback: if InitHub was never called, start with background context.
 	once.Do(func() {
 		globalHub = NewHub()
 		go globalHub.Run(context.Background())

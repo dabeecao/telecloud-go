@@ -9,6 +9,7 @@ services:
       - "${PORT:-8091}:8091"
     env_file:
       - .env
+    user: "65532:65532"
     environment:
       # Override paths to point inside /app/data volume
       - DATABASE_PATH=/app/data/database.db

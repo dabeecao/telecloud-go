@@ -28,6 +28,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
     -o telecloud .
 
+# Create data directory and set permissions for the nonroot user (UID 65532)
+RUN mkdir -p /app/data && chown 65532:65532 /app/data
+
 # ============================================================
 # Stage 2: Minimal runtime image
 # ============================================================
@@ -38,8 +41,8 @@ WORKDIR /app
 # Copy the compiled binary (assets are embedded via go:embed)
 COPY --from=builder /app/telecloud /app/telecloud
 
-# Create data directories (will be overridden by volume mounts)
-# The binary handles creating these at runtime
+# Copy the data directory with correct ownership
+COPY --from=builder --chown=nonroot:nonroot /app/data /app/data
 
 EXPOSE 8091
 

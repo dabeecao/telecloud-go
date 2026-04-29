@@ -62,6 +62,13 @@ func main() {
 
 	cfg := config.Load()
 	cfg.Version = version
+
+	// Ensure the directory for the database exists
+	dbDir := filepath.Dir(cfg.DatabasePath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		log.Printf("Warning: Could not create database directory: %v\n", err)
+	}
+
 	database.InitDB(cfg.DatabasePath)
 
 	if *resetPassFlag {

@@ -271,7 +271,6 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		WithThreads(cfg.UploadThreads)
 
 	var file tg.InputFileClass
-	var err error
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		file, err = up.FromPath(ctx, filePath)

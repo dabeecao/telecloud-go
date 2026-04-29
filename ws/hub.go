@@ -117,5 +117,9 @@ func BroadcastTaskUpdate(taskID, status string, percent int, msg string) {
 		log.Printf("json marshal error: %v", err)
 		return
 	}
-	GetHub().broadcast <- data
+	select {
+	case GetHub().broadcast <- data:
+	default:
+		// Hub bận hoặc không có client, drop update để không block goroutine upload
+	}
 }

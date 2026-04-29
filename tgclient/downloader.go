@@ -18,6 +18,23 @@ var (
 	cacheMutex    sync.RWMutex
 )
 
+func init() {
+	// Dọn dẹp location cache expired mỗi 30 phút
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		for range ticker.C {
+			now := time.Now()
+			cacheMutex.Lock()
+			for k, v := range locationCache {
+				if now.After(v.expiresAt) {
+					delete(locationCache, k)
+				}
+			}
+			cacheMutex.Unlock()
+		}
+	}()
+}
+
 type cachedLocation struct {
 	loc       *tg.InputDocumentFileLocation
 	expiresAt time.Time

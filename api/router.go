@@ -325,14 +325,6 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 		defer file.Close()
 
-		// Enforce max upload size
-		if cfg.MaxUploadSizeMB > 0 && header.Size > int64(cfg.MaxUploadSizeMB)*1024*1024 {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error": fmt.Sprintf("File too large. Maximum allowed size is %d MB", cfg.MaxUploadSizeMB),
-			})
-			return
-		}
-
 		filename := filepath.Base(header.Filename)
 		path := c.PostForm("path")
 		if path == "" {
@@ -357,7 +349,19 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write file"})
 			return
 		}
-		
+
+		// Validate kích thước thực tế sau khi ghi xong (không tin vào header.Size do client cung cấp)
+		if cfg.MaxUploadSizeMB > 0 {
+			fi, statErr := os.Stat(tempFilePath)
+			if statErr == nil && fi.Size() > int64(cfg.MaxUploadSizeMB)*1024*1024 {
+				os.Remove(tempFilePath)
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error": fmt.Sprintf("File too large. Maximum allowed size is %d MB", cfg.MaxUploadSizeMB),
+				})
+				return
+			}
+		}
+
 		mimeType := header.Header.Get("Content-Type")
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
@@ -562,44 +566,45 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			const chunkSize = 10 * 1024 * 1024
 			offset := int64(chunkIndex) * int64(chunkSize)
 
-			// Use a per-task mutex to synchronize writes and completion check
+			// Track received chunks; IO happens outside the lock
 			val, _ := chunkTrackerSync.LoadOrStore(taskID, &chunkState{
 				received: make(map[int]bool),
 			})
 			state := val.(*chunkState)
 
-			state.Lock()
-			
-			// Open file inside the lock to ensure we don't have multiple writers
-			// interfering with Seek/Write if something goes weird with the FS.
+			// Read chunk bytes into memory first (outside any lock)
+			chunkData, err := io.ReadAll(file)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_read_chunk"})
+				return
+			}
+
+			// WriteAt is safe for concurrent goroutines writing non-overlapping offsets
 			out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
-				state.Unlock()
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_open_temp_file"})
 				return
 			}
-
-			if _, err := out.Seek(offset, 0); err != nil {
-				out.Close()
-				state.Unlock()
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_seek_file"})
-				return
-			}
-			
-			if _, err = io.Copy(out, file); err != nil {
-				out.Close()
-				state.Unlock()
+			_, err = out.WriteAt(chunkData, offset)
+			out.Close()
+			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_write_chunk"})
 				return
 			}
-			out.Close()
 
+			// Lock only to update the received-chunks map
+			state.Lock()
+			if state.received[chunkIndex] {
+				// Chunk đã được nhận rồi (do retry gửi lại) – idempotent, bỏ qua
+				state.Unlock()
+				c.JSON(http.StatusOK, gin.H{"status": "chunk_already_received", "chunk": chunkIndex})
+				return
+			}
 			state.received[chunkIndex] = true
 			actualReceived := len(state.received)
-			
 			isDone := actualReceived == totalChunks
 			if isDone {
-				chunkTrackerSync.Delete(taskID) // Clean up early
+				chunkTrackerSync.Delete(taskID)
 			}
 			state.Unlock()
 
@@ -743,6 +748,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 							return
 						}
 					} else {
+						// Only copy files that have a valid Telegram message reference
+						if item.MessageID == nil {
+							continue
+						}
 						_, err = tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath)
 						if err != nil {
 							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -775,13 +784,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 				var children []database.File
 				database.DB.Select(&children, "SELECT message_id, thumb_path FROM files WHERE (path = ? OR path LIKE ?) AND message_id IS NOT NULL", oldPrefix, oldPrefix+"/%")
-				
+
 				var msgIDsToDelete []int
 				for _, child := range children {
 					if child.MessageID != nil {
 						var count int
 						database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *child.MessageID)
-						if count <= 1 { // Only this one exists (or 0 if something went wrong)
+						if count <= 1 {
 							msgIDsToDelete = append(msgIDsToDelete, *child.MessageID)
 						}
 					}
@@ -793,19 +802,20 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 						}
 					}
 				}
-				
+
+				// Delete DB rows first (source of truth), then Telegram messages
 				database.DB.Exec("DELETE FROM files WHERE path = ? OR path LIKE ?", oldPrefix, oldPrefix+"/%")
 				database.DB.Exec("DELETE FROM files WHERE id = ?", id)
-				
 				if len(msgIDsToDelete) > 0 {
 					tgclient.DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 				}
 			} else {
+				var msgIDsToDelete []int
 				if item.MessageID != nil {
 					var count int
 					database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *item.MessageID)
 					if count <= 1 {
-						tgclient.DeleteMessages(context.Background(), cfg, []int{*item.MessageID})
+						msgIDsToDelete = append(msgIDsToDelete, *item.MessageID)
 					}
 				}
 				if item.ThumbPath != nil {
@@ -815,7 +825,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 						os.Remove(*item.ThumbPath)
 					}
 				}
+				// Delete DB row first, then Telegram message
 				database.DB.Exec("DELETE FROM files WHERE id = ?", id)
+				if len(msgIDsToDelete) > 0 {
+					tgclient.DeleteMessages(context.Background(), cfg, msgIDsToDelete)
+				}
 			}
 			
 			c.JSON(http.StatusOK, gin.H{"status": "deleted"})
@@ -1006,12 +1020,14 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
-		
+
 		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, item.Filename))
 		if item.MimeType != nil {
 			c.Header("Content-Type", *item.MimeType)
 		}
-		
+		// Set cookie để frontend share.html biết download đã bắt đầu và ẩn overlay
+		c.SetCookie("dl_started", "1", 15, "/", "", false, false)
+
 		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
 	})
 

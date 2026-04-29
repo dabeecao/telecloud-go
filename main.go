@@ -177,20 +177,20 @@ func startCleanupTask(cfg *config.Config) {
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		for range ticker.C {
-			files, err := os.ReadDir(cfg.TempDir)
-			if err != nil {
-				continue
-			}
 			now := time.Now()
-			for _, f := range files {
-				info, err := f.Info()
+			filepath.WalkDir(cfg.TempDir, func(path string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return nil
+				}
+				info, err := d.Info()
 				if err != nil {
-					continue
+					return nil
 				}
 				if now.Sub(info.ModTime()) > 24*time.Hour {
-					os.Remove(filepath.Join(cfg.TempDir, f.Name()))
+					os.Remove(path)
 				}
-			}
+				return nil
+			})
 		}
 	}()
 }

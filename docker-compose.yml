@@ -1,5 +1,6 @@
 services:
   telecloud:
+    image: ghcr.io/dabeecao/telecloud-go:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,13 +17,19 @@ services:
       - THUMBS_DIR=/app/data/thumbs
       - TEMP_DIR=/app/data/temp
       - SESSION_FILE=/app/data/session.json
+      # Optional: FFmpeg for thumbnail generation.
+      # Install ffmpeg on the host, mount the binary, then set the path:
+      #   volumes: - /usr/bin/ffmpeg:/usr/bin/ffmpeg:ro
+      #   environment: - FFMPEG_PATH=/usr/bin/ffmpeg
     volumes:
       # Persist database, thumbnails, temp files, and Telegram session
       - ./data:/app/data
-    # Health check: ping the web server every 30s
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8091/ > /dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
+    # NOTE: distroless/static image has no shell or wget/curl,
+    # so CMD-SHELL healthchecks cannot work inside the container.
+    # Use an external monitoring tool or a sidecar container instead.
+    # healthcheck:
+    #   test: ["CMD-SHELL", "wget -qO- http://localhost:8091/ > /dev/null 2>&1 || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 15s

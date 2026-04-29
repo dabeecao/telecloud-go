@@ -468,7 +468,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                     hasError: false
                 };
                 
-                if (file.size > maxSizeBytes) {
+                if (this.maxUploadSizeMB > 0 && file.size > maxSizeBytes) {
                     task.statusText = this.t('status_error') + ': ' + this.t('file_too_large_title');
                     task.hasError = true;
                     task.progress = 0;

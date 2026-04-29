@@ -4,12 +4,26 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"telecloud/config"
 	"telecloud/database"
 
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/net/webdav"
+)
+
+// webdavAuthCache lưu kết quả bcrypt để tránh gọi lại mỗi request
+type authCacheEntry struct {
+	hash      string    // admin_password_hash tại thời điểm auth
+	validated bool
+	expiresAt time.Time
+}
+
+var (
+	authCache   sync.Map // map[string]*authCacheEntry keyed by password
+	authCacheTTL = 10 * time.Minute
 )
 
 func NewHandler(cfg *config.Config) http.Handler {
@@ -44,8 +58,39 @@ func NewHandler(cfg *config.Config) http.Handler {
 		
 		dbUser := database.GetSetting("admin_username")
 		dbHash := database.GetSetting("admin_password_hash")
-		
-		if user != dbUser || bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(pass)) != nil {
+
+		if user != dbUser {
+			w.Header().Set("WWW-Authenticate", `Basic realm="TeleCloud WebDAV"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Kiểm tra cache trước khi gọi bcrypt (tốn ~100ms/lần)
+		var authed bool
+		cacheKey := pass + "|" + dbHash
+		if v, ok := authCache.Load(cacheKey); ok {
+			entry := v.(*authCacheEntry)
+			if time.Now().Before(entry.expiresAt) && entry.hash == dbHash {
+				authed = entry.validated
+			} else {
+				authCache.Delete(cacheKey)
+			}
+		}
+
+		if !authed {
+			err := bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(pass))
+			if err == nil {
+				authed = true
+				// Chỉ cache kết quả auth thành công (không cache mật khẩu sai)
+				authCache.Store(cacheKey, &authCacheEntry{
+					hash:      dbHash,
+					validated: true,
+					expiresAt: time.Now().Add(authCacheTTL),
+				})
+			}
+		}
+
+		if !authed {
 			w.Header().Set("WWW-Authenticate", `Basic realm="TeleCloud WebDAV"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return

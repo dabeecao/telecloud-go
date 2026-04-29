@@ -238,12 +238,18 @@ This is the recommended deployment method for servers. It makes it easy to manag
 ### Requirements
 - [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed
 
-### 1. Clone the project
+### 1. Download configuration files
+
+You only need to download the `docker-compose.yml` and the `.env` example:
 
 ```bash
-git clone https://github.com/dabeecao/telecloud-go.git
-cd telecloud-go
+mkdir telecloud && cd telecloud
+curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/env.example
+mv env.example .env
 ```
+
+*(Or clone the full project if you prefer: `git clone https://github.com/dabeecao/telecloud-go.git`)*
 
 ### 2. Configure environment
 
@@ -267,11 +273,8 @@ PORT=8091
 You need to log in to generate the session file (`session.json`):
 
 ```bash
-# Build the image first
-docker compose build
-
-# Run the interactive auth flow
-docker compose run --rm telecloud /app/telecloud -auth
+# Run the interactive auth flow (Docker will automatically pull the image)
+docker compose run --rm -it telecloud -auth
 ```
 
 Enter your phone number, OTP, and 2FA password (if any). The `session.json` file will be saved in `./data/`.
@@ -296,8 +299,7 @@ docker compose logs -f
 docker compose stop
 
 # Update to a new version
-git pull
-docker compose build
+docker compose pull
 docker compose up -d
 
 # Remove the container (data in ./data/ is preserved)
@@ -305,6 +307,33 @@ docker compose down
 ```
 
 > 📁 All persistent data (database, thumbnails, temp files) is stored in the `./data/` directory on your host machine.
+
+### 🎬 (Optional) Enable FFmpeg for thumbnail generation
+
+The Docker image uses a minimal base (`distroless`) and **does not include FFmpeg**. If you want thumbnail support for videos and audio files, install FFmpeg on the host and mount the binary into the container:
+
+**Step 1:** Install FFmpeg on the host (if not already installed):
+```bash
+sudo apt install ffmpeg   # Ubuntu/Debian
+```
+
+**Step 2:** Add to `docker-compose.yml`:
+```yaml
+services:
+  telecloud:
+    volumes:
+      - ./data:/app/data
+      - /usr/bin/ffmpeg:/usr/bin/ffmpeg:ro   # Mount FFmpeg binary from host
+    environment:
+      - FFMPEG_PATH=/usr/bin/ffmpeg           # Tell the app where to find it
+```
+
+**Step 3:** Restart the container:
+```bash
+docker compose up -d
+```
+
+> 💡 If you don’t need thumbnails, no action is required — the app works normally without FFmpeg.
 
 ---
 

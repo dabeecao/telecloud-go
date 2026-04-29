@@ -2,6 +2,7 @@ package tgclient
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"sync"
@@ -42,6 +43,16 @@ func UpdateTask(taskID string, status string, percent int, msg string) {
 		Message: msg,
 	}
 	ws.BroadcastTaskUpdate(taskID, status, percent, msg)
+
+	// Auto-cleanup: remove task from memory after 5 minutes once terminal
+	if status == "done" || status == "error" {
+		go func() {
+			time.Sleep(5 * time.Minute)
+			taskMutex.Lock()
+			delete(UploadTasks, taskID)
+			taskMutex.Unlock()
+		}()
+	}
 }
 
 func GetTask(taskID string) *UploadStatus {
@@ -55,15 +66,15 @@ func GetTask(taskID string) *UploadStatus {
 
 func CancelTask(taskID string) {
 	taskMutex.Lock()
-	defer taskMutex.Unlock()
 	if cancel, ok := TaskCancels[taskID]; ok {
 		cancel()
 		delete(TaskCancels, taskID)
 	}
-	if task, ok := UploadTasks[taskID]; ok {
-		task.Status = "error"
-		task.Message = "Upload cancelled"
-	}
+	taskMutex.Unlock()
+
+	// Gọi UpdateTask trong goroutine riêng để tránh deadlock (UpdateTask cũng lock taskMutex)
+	// UpdateTask sẽ broadcast WS cho frontend và trigger cleanup goroutine 5 phút
+	go UpdateTask(taskID, "error", 0, "upload_cancelled_waiting")
 }
 
 
@@ -105,16 +116,12 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	UpdateTask(taskID, "telegram", 0, "")
 
-	// Handle overwriting if requested
+	// Handle overwriting: single query instead of two
 	var existingID int
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		err := database.DB.Get(&database.File{}, "SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename)
-		if err == nil {
-			// Found existing file to replace
-			database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
-		}
+		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename
@@ -126,7 +133,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
 		WithProgress(uploadProgress{taskID: taskID}).
-		WithThreads(4) // Increased from 2 to speed up larger file uploads
+		WithThreads(4)
 
 	file, err := up.FromPath(ctx, filePath)
 	if err != nil {
@@ -141,14 +148,10 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		return
 	}
 
-	// Create caption
 	caption := fmt.Sprintf("Path: %s\nFilename: %s", path, uniqueFilename)
-
 	docBuilder := message.UploadedDocument(file, html.String(nil, caption)).Filename(uniqueFilename).MIME(mimeType)
-	
-	msgBuilder := sender.To(peer)
 
-	res, err := msgBuilder.Media(ctx, docBuilder)
+	res, err := sender.To(peer).Media(ctx, docBuilder)
 	if err != nil {
 		UpdateTask(taskID, "error", 0, err.Error())
 		return
@@ -182,18 +185,15 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		size = fileInfo.Size()
 	}
 
-	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
-
-	// Save to DB with retry logic for unique filename
+	// Insert to DB first (thumbnail generated async below)
 	for i := 0; i < 5; i++ {
 		_, err = database.DB.Exec(
-			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)",
-			msgID, uniqueFilename, path, size, mimeType, localThumb,
+			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, NULL)",
+			msgID, uniqueFilename, path, size, mimeType,
 		)
 		if err == nil {
 			break
 		}
-		// If it's a unique constraint error, try again with a new unique name
 		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -203,7 +203,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		return
 	}
 
-	// If we successfully inserted the new one and were in overwrite mode, clean up the old one
+	// Overwrite cleanup
 	if overwrite && existingID > 0 {
 		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
 		if existingMsgID != nil {
@@ -222,12 +222,19 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		}
 	}
 
+	// Signal done to user immediately, then generate thumbnail during cooldown
 	UpdateTask(taskID, "done", 100, "")
 
-	// Add a small cool-down delay before releasing the semaphore slot
+	// Cooldown before releasing the semaphore slot
 	select {
 	case <-time.After(1000 * time.Millisecond):
 	case <-ctx.Done():
+	}
+
+	// Generate thumbnail from temp file (still exists at this point) and update DB
+	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
+	if localThumb != nil {
+		database.DB.Exec("UPDATE files SET thumb_path = ? WHERE message_id = ? AND path = ? AND filename = ?", *localThumb, msgID, path, uniqueFilename)
 	}
 }
 
@@ -257,15 +264,12 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		return 0, "", fmt.Errorf("resolve peer: %w", err)
 	}
 
-	// Handle overwriting if requested
+	// Handle overwriting: single query instead of two
 	var existingID int
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		err := database.DB.Get(&database.File{}, "SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename)
-		if err == nil {
-			database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
-		}
+		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename
@@ -307,23 +311,24 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		size = fileInfo.Size()
 	}
 
-	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
-
+	// Thumbnail skipped for the sync API path (no temp file retention after return)
 	var newID int64
+	var dbErr error
 	for i := 0; i < 5; i++ {
-		res, err := database.DB.Exec(
-			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)",
-			msgID, uniqueFilename, path, size, mimeType, localThumb,
+		var res sql.Result
+		res, dbErr = database.DB.Exec(
+			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, NULL)",
+			msgID, uniqueFilename, path, size, mimeType,
 		)
-		if err == nil {
+		if dbErr == nil {
 			newID, _ = res.LastInsertId()
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
 		time.Sleep(100 * time.Millisecond)
 	}
-	if err != nil {
-		return 0, "", fmt.Errorf("db insert: %w", err)
+	if dbErr != nil {
+		return 0, "", fmt.Errorf("db insert: %w", dbErr)
 	}
 
 	// Clean up old file if overwriting

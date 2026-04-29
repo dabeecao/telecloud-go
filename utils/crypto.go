@@ -17,8 +17,8 @@ func GenerateDirectToken(shareToken string) string {
 	h := hmac.New(sha256.New, SecretKey)
 	h.Write([]byte(shareToken))
 	sig := hex.EncodeToString(h.Sum(nil))
-	if len(sig) > 16 {
-		sig = sig[:16]
+	if len(sig) > 32 {
+		sig = sig[:32]
 	}
 	return shareToken + "_" + sig
 }

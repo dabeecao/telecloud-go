@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="/static/css/style.css">
 
     <script src="/static/js/common.js"></script>
-    <script>TeleCloud.version = '{{ .version }}';</script>
+    <script>TeleCloud.version = '{{ .version }}'; TeleCloud.enableTranscoding = {{ .enable_transcoding }};</script>
     <script src="/static/js/script.js"></script>
     <script defer src="/static/js/alpine-collapse.min.js"></script>
     <script defer src="/static/js/alpine.min.js"></script>

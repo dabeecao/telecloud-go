@@ -9,18 +9,19 @@ import (
 )
 
 type Config struct {
-	APIID           int
-	APIHash         string
-	MaxUploadSizeMB int
-	DatabasePath    string
-	ThumbsDir       string
-	LogGroupID      string
-	Port            string
-	TempDir         string
-	ProxyURL        string
-	Version         string
-	SessionFile     string
-	FFMPEGPath      string
+	APIID             int
+	APIHash           string
+	MaxUploadSizeMB   int
+	DatabasePath      string
+	ThumbsDir         string
+	LogGroupID        string
+	Port              string
+	TempDir           string
+	ProxyURL          string
+	Version           string
+	SessionFile       string
+	FFMPEGPath        string
+	EnableTranscoding bool
 }
 
 func Load() *Config {
@@ -41,17 +42,18 @@ func Load() *Config {
 	logGroupID := os.Getenv("LOG_GROUP_ID")
 
 	return &Config{
-		APIID:           apiID,
-		APIHash:         apiHash,
-		MaxUploadSizeMB: maxUploadSizeMB,
-		DatabasePath:    getEnv("DATABASE_PATH", "database.db"),
-		ThumbsDir:       getEnv("THUMBS_DIR", "static/thumbs"),
-		LogGroupID:      logGroupID,
-		Port:            getEnv("PORT", "8091"),
-		TempDir:         getEnv("TEMP_DIR", os.TempDir()+"/telecloud_temp_chunks"),
-		ProxyURL:        getEnv("PROXY_URL", ""),
-		SessionFile:     getEnv("SESSION_FILE", "session.json"),
-		FFMPEGPath:      getEnv("FFMPEG_PATH", "ffmpeg"),
+		APIID:             apiID,
+		APIHash:           apiHash,
+		MaxUploadSizeMB:   maxUploadSizeMB,
+		DatabasePath:      getEnv("DATABASE_PATH", "database.db"),
+		ThumbsDir:         getEnv("THUMBS_DIR", "static/thumbs"),
+		LogGroupID:        logGroupID,
+		Port:              getEnv("PORT", "8091"),
+		TempDir:           getEnv("TEMP_DIR", os.TempDir()+"/telecloud_temp_chunks"),
+		ProxyURL:          getEnv("PROXY_URL", ""),
+		SessionFile:       getEnv("SESSION_FILE", "session.json"),
+		FFMPEGPath:        getEnv("FFMPEG_PATH", "disabled"),
+		EnableTranscoding: getEnv("ENABLE_TRANSCODING", "false") == "true",
 	}
 }
 

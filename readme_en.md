@@ -109,6 +109,7 @@ Main fields in `.env`:
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process.
 * `PROXY_URL`: (Optional) Proxy to connect MTProto, supports HTTP and SOCKS5 (e.g. `socks5://127.0.0.1:1080`)
 * `FFMPEG_PATH`: (Optional) Path to FFmpeg (default: `ffmpeg`). Set to "disabled" to skip video/audio thumbnails if FFmpeg is not installed or causing crashes.
+* `ENABLE_TRANSCODING`: (Optional) Enable on-the-fly video transcoding from MKV to MP4 using FFmpeg (true/false, default: false). Requires FFmpeg.
 
 ---
 

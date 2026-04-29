@@ -678,7 +678,8 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
             const ext = file.filename.split('.').pop().toLowerCase();
             const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov'];
-            const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac'];
+            if (TeleCloud.enableTranscoding) videoExts.push('mkv');
+            const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'alac'];
             const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini'];
             
             const langMap = {
@@ -687,7 +688,7 @@ function cloudApp(initialIsLoggedIn, initialMaxUploadSizeMB, webdavEnabled = fal
                 'sql': 'sql', 'sh': 'bash', 'md': 'markdown'
             };
 
-            const mimeTypes = { 'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg', 'mov': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac', 'm4a': 'audio/mp4' };
+            const mimeTypes = { 'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg', 'mov': 'video/mp4', 'mkv': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac', 'm4a': 'audio/mp4', 'opus': 'audio/ogg', 'alac': 'audio/mp4' };
             let isMedia = false; let mediaHtml = ''; let playerTarget = null;
             let isLarge = false;
             const streamUrl = `/api/files/${file.id}/stream`;

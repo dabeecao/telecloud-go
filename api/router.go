@@ -225,6 +225,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			"upload_api_enabled": uploadAPIEnabled,
 			"upload_api_key":     uploadAPIKey,
 			"version":            cfg.Version,
+			"enable_transcoding": cfg.EnableTranscoding,
 		})
 	})
 
@@ -937,6 +938,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.AbortWithStatus(http.StatusNotFound)
 				return
 			}
+
+			if cfg.EnableTranscoding && strings.HasSuffix(strings.ToLower(item.Filename), ".mkv") {
+				tgclient.TranscodeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Size, cfg)
+				return
+			}
+
 			if item.MimeType != nil {
 				c.Header("Content-Type", *item.MimeType)
 			}
@@ -1009,6 +1016,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			"created_at": item.CreatedAt.Format("2006-01-02 15:04:05"),
 			"token": token,
 			"has_thumb": hasThumb,
+			"enable_transcoding": cfg.EnableTranscoding,
 		})
 	})
 
@@ -1020,6 +1028,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 		
+		if cfg.EnableTranscoding && strings.HasSuffix(strings.ToLower(item.Filename), ".mkv") {
+			tgclient.TranscodeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Size, cfg)
+			return
+		}
+
 		if item.MimeType != nil {
 			c.Header("Content-Type", *item.MimeType)
 		}

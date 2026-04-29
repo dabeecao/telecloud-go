@@ -100,6 +100,7 @@ Nội dung chính trong tệp `.env`:
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).
 *   `PROXY_URL`: (Tùy chọn) Proxy để kết nối MTProto, hỗ trợ HTTP và SOCKS5 (VD: `socks5://127.0.0.1:1080`).
 *   `FFMPEG_PATH`: (Tùy chọn) Đường dẫn tới file FFmpeg (mặc định: `ffmpeg`). Đặt thành "disabled" để bỏ qua hình thu nhỏ video/âm thanh nếu FFmpeg không được cài đặt hoặc gây ra lỗi.
+*   `ENABLE_TRANSCODING`: (Tùy chọn) Bật/tắt tính năng tự động chuyển mã (transcode) file MKV sang MP4 khi xem trên web (true/false, mặc định: false). Cần cài đặt FFmpeg.
  
 #### 🔑 Lấy API_ID và API_HASH
 

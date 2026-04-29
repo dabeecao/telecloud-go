@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -126,6 +127,38 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filena
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
 
 	http.ServeContent(w, c, filename, time.Time{}, reader)
+	return nil
+}
+
+func TranscodeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, size int64, cfg *config.Config) error {
+	ctx := c.Context()
+
+	reader, err := GetTelegramFileReader(ctx, msgID, size, cfg)
+	if err != nil {
+		return err
+	}
+
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	cmd := exec.CommandContext(ctx, cfg.FFMPEGPath,
+		"-i", "pipe:0",
+		"-c:v", "copy",
+		"-c:a", "aac",
+		"-movflags", "frag_keyframe+empty_moov",
+		"-f", "mp4",
+		"pipe:1",
+	)
+
+	cmd.Stdin = reader
+	cmd.Stdout = w
+
+	err = cmd.Run()
+	if err != nil && err.Error() != "signal: killed" {
+		return fmt.Errorf("ffmpeg error: %v", err)
+	}
+
 	return nil
 }
 

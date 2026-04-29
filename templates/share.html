@@ -153,11 +153,12 @@
 
             const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov'];
-            const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac'];
+            if ({{ .enable_transcoding }}) videoExts.push('mkv');
+            const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'alac'];
             const mimeTypes = { 
                 'mp4': 'video/mp4', 'webm': 'video/webm', 'ogg': 'video/ogg', 
-                'mov': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 
-                'flac': 'audio/flac', 'm4a': 'audio/mp4' 
+                'mov': 'video/mp4', 'mkv': 'video/mp4', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 
+                'flac': 'audio/flac', 'm4a': 'audio/mp4', 'opus': 'audio/ogg', 'alac': 'audio/mp4' 
             };
 
             let isMedia = false;

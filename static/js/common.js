@@ -480,7 +480,7 @@ const TeleCloud = {
             'mp4': { n: this.t('type_video'), c: 'bg-purple-100 text-purple-500 dark:bg-purple-500/20 dark:text-purple-400', i: '<i class="fa-solid fa-film text-2xl"></i>' },
             'mov': 'mp4', 'avi': 'mp4', 'mkv': 'mp4',
             'mp3': { n: this.t('type_audio'), c: 'bg-amber-100 text-amber-500 dark:bg-amber-500/20 dark:text-amber-400', i: '<i class="fa-solid fa-music text-2xl"></i>' },
-            'wav': 'mp3', 'flac': 'mp3',
+            'wav': 'mp3', 'flac': 'mp3', 'opus': 'mp3', 'alac': 'mp3', 'm4a': 'mp3',
             'php': { n: this.t('type_code'), c: 'bg-indigo-100 text-indigo-500 dark:bg-indigo-500/20 dark:text-indigo-400', i: '<i class="fa-solid fa-code text-2xl"></i>' },
             'js': 'php', 'html': 'php', 'css': 'php', 'py': 'php', 'json': 'php', 'sql': 'php',
             'zip': { n: this.t('type_archive'), c: 'bg-orange-100 text-orange-500 dark:bg-orange-500/20 dark:text-orange-400', i: '<i class="fa-solid fa-file-zipper text-2xl"></i>' },

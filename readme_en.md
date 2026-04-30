@@ -49,6 +49,13 @@ This is the simplest and most automated way to install, configure, and manage Te
 
 The script automatically installs dependencies (FFmpeg, Tmux, Cloudflared...), configures the service, and provides a convenient management menu via the `telecloud` command.
 
+### ⚠️ Note for Termux Users
+
+For Termux, you should download Termux from one of the following sources:
+
+- [GitHub Releases (recommended)](https://github.com/termux/termux-app/releases)
+- [F-Droid](https://f-droid.org/packages/com.termux/)
+
 **Usage (Universal Command):**
 ```bash
 # Using curl (Recommended)

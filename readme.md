@@ -47,6 +47,13 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 
 Script sẽ tự động cài đặt các phụ thuộc (FFmpeg, Tmux, Cloudflared...), cấu hình dịch vụ và cung cấp menu quản lý tiện lợi qua lệnh `telecloud`.
 
+### ⚠️ Lưu ý khi dùng Termux
+
+Về Termux bạn nên tải nó từ một trong hai nguồn sau:
+
+- [GitHub Releases (khuyên dùng)](https://github.com/termux/termux-app/releases)
+- [F-Droid](https://f-droid.org/packages/com.termux/)
+
 **Cách sử dụng:**
 ```bash
 # Sử dụng curl (Khuyên dùng)

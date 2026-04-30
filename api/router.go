@@ -96,7 +96,8 @@ type loginAttempt struct {
 func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-	r.SetTrustedProxies(nil)
+	// Trust private network IPs and loopback for reverse proxies (e.g. Cloudflare Tunnel, Nginx, Docker)
+	r.SetTrustedProxies([]string{"127.0.0.0/8", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"})
 	
 	templ := template.Must(template.New("").ParseFS(contentFS, "templates/*"))
 	r.SetHTMLTemplate(templ)

@@ -23,6 +23,7 @@ import (
 	"context"
 	"embed"
 	"flag"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -41,7 +42,7 @@ import (
 	"telecloud/ws"
 )
 
-//go:embed templates/* static/css/*.min.css static/css/tailwind.css static/js/*.min.js static/js/plyr.polyfilled.js static/fonts/* static/webfonts/* static/favicon.ico
+//go:embed web/templates web/static/css/*.min.css web/static/css/tailwind.css web/static/js/*.min.js web/static/js/plyr.polyfilled.js web/static/fonts web/static/webfonts web/static/favicon.ico
 var contentFS embed.FS
 
 var (
@@ -106,7 +107,13 @@ func main() {
 	// Initialise the WebSocket hub with the app context so it shuts down gracefully
 	ws.InitHub(appCtx)
 
-	router := api.SetupRouter(cfg, contentFS)
+	// Sub-folder 'web' from the embedded FS to keep paths clean
+	webFS, err := fs.Sub(contentFS, "web")
+	if err != nil {
+		log.Fatalf("Failed to create sub FS for web: %v", err)
+	}
+
+	router := api.SetupRouter(cfg, webFS)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

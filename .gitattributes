@@ -1,0 +1,14 @@
+# Mark build scripts as vendored (ignored in language stats)
+*.sh linguist-vendored
+*.bat linguist-vendored
+
+# Mark HTML/JS/CSS as documentation or vendored
+templates/** linguist-vendored
+static/** linguist-vendored
+public/** linguist-vendored
+
+# Mark common config files
+.env* linguist-vendored
+*.yml linguist-vendored
+*.yaml linguist-vendored
+Dockerfile linguist-vendored

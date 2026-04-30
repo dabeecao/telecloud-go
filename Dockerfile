@@ -31,7 +31,7 @@ RUN BUILDARCH=$(echo "${BUILDPLATFORM}" | cut -d'/' -f2) && \
     && mv -f "tailwindcss-linux-${TAILWIND_ARCH}" tailwindcss
 
 # Build frontend (Tailwind + download JS/CSS libs)
-RUN sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh
+RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh
 
 # Build Go binary for TARGET architecture
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build \

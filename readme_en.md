@@ -357,11 +357,11 @@ docker compose up -d
 ## 🛠️ Build from Source (For Developers)
 
 1. Install **Golang (1.21+)**: [https://golang.org/dl/](https://golang.org/dl/)
-2. Clone the project:
-
+2. Clone the project (Must use `--recursive` to fetch frontend code):
 ```bash
-git clone https://github.com/dabeecao/telecloud-go.git
+git clone --recursive https://github.com/dabeecao/telecloud-go.git
 ```
+*If you already cloned without it, run: `git submodule update --init --recursive`*
 
 3. Configure `.env` as above
 4. Install dependencies:
@@ -373,15 +373,20 @@ go mod tidy
 5. Build UI (Tailwind CSS, download libraries and Minify JS/CSS):
    * Requirement: **Node.js** and **npm** installed on your machine for minification (uses `esbuild` via `npx`).
    * Download the **Tailwind CLI** for your OS from [Tailwind CSS Releases](https://github.com/tailwindlabs/tailwindcss/releases/latest).
-   * Rename the downloaded file to `tailwindcss` (or `tailwindcss.exe` on Windows) and place it in the project root.
-   * Run the build command (this script will automatically download libraries and perform minification):
+   * Rename the downloaded file to `tailwindcss` (or `tailwindcss.exe` on Windows) and place it in the **`web/`** directory.
+   * **Important Note**: Since minified assets (`.min.js`, `.min.css`) are not tracked in the repository to keep it clean, you **must** run this build command before building the Go project, otherwise the `go build` command will fail.
+   * Run the build command (located in the `web/` directory):
      ```bash
      # Linux/macOS
+     cd web
      chmod +x build-frontend.sh
      ./build-frontend.sh
+     cd ..
 
      # Windows
+     cd web
      build-frontend.bat
+     cd ..
      ```
 
 6. Run:

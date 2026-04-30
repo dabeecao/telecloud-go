@@ -335,7 +335,12 @@ Nếu bạn muốn tự biên dịch dự án, hãy làm theo các bước sau:
 
 1.  Cài đặt **Golang (1.21+)** tại https://golang.org/dl/
 
-2.  Clone dự án: ```git clone https://github.com/dabeecao/telecloud-go.git```
+2.  Clone dự án (Bắt buộc dùng `--recursive` để lấy code frontend):
+    ```bash
+    git clone --recursive https://github.com/dabeecao/telecloud-go.git
+    ```
+    *Nếu bạn đã lỡ clone theo cách thông thường, hãy chạy lệnh sau để lấy code frontend:*
+    `git submodule update --init --recursive`
 
 3.  Cấu hình `.env` như hướng dẫn trên.
 
@@ -344,15 +349,20 @@ Nếu bạn muốn tự biên dịch dự án, hãy làm theo các bước sau:
 5. Build giao diện (Tailwind CSS, tải thư viện và Minify JS/CSS):
    * Yêu cầu: Đã cài đặt **Node.js** và **npm** trên máy để thực hiện minify (sử dụng `esbuild` qua `npx`).
    * Tải **Tailwind CLI** phù hợp với hệ điều hành của bạn tại [Tailwind CSS Releases](https://github.com/tailwindlabs/tailwindcss/releases/latest).
-   * Đổi tên file vừa tải thành `tailwindcss` (hoặc `tailwindcss.exe` trên Windows) và đặt vào thư mục gốc của dự án.
-   * Chạy lệnh build (script này sẽ tự động tải thư viện và thực hiện minify):
+   * Đổi tên file vừa tải thành `tailwindcss` (hoặc `tailwindcss.exe` on Windows) và đặt vào thư mục **`web/`** của dự án.
+   * **Lưu ý quan trọng**: Do các file đã nén (`.min.js`, `.min.css`) không được lưu trên GitHub để giữ repo sạch sẽ, bạn **bắt buộc** phải chạy lệnh build này trước khi build dự án Go, nếu không lệnh `go build` sẽ báo lỗi thiếu file.
+   * Chạy lệnh build (script này nằm trong thư mục `web/`):
      ```bash
      # Linux/macOS
+     cd web
      chmod +x build-frontend.sh
      ./build-frontend.sh
+     cd ..
 
      # Windows
+     cd web
      build-frontend.bat
+     cd ..
      ```
 
 6.  Chạy trực tiếp: `go run .`

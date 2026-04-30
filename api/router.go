@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,6 +95,41 @@ type loginAttempt struct {
 	last  time.Time
 }
 
+func mapPath(userPath, username string, isAdmin bool) string {
+	cleanPath := path.Clean("/" + userPath)
+	if isAdmin {
+		return cleanPath
+	}
+	if cleanPath == "/" {
+		return "/" + username
+	}
+	return "/" + username + cleanPath
+}
+
+func unmapPath(dbPath, username string, isAdmin bool) string {
+	if isAdmin {
+		return dbPath
+	}
+	prefix := "/" + username
+	if dbPath == prefix {
+		return "/"
+	}
+	if strings.HasPrefix(dbPath, prefix+"/") {
+		return strings.TrimPrefix(dbPath, prefix)
+	}
+	return dbPath
+}
+
+func verifyItemAccess(c *gin.Context, path string) bool {
+	isAdmin := c.GetBool("is_admin")
+	if isAdmin {
+		return true
+	}
+	username := c.GetString("username")
+	prefix := "/" + username
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
+}
+
 func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
@@ -131,12 +168,18 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			
-			var count int
-			err = database.DB.Get(&count, "SELECT COUNT(*) FROM sessions WHERE token = ?", token)
-			if err != nil || count == 0 {
+			var sessionUsername string
+			err = database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+			if err != nil {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 				return
 			}
+
+			adminUser := database.GetSetting("admin_username")
+			isAdmin := sessionUsername == adminUser
+
+			c.Set("username", sessionUsername)
+			c.Set("is_admin", isAdmin)
 
 			c.Next()
 		}
@@ -192,7 +235,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		// Create session
 		sessionToken := uuid.New().String()
-		_, err = database.DB.Exec("INSERT INTO sessions (token) VALUES (?)", sessionToken)
+		_, err = database.DB.Exec("INSERT INTO sessions (token, username) VALUES (?, ?)", sessionToken, username)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 			return
@@ -204,11 +247,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 	r.GET("/", func(c *gin.Context) {
 		token, _ := c.Cookie("session_token")
-		var count int
+		var sessionUsername string
 		if token != "" {
-			database.DB.Get(&count, "SELECT COUNT(*) FROM sessions WHERE token = ?", token)
+			database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
 		}
-		if token == "" || count == 0 {
+		if token == "" || sessionUsername == "" {
 			c.Redirect(http.StatusFound, "/login")
 			return
 		}
@@ -218,6 +261,15 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		webdavUser := database.GetSetting("admin_username")
 		uploadAPIEnabled := database.GetSetting("upload_api_enabled") == "true"
 		uploadAPIKey := database.GetSetting("upload_api_key")
+		isAdmin := sessionUsername == webdavUser
+
+		var userStorageUsed int64
+		if isAdmin {
+			database.DB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0")
+		} else {
+			prefix := "/" + sessionUsername
+			database.DB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
+		}
 
 		c.HTML(http.StatusOK, "index.html", gin.H{
 			"max_upload_size_mb": cfg.MaxUploadSizeMB,
@@ -226,16 +278,19 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			"upload_api_enabled": uploadAPIEnabled,
 			"upload_api_key":     uploadAPIKey,
 			"version":            cfg.Version,
+			"is_admin":           isAdmin,
+			"username":           sessionUsername,
+			"storage_used":       userStorageUsed,
 		})
 	})
 
 	r.GET("/login", func(c *gin.Context) {
 		token, _ := c.Cookie("session_token")
-		var count int
+		var sessionUsername string
 		if token != "" {
-			database.DB.Get(&count, "SELECT COUNT(*) FROM sessions WHERE token = ?", token)
+			database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
 		}
-		if token != "" && count > 0 {
+		if token != "" && sessionUsername != "" {
 			c.Redirect(http.StatusFound, "/")
 			return
 		}
@@ -263,10 +318,21 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		dbUser := database.GetSetting("admin_username")
 		dbHash := database.GetSetting("admin_password_hash")
 
+		var authSuccess bool
 		if username == dbUser && bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(password)) == nil {
+			authSuccess = true
+		} else {
+			var childHash string
+			err := database.DB.Get(&childHash, "SELECT password_hash FROM child_accounts WHERE username = ?", username)
+			if err == nil && bcrypt.CompareHashAndPassword([]byte(childHash), []byte(password)) == nil {
+				authSuccess = true
+			}
+		}
+
+		if authSuccess {
 			loginAttempts.Delete(ip) // Reset on success
 			sessionToken := uuid.New().String()
-			_, err = database.DB.Exec("INSERT INTO sessions (token) VALUES (?)", sessionToken)
+			_, err := database.DB.Exec("INSERT INTO sessions (token, username) VALUES (?, ?)", sessionToken, username)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 				return
@@ -445,7 +511,20 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			oldPassword := c.PostForm("old_password")
 			newPassword := c.PostForm("new_password")
 			
-			dbHash := database.GetSetting("admin_password_hash")
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+
+			var dbHash string
+			if isAdmin {
+				dbHash = database.GetSetting("admin_password_hash")
+			} else {
+				err := database.DB.Get(&dbHash, "SELECT password_hash FROM child_accounts WHERE username = ?", username)
+				if err != nil {
+					c.JSON(http.StatusForbidden, gin.H{"error": "user_not_found"})
+					return
+				}
+			}
+
 			if bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(oldPassword)) != nil {
 				c.JSON(http.StatusForbidden, gin.H{"error": "incorrect_old_password"})
 				return
@@ -457,13 +536,21 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			
-			database.SetSetting("admin_password_hash", string(hashedPassword))
+			if isAdmin {
+				database.SetSetting("admin_password_hash", string(hashedPassword))
+			} else {
+				database.DB.Exec("UPDATE child_accounts SET password_hash = ? WHERE username = ?", string(hashedPassword), username)
+			}
 			
 			// Optional: invalidate current sessions or leave as is. We'll leave it to not log them out immediately.
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 		
 		api.POST("/settings/webdav", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
 			enabled := c.PostForm("enabled")
 			if enabled == "true" {
 				database.SetSetting("webdav_enabled", "true")
@@ -474,6 +561,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		})
 
 		api.POST("/settings/upload-api", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
 			enabled := c.PostForm("enabled")
 			if enabled == "true" {
 				database.SetSetting("upload_api_enabled", "true")
@@ -484,15 +575,154 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		})
 
 		api.POST("/settings/upload-api/regenerate-key", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
 			newKey := uuid.New().String()
 			database.SetSetting("upload_api_key", newKey)
 			c.JSON(http.StatusOK, gin.H{"status": "success", "api_key": newKey})
 		})
 
 		api.DELETE("/settings/upload-api/key", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
 			database.SetSetting("upload_api_key", "")
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
+
+		api.GET("/users", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+			var users []database.User
+			err := database.DB.Select(&users, "SELECT id, username, created_at FROM child_accounts ORDER BY id DESC")
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Calculate stats for each user
+			for i := range users {
+				var fileCount int
+				var totalSize int64
+				prefix := "/" + users[i].Username
+				// Count files and folders inside their directory
+				database.DB.Get(&fileCount, "SELECT COUNT(*) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
+				database.DB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
+				users[i].FileCount = fileCount
+				users[i].TotalSize = totalSize
+			}
+
+			c.JSON(http.StatusOK, gin.H{"users": users})
+		})
+
+		api.POST("/users", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+			username := c.PostForm("username")
+			password := c.PostForm("password")
+			if username == "" || password == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "username and password required"})
+				return
+			}
+
+			// Validate username (no spaces, no special chars, only a-z, 0-9, ., _, -)
+			validUsername := regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+			if !validUsername.MatchString(username) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_username_format", "message": "Username can only contain alphanumeric characters, dots, underscores and hyphens"})
+				return
+			}
+
+			adminUsername := database.GetSetting("admin_username")
+			if strings.EqualFold(username, adminUsername) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "username cannot be the same as admin username"})
+				return
+			}
+
+			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+				return
+			}
+
+			tx, err := database.DB.Beginx()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+				return
+			}
+			defer tx.Rollback()
+
+			// Check if folder exists in root (case-insensitive)
+			var folderCount int
+			err = tx.Get(&folderCount, "SELECT COUNT(*) FROM files WHERE path = '/' AND filename = ? COLLATE NOCASE AND is_folder = 1", username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+				return
+			}
+			if folderCount > 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "folder_exists", "message": "A folder with this name already exists in root directory"})
+				return
+			}
+
+			// Check if username already exists in child_accounts (case-insensitive)
+			var userExists int
+			err = tx.Get(&userExists, "SELECT COUNT(*) FROM child_accounts WHERE username = ? COLLATE NOCASE", username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+				return
+			}
+			if userExists > 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "username_exists", "message": "Username already exists"})
+				return
+			}
+
+			_, err = tx.Exec("INSERT INTO child_accounts (username, password_hash) VALUES (?, ?)", username, string(hashedPassword))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user record"})
+				return
+			}
+
+			// Create the user folder
+			_, err = tx.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, '/', 1)", username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create folder"})
+				return
+			}
+
+			if err := tx.Commit(); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit transaction"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.DELETE("/users/:username", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+			username := c.Param("username")
+			
+			// Delete child account
+			_, err := database.DB.Exec("DELETE FROM child_accounts WHERE username = ?", username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			
+			// Revoke sessions
+			database.DB.Exec("DELETE FROM sessions WHERE username = ?", username)
+
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
 
 		api.GET("/progress/:task_id", func(c *gin.Context) {
 			taskID := c.Param("task_id")
@@ -505,17 +735,36 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		api.GET("/files", func(c *gin.Context) {
 			path := c.Query("path")
-			if path == "" {
-				path = "/"
-			}
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+			dbPath := mapPath(path, username, isAdmin)
+
 			var files []database.File
-			err := database.DB.Select(&files, "SELECT * FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC", path)
+			err := database.DB.Select(&files, "SELECT * FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC", dbPath)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
 
+			if isAdmin && dbPath == "/" {
+				var activeUsers []string
+				database.DB.Select(&activeUsers, "SELECT username FROM child_accounts")
+				userMap := make(map[string]bool)
+				for _, u := range activeUsers {
+					userMap[u] = true
+				}
+				var filtered []database.File
+				for _, f := range files {
+					if f.IsFolder && userMap[f.Filename] {
+						continue
+					}
+					filtered = append(filtered, f)
+				}
+				files = filtered
+			}
+
 			for i := range files {
+				files[i].Path = unmapPath(files[i].Path, username, isAdmin)
 				if files[i].ShareToken != nil {
 					files[i].DirectToken = utils.GenerateDirectToken(*files[i].ShareToken)
 				}
@@ -531,11 +780,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		api.POST("/folders", func(c *gin.Context) {
 			name := c.PostForm("name")
 			path := c.PostForm("path")
-			if path == "" {
-				path = "/"
-			}
-			uniqueName := database.GetUniqueFilename(database.DB, path, name, true, 0)
-			_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, path)
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+			dbPath := mapPath(path, username, isAdmin)
+
+			uniqueName := database.GetUniqueFilename(database.DB, dbPath, name, true, 0)
+			_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, dbPath)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -553,9 +803,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 			filename := filepath.Base(c.PostForm("filename"))
 			path := c.PostForm("path")
-			if path == "" {
-				path = "/"
-			}
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+			dbPath := mapPath(path, username, isAdmin)
+
 			taskID := c.PostForm("task_id")
 			chunkIndex, err := strconv.Atoi(c.PostForm("chunk_index"))
 			if err != nil {
@@ -633,7 +884,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 				go func() {
 					defer os.Remove(tempFilePath)
-					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg, false)
+					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, cfg, false)
 				}()
 
 				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "Received all, pushing to Telegram"})
@@ -671,6 +922,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+			req.Destination = mapPath(req.Destination, username, isAdmin)
+
 			tx, err := database.DB.Beginx()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
@@ -682,6 +937,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				var item database.File
 				err := tx.Get(&item, "SELECT * FROM files WHERE id = ?", id)
 				if err != nil {
+					continue
+				}
+
+				if !verifyItemAccess(c, item.Path) {
 					continue
 				}
 
@@ -792,6 +1051,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			
+			if !verifyItemAccess(c, item.Path) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+
 			if item.IsFolder {
 				oldPrefix := item.Path + "/" + item.Filename
 				if item.Path == "/" {
@@ -868,6 +1132,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
+			if !verifyItemAccess(c, item.Path) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+
 			if !item.IsFolder {
 				oldExt := filepath.Ext(item.Filename)
 				newExt := filepath.Ext(newName)
@@ -910,6 +1179,15 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		api.POST("/files/:id/share", func(c *gin.Context) {
 			id, _ := strconv.Atoi(c.Param("id"))
+			var item database.File
+			if err := database.DB.Get(&item, "SELECT path FROM files WHERE id = ?", id); err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+				return
+			}
+			if !verifyItemAccess(c, item.Path) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
 			token := uuid.New().String()
 			database.DB.Exec("UPDATE files SET share_token = ? WHERE id = ?", token, id)
 			c.JSON(http.StatusOK, gin.H{"share_token": token, "direct_token": utils.GenerateDirectToken(token)})
@@ -917,6 +1195,15 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		api.DELETE("/files/:id/share", func(c *gin.Context) {
 			id, _ := strconv.Atoi(c.Param("id"))
+			var item database.File
+			if err := database.DB.Get(&item, "SELECT path FROM files WHERE id = ?", id); err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+				return
+			}
+			if !verifyItemAccess(c, item.Path) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
 			database.DB.Exec("UPDATE files SET share_token = NULL WHERE id = ?", id)
 			c.JSON(http.StatusOK, gin.H{"status": "revoked"})
 		})
@@ -924,8 +1211,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		api.GET("/files/:id/thumb", func(c *gin.Context) {
 			id, _ := strconv.Atoi(c.Param("id"))
 			var item database.File
-			if err := database.DB.Get(&item, "SELECT thumb_path FROM files WHERE id = ?", id); err != nil || item.ThumbPath == nil {
+			if err := database.DB.Get(&item, "SELECT path, thumb_path FROM files WHERE id = ?", id); err != nil || item.ThumbPath == nil {
 				c.AbortWithStatus(http.StatusNotFound)
+				return
+			}
+			if !verifyItemAccess(c, item.Path) {
+				c.AbortWithStatus(http.StatusForbidden)
 				return
 			}
 			c.File(*item.ThumbPath)
@@ -934,8 +1225,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		api.GET("/files/:id/stream", func(c *gin.Context) {
 			id, _ := strconv.Atoi(c.Param("id"))
 			var item database.File
-			if err := database.DB.Get(&item, "SELECT message_id, filename, mime_type, size FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+			if err := database.DB.Get(&item, "SELECT path, message_id, filename, mime_type, size FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
 				c.AbortWithStatus(http.StatusNotFound)
+				return
+			}
+			if !verifyItemAccess(c, item.Path) {
+				c.AbortWithStatus(http.StatusForbidden)
 				return
 			}
 			if item.MimeType != nil {
@@ -952,8 +1247,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	r.GET("/download/:id", authMiddleware(), func(c *gin.Context) {
 		id, _ := strconv.Atoi(c.Param("id"))
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT message_id, filename, mime_type, size FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+		if err := database.DB.Get(&item, "SELECT path, message_id, filename, mime_type, size FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
+			return
+		}
+
+		if !verifyItemAccess(c, item.Path) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
 			return
 		}
 

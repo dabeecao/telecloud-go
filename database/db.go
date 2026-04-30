@@ -26,6 +26,15 @@ type File struct {
 	HasThumb    bool   `db:"-" json:"has_thumb"`
 }
 
+type User struct {
+	ID           int       `db:"id" json:"id"`
+	Username     string    `db:"username" json:"username"`
+	PasswordHash string    `db:"password_hash" json:"-"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	FileCount    int       `json:"file_count"`
+	TotalSize    int64     `json:"total_size"`
+}
+
 var DB *sqlx.DB
 
 func InitDB(dbPath string) {
@@ -61,6 +70,14 @@ func InitDB(dbPath string) {
 
 	CREATE TABLE IF NOT EXISTS sessions (
 		token TEXT PRIMARY KEY,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		username TEXT DEFAULT ''
+	);
+
+	CREATE TABLE IF NOT EXISTS child_accounts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -72,6 +89,9 @@ func InitDB(dbPath string) {
 	if err != nil {
 		log.Fatalf("Failed to create schema: %v", err)
 	}
+
+	// Migration for existing DBs
+	DB.Exec("ALTER TABLE sessions ADD COLUMN username TEXT DEFAULT ''")
 }
 
 func GetSetting(key string) string {

@@ -28,7 +28,7 @@ RUN BUILDARCH=$(echo "${BUILDPLATFORM}" | cut -d'/' -f2) && \
     echo "Downloading TailwindCSS for build architecture: $TAILWIND_ARCH (from BUILDPLATFORM=${BUILDPLATFORM})" && \
     curl -sSLfO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-${TAILWIND_ARCH}" \
     && chmod +x "tailwindcss-linux-${TAILWIND_ARCH}" \
-    && mv -f "tailwindcss-linux-${TAILWIND_ARCH}" tailwindcss
+    && mv -f "tailwindcss-linux-${TAILWIND_ARCH}" web/tailwindcss
 
 # Build frontend (Tailwind + download JS/CSS libs)
 RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh

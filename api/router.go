@@ -995,11 +995,21 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	r.GET("/s/:token", func(c *gin.Context) {
 		token := c.Param("token")
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT filename, size, created_at, thumb_path FROM files WHERE share_token = ?", token); err != nil {
+		if err := database.DB.Get(&item, "SELECT filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ?", token); err != nil {
 			c.HTML(http.StatusNotFound, "error.html", gin.H{"error_message": "File not found or link has been revoked."})
 			return
 		}
 		
+		if item.IsFolder {
+			c.HTML(http.StatusOK, "share_folder.html", gin.H{
+				"filename": item.Filename,
+				"created_at": item.CreatedAt.Format("2006-01-02 15:04:05"),
+				"token": token,
+				"version": cfg.Version,
+			})
+			return
+		}
+
 		hasThumb := false
 		if item.ThumbPath != nil {
 			if _, err := os.Stat(*item.ThumbPath); err == nil {
@@ -1014,6 +1024,49 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			"token": token,
 			"has_thumb": hasThumb,
 		})
+	})
+
+	r.GET("/s/:token/api/files", func(c *gin.Context) {
+		token := c.Param("token")
+		var item database.File
+		if err := database.DB.Get(&item, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !item.IsFolder {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Folder not found"})
+			return
+		}
+
+		reqPath := c.Query("path")
+		if reqPath == "" {
+			reqPath = "/"
+		}
+
+		basePrefix := item.Path + "/" + item.Filename
+		if item.Path == "/" {
+			basePrefix = "/" + item.Filename
+		}
+
+		targetPath := basePrefix
+		if reqPath != "/" {
+			if !strings.HasPrefix(reqPath, "/") {
+				reqPath = "/" + reqPath
+			}
+			targetPath = basePrefix + reqPath
+		}
+
+		var files []database.File
+		err := database.DB.Select(&files, "SELECT id, filename, path, size, created_at, is_folder, mime_type, thumb_path FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC", targetPath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		for i := range files {
+			if files[i].ThumbPath != nil {
+				if _, err := os.Stat(*files[i].ThumbPath); err == nil {
+					files[i].HasThumb = true
+				}
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"files": files})
 	})
 
 	r.GET("/s/:token/stream", func(c *gin.Context) {
@@ -1047,7 +1100,6 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		if item.MimeType != nil {
 			c.Header("Content-Type", *item.MimeType)
 		}
-		// Set cookie để frontend share.html biết download đã bắt đầu và ẩn overlay
 		c.SetCookie("dl_started", "1", 15, "/", "", false, false)
 
 		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
@@ -1060,6 +1112,108 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
+		c.File(*item.ThumbPath)
+	})
+
+	// APIs for files inside a shared folder
+	r.GET("/s/:token/file/:id/stream", func(c *gin.Context) {
+		token := c.Param("token")
+		id, _ := strconv.Atoi(c.Param("id"))
+
+		var folder database.File
+		if err := database.DB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		basePrefix := folder.Path + "/" + folder.Filename
+		if folder.Path == "/" {
+			basePrefix = "/" + folder.Filename
+		}
+
+		var item database.File
+		if err := database.DB.Get(&item, "SELECT message_id, filename, size, mime_type, path FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		if item.Path != basePrefix && !strings.HasPrefix(item.Path, basePrefix+"/") {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+
+		if item.MimeType != nil {
+			mime := *item.MimeType
+			if strings.HasSuffix(strings.ToLower(item.Filename), ".mkv") {
+				mime = "video/webm"
+			}
+			c.Header("Content-Type", mime)
+		}
+		
+		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
+	})
+
+	r.GET("/s/:token/file/:id/dl", func(c *gin.Context) {
+		token := c.Param("token")
+		id, _ := strconv.Atoi(c.Param("id"))
+
+		var folder database.File
+		if err := database.DB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		basePrefix := folder.Path + "/" + folder.Filename
+		if folder.Path == "/" {
+			basePrefix = "/" + folder.Filename
+		}
+
+		var item database.File
+		if err := database.DB.Get(&item, "SELECT message_id, filename, size, mime_type, path FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		if item.Path != basePrefix && !strings.HasPrefix(item.Path, basePrefix+"/") {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, item.Filename))
+		if item.MimeType != nil {
+			c.Header("Content-Type", *item.MimeType)
+		}
+		c.SetCookie("dl_started", "1", 15, "/", "", false, false)
+
+		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
+	})
+
+	r.GET("/s/:token/file/:id/thumb", func(c *gin.Context) {
+		token := c.Param("token")
+		id, _ := strconv.Atoi(c.Param("id"))
+
+		var folder database.File
+		if err := database.DB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		basePrefix := folder.Path + "/" + folder.Filename
+		if folder.Path == "/" {
+			basePrefix = "/" + folder.Filename
+		}
+
+		var item database.File
+		if err := database.DB.Get(&item, "SELECT thumb_path, path FROM files WHERE id = ?", id); err != nil || item.ThumbPath == nil {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		if item.Path != basePrefix && !strings.HasPrefix(item.Path, basePrefix+"/") {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+
 		c.File(*item.ThumbPath)
 	})
 

@@ -32,13 +32,14 @@ This project has been **completely rewritten in Golang** from the original proje
 
 * 📁 Store files directly on Telegram with virtually unlimited storage
 * 🎬 Stream videos and music directly in the web interface and shared links
-* 🔗 Share links with options for normal links or direct download links
-* 🗂️ Intuitive file management interface (File Browser)
+* 🔗 Share links with options for normal links, direct download links, and **Folder Sharing**.
+* 🗂️ Intuitive file management interface (File Browser) with **Grid** and **List** view modes.
 * ⬆️ High-speed parallel uploads (multi-threading)
 * 📦 Chunked uploads for better speed and stability
 * 👤 Supports **Userbot** with powerful **MTProto** (upload files up to 2GB/4GB)
 * 📂 **WebDAV** Support: Mount TeleCloud as a network drive on your computer (Windows, macOS, Linux).
 * 🔌 **Upload API**: Allows remote file uploads via HTTP API (Bearer Token) for integration into scripts or CI/CD.
+* 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
 * 🌐 **Multi-language**: Supports Vietnamese and English UI
 
 ---

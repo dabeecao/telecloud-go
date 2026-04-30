@@ -30,13 +30,14 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 
 * 📁 Lưu trữ file trực tiếp trên Telegram không giới hạn dung lượng
 * 🎬 Phát video và nhạc trực tiếp trong trang quản lý và liên kết chia sẻ
-* 🔗 Liên kết chia sẻ có thể chọn liên kết thường hoặc link tải trực tiếp (Direct Link)
-* 🗂️ Giao diện quản lý (File Browser) trực quan
+* 🔗 Liên kết chia sẻ có thể chọn liên kết thường hoặc link tải trực tiếp (Direct Link), hỗ trợ chia sẻ cả **Thư mục**.
+* 🗂️ Giao diện quản lý (File Browser) trực quan, hỗ trợ chế độ xem **Lưới (Grid)** và **Danh sách (List)**.
 * ⬆️ Upload song song (Multi-threading) tốc độ cao
 * 📦 Upload chia nhỏ (chunk) để tối ưu tốc độ và ổn định
 * 👤 Hỗ trợ **Userbot** với **MTProto** mạnh mẽ (tải lên file lớn đến 2GB/4GB)
 * 📂 Hỗ trợ **WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
 * 🔌 **Upload API**: Cho phép upload file từ xa qua HTTP API (Bearer Token) để tích hợp vào script hoặc CI/CD.
+* 👥 **Quản lý đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ tiếng Việt và tiếng Anh ở giao diện sử dụng
 
 ---

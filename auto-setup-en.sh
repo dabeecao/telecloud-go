@@ -123,13 +123,14 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     echo "[+] Operating System: Termux (Android)"
 
     # Check Termux version (Play Store versions are restricted and cause e_type errors)
-    TERMUX_VER=$(pkg info termux-tools 2>/dev/null | grep "Version" | awk '{print $2}' || echo "unknown")
-    if [ "$TERMUX_VER" == "0.101" ] || [[ "$TERMUX_VER" == *"googleplay"* ]] || [[ "$TERMUX_VERSION" == *"googleplay"* ]]; then
+    # Priority check via TERMUX_VERSION environment variable
+    local T_VER="${TERMUX_VERSION:-unknown}"
+    if [ "$T_VER" == "0.101" ] || [[ "$T_VER" == *"googleplay"* ]]; then
         echo ""
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "⚠️  IMPORTANT WARNING: GOOGLE PLAY TERMUX DETECTED"
         echo "----------------------------------------------------------------"
-        echo "You are using Termux from Google Play ($TERMUX_VER)."
+        echo "You are using Termux from Google Play ($T_VER)."
         echo "This version is restricted by Google's policies and CANNOT run"
         echo "Go applications like TeleCloud on Android 10+ (Error: e_type)."
         echo ""

@@ -123,14 +123,14 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     echo "[+] Hệ điều hành: Termux (Android)"
 
     # Kiểm tra phiên bản Termux (Bản Play Store bị lỗi e_type)
-    # Các bản từ Play Store (0.101 hoặc có đuôi 1002) đều bị hạn chế thực thi
-    TERMUX_VER=$(pkg info termux-tools 2>/dev/null | grep "Version" | awk '{print $2}' || echo "unknown")
-    if [ "$TERMUX_VER" == "0.101" ] || [[ "$TERMUX_VER" == *"googleplay"* ]] || [[ "$TERMUX_VERSION" == *"googleplay"* ]]; then
+    # Ưu tiên kiểm tra qua biến môi trường TERMUX_VERSION
+    local T_VER="${TERMUX_VERSION:-unknown}"
+    if [ "$T_VER" == "0.101" ] || [[ "$T_VER" == *"googleplay"* ]]; then
         echo ""
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "⚠️  CẢNH BÁO QUAN TRỌNG: PHÁT HIỆN TERMUX BẢN GOOGLE PLAY"
         echo "----------------------------------------------------------------"
-        echo "Bạn đang sử dụng Termux tải từ Google Play ($TERMUX_VER)."
+        echo "Bạn đang sử dụng Termux tải từ Google Play ($T_VER)."
         echo "Bản này bị hạn chế bởi chính sách của Google nên KHÔNG THỂ chạy"
         echo "các ứng dụng Go như TeleCloud trên Android 10+ (lỗi e_type)."
         echo ""

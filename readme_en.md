@@ -39,6 +39,8 @@ This project has been **completely rewritten in Golang** from the original proje
 * 👤 Supports **Userbot** with powerful **MTProto** (upload files up to 2GB/4GB)
 * 📂 **WebDAV** Support: Mount TeleCloud as a network drive on your computer (Windows, macOS, Linux).
 * 🔌 **Upload API**: Allows remote file uploads via HTTP API (Bearer Token) for integration into scripts or CI/CD.
+* 📥 **URL Download**: Supports downloading files directly from a URL to your storage.
+* ⚡ **Background Download**: Supports background URL downloads with real-time progress notifications, no browser session required.
 * 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
 * 🔐 **Passkey**: Supports secure login using biometrics (TouchID/FaceID) or security keys (WebAuthn).
 * 🌐 **Multi-language**: Supports Vietnamese and English UI

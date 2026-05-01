@@ -127,7 +127,13 @@ func RegisterPasskeyBegin(c *gin.Context) {
 		return
 	}
 
-	options, sessionData, err := webAuthn.BeginRegistration(user)
+	options, sessionData, err := webAuthn.BeginRegistration(user,
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			ResidentKey:      protocol.ResidentKeyRequirementPreferred,
+			UserVerification: protocol.VerificationPreferred,
+		}),
+		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -195,7 +201,9 @@ func LoginPasskeyBegin(c *gin.Context) {
 	username := c.Query("username")
 	if username == "" {
 		// Discoverable credentials (resident keys)
-		options, sessionData, err := webAuthn.BeginDiscoverableLogin()
+		options, sessionData, err := webAuthn.BeginDiscoverableLogin(
+			webauthn.WithUserVerification(protocol.VerificationPreferred),
+		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -213,7 +221,9 @@ func LoginPasskeyBegin(c *gin.Context) {
 		return
 	}
 
-	options, sessionData, err := webAuthn.BeginLogin(user)
+	options, sessionData, err := webAuthn.BeginLogin(user,
+		webauthn.WithUserVerification(protocol.VerificationPreferred),
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

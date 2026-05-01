@@ -424,6 +424,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			"upload_api_enabled":     uploadAPIEnabled,
 			"global_api_enabled":     globalUploadAPIEnabled,
 			"upload_api_key":         uploadAPIKey,
+			"webauthn_rpid":         database.GetSetting("webauthn_rpid"),
+			"webauthn_rporigin":     database.GetSetting("webauthn_rporigin"),
 			"version":                cfg.Version,
 			"is_admin":               isAdmin,
 			"username":               sessionUsername,
@@ -897,6 +899,27 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/webauthn", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+			rpid := c.PostForm("rpid")
+			origins := c.PostForm("origins")
+
+			database.SetSetting("webauthn_rpid", rpid)
+			database.SetSetting("webauthn_rporigin", origins)
+
+			// Re-initialize WebAuthn
+			originList := []string{}
+			if origins != "" {
+				originList = strings.Split(origins, ",")
+			}
+			InitWebAuthn(rpid, originList)
+
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 

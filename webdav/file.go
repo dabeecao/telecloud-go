@@ -39,6 +39,8 @@ type telecloudFile struct {
 
 	dirItems []os.FileInfo
 	dirIndex int
+	isAdmin  bool
+	username string
 }
 
 func (f *telecloudFile) Read(p []byte) (int, error) {
@@ -75,14 +77,23 @@ func (f *telecloudFile) Readdir(count int) ([]os.FileInfo, error) {
 			return nil, err
 		}
 
-		f.dirItems = make([]os.FileInfo, len(files))
-		for i, v := range files {
-			f.dirItems[i] = &telecloudFileInfo{
+		f.dirItems = []os.FileInfo{}
+		for _, v := range files {
+			// Admin isolation check: hide child folders in root
+			if f.isAdmin && f.path == "/" {
+				var exists int
+				database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", v.Filename)
+				if exists > 0 {
+					continue
+				}
+			}
+
+			f.dirItems = append(f.dirItems, &telecloudFileInfo{
 				name:  v.Filename,
 				size:  v.Size,
 				isDir: v.IsFolder,
 				mtime: v.CreatedAt,
-			}
+			})
 		}
 	}
 

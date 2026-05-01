@@ -16,6 +16,13 @@ import (
 	"golang.org/x/net/webdav"
 )
 
+type contextKey string
+
+const (
+	usernameKey contextKey = "username"
+	isAdminKey  contextKey = "is_admin"
+)
+
 type telecloudFS struct {
 	cfg *config.Config
 }
@@ -44,8 +51,66 @@ func splitPath(p string) (string, string) {
 	return dir, base
 }
 
+func mapPath(userPath, username string, isAdmin bool) string {
+	cleanPath := filepath.Clean("/" + userPath)
+	if isAdmin {
+		return cleanPath
+	}
+	if cleanPath == "/" {
+		return "/" + username
+	}
+	return "/" + username + cleanPath
+}
+
+func unmapPath(dbPath, username string, isAdmin bool) string {
+	if isAdmin {
+		return dbPath
+	}
+	prefix := "/" + username
+	if dbPath == prefix {
+		return "/"
+	}
+	if strings.HasPrefix(dbPath, prefix+"/") {
+		return strings.TrimPrefix(dbPath, prefix)
+	}
+	return dbPath
+}
+
+func getUserInfo(ctx context.Context) (string, bool) {
+	username, _ := ctx.Value(usernameKey).(string)
+	isAdmin, _ := ctx.Value(isAdminKey).(bool)
+	return username, isAdmin
+}
+
+func isChildAccountPath(path string) bool {
+	dir, base := splitPath(path)
+	var rootFolder string
+	if dir == "/" {
+		rootFolder = base
+	} else {
+		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+		rootFolder = parts[0]
+	}
+
+	if rootFolder == "" {
+		return false
+	}
+
+	var exists int
+	database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
+	return exists > 0
+}
+
 func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
-	dir, base := splitPath(name)
+	username, isAdmin := getUserInfo(ctx)
+	dbName := mapPath(name, username, isAdmin)
+
+	// Admin isolation check
+	if isAdmin && isChildAccountPath(dbName) {
+		return os.ErrPermission
+	}
+
+	dir, base := splitPath(dbName)
 	
 	// Check if parent directory exists
 	if dir != "/" {
@@ -62,8 +127,15 @@ func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode)
 }
 
 func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
-	name = cleanPath(name)
-	dir, base := splitPath(name)
+	username, isAdmin := getUserInfo(ctx)
+	dbName := mapPath(name, username, isAdmin)
+	
+	// Admin isolation check
+	if isAdmin && isChildAccountPath(dbName) {
+		return nil, os.ErrPermission
+	}
+
+	dir, base := splitPath(dbName)
 
 	var item database.File
 	err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", dir, base)
@@ -74,24 +146,32 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 	}
 
 	if err != nil {
-		// Root directory
-		if name == "/" {
+		// Root directory for Admin or any non-existent path that maps to root
+		if dbName == "/" || name == "/" || name == "" {
 			return &telecloudFile{
-				isDir: true,
-				path:  "/",
-				name:  "/",
+				isDir:    true,
+				path:     dbName,
+				name:     "/",
+				isAdmin:  isAdmin,
+				username: username,
 			}, nil
 		}
 		return nil, os.ErrNotExist
 	}
 
 	if item.IsFolder {
+		fileName := item.Filename
+		if name == "/" || name == "" {
+			fileName = "/"
+		}
 		return &telecloudFile{
-			isDir: true,
-			path:  cleanPath(item.Path + "/" + item.Filename),
-			name:  item.Filename,
-			size:  0,
-			mtime: item.CreatedAt,
+			isDir:    true,
+			path:     cleanPath(item.Path + "/" + item.Filename),
+			name:     fileName,
+			size:     0,
+			mtime:    item.CreatedAt,
+			isAdmin:  isAdmin,
+			username: username,
 		}, nil
 	}
 
@@ -110,21 +190,31 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 	}
 
 	return &telecloudFile{
-		isDir: false,
-		path:  dir,
-		name:  item.Filename,
-		size:  item.Size,
-		mtime: item.CreatedAt,
-		rs:    rs,
+		isDir:    false,
+		path:     dir,
+		name:     item.Filename,
+		size:     item.Size,
+		mtime:    item.CreatedAt,
+		rs:       rs,
+		isAdmin:  isAdmin,
+		username: username,
 	}, nil
 }
 
 func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
-	name = cleanPath(name)
-	if name == "/" {
+	username, isAdmin := getUserInfo(ctx)
+	dbName := mapPath(name, username, isAdmin)
+
+	if dbName == "/" {
 		return fmt.Errorf("cannot delete root")
 	}
-	dir, base := splitPath(name)
+
+	// Admin isolation check
+	if isAdmin && isChildAccountPath(dbName) {
+		return os.ErrPermission
+	}
+
+	dir, base := splitPath(dbName)
 
 	var item database.File
 	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", dir, base); err != nil {
@@ -177,8 +267,17 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 }
 
 func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) error {
-	oldDir, oldBase := splitPath(oldName)
-	newDir, newBase := splitPath(newName)
+	username, isAdmin := getUserInfo(ctx)
+	dbOldName := mapPath(oldName, username, isAdmin)
+	dbNewName := mapPath(newName, username, isAdmin)
+
+	// Admin isolation check
+	if isAdmin && (isChildAccountPath(dbOldName) || isChildAccountPath(dbNewName)) {
+		return os.ErrPermission
+	}
+
+	oldDir, oldBase := splitPath(dbOldName)
+	newDir, newBase := splitPath(dbNewName)
 
 	tx, err := database.DB.Beginx()
 	if err != nil {
@@ -223,8 +322,15 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 }
 
 func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	name = cleanPath(name)
-	if name == "/" {
+	username, isAdmin := getUserInfo(ctx)
+	dbName := mapPath(name, username, isAdmin)
+
+	// Admin isolation check
+	if isAdmin && isChildAccountPath(dbName) {
+		return nil, os.ErrPermission
+	}
+
+	if dbName == "/" || name == "/" || name == "" {
 		return &telecloudFileInfo{
 			name:  "/",
 			size:  0,
@@ -232,7 +338,7 @@ func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, erro
 			mtime: time.Now(),
 		}, nil
 	}
-	dir, base := splitPath(name)
+	dir, base := splitPath(dbName)
 
 	var item database.File
 	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", dir, base); err != nil {
@@ -245,4 +351,21 @@ func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, erro
 		isDir: item.IsFolder,
 		mtime: item.CreatedAt,
 	}, nil
+}
+
+func (fs *telecloudFS) GetThumbnailPath(ctx context.Context, name string) (string, error) {
+	username, isAdmin := getUserInfo(ctx)
+	dbName := mapPath(name, username, isAdmin)
+
+	dir, base := splitPath(dbName)
+
+	var thumbPath *string
+	err := database.DB.Get(&thumbPath, "SELECT thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", dir, base)
+	if err != nil {
+		return "", err
+	}
+	if thumbPath == nil {
+		return "", os.ErrNotExist
+	}
+	return *thumbPath, nil
 }

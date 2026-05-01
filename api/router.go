@@ -130,6 +130,31 @@ func verifyItemAccess(c *gin.Context, path string) bool {
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
+func isChildAccountPath(dbPath string) bool {
+	cleanPath := path.Clean(dbPath)
+	if cleanPath == "/" {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(cleanPath, "/"), "/")
+	rootFolder := parts[0]
+
+	var exists int
+	database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
+	return exists > 0
+}
+
+// securityHeadersMiddleware adds standard security headers to prevent common web attacks.
+func securityHeadersMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		// Basic Content Security Policy
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.github.com; media-src 'self' blob:;")
+		c.Next()
+	}
+}
+
 func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
@@ -157,33 +182,70 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 	}
 
+	r.Use(securityHeadersMiddleware())
 	r.Use(setupCheckMiddleware())
 
 	// Middleware for auth
 	authMiddleware := func() gin.HandlerFunc {
 		return func(c *gin.Context) {
-			token, err := c.Cookie("session_token")
-			if err != nil || token == "" {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-				return
-			}
-			
 			var sessionUsername string
-			err = database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
-			if err != nil {
+			var isAdmin bool
+			var forceChange bool
+
+			token, err := c.Cookie("session_token")
+			if err == nil && token != "" {
+				err = database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+				if err == nil {
+					adminUser := database.GetSetting("admin_username")
+					isAdmin = sessionUsername == adminUser
+
+					if !isAdmin {
+						database.DB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", sessionUsername)
+					}
+				}
+			}
+
+			// Fallback to Basic Auth
+			if sessionUsername == "" {
+				user, password, hasAuth := c.Request.BasicAuth()
+				if hasAuth {
+					adminUser := database.GetSetting("admin_username")
+					adminPassHash := database.GetSetting("admin_password_hash")
+					if user == adminUser && bcrypt.CompareHashAndPassword([]byte(adminPassHash), []byte(password)) == nil {
+						sessionUsername = user
+						isAdmin = true
+					} else {
+						var child struct {
+							Hash        string `db:"password_hash"`
+							ForceChange int    `db:"force_password_change"`
+						}
+						err := database.DB.Get(&child, "SELECT password_hash, force_password_change FROM child_accounts WHERE username = ?", user)
+						if err == nil && bcrypt.CompareHashAndPassword([]byte(child.Hash), []byte(password)) == nil {
+							sessionUsername = user
+							isAdmin = false
+							forceChange = child.ForceChange == 1
+						}
+					}
+				}
+			}
+
+			if sessionUsername == "" {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 				return
 			}
 
-			adminUser := database.GetSetting("admin_username")
-			isAdmin := sessionUsername == adminUser
+			// If password change is forced, only allow the password change API
+			if forceChange && c.Request.URL.Path != "/api/settings/password" {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "force_password_change", "username": sessionUsername})
+				return
+			}
 
 			c.Set("username", sessionUsername)
 			c.Set("is_admin", isAdmin)
-
 			c.Next()
 		}
 	}
+
 
 	// WebDAV Route (handler will check if enabled internally)
 	h := gin.WrapH(webdav.NewHandler(cfg))
@@ -223,6 +285,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 
+		// Security: Validate username format to prevent XSS and path issues
+		validUsername := regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+		if !validUsername.MatchString(username) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "INVALID_USERNAME_FORMAT"})
+			return
+		}
+
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
@@ -245,7 +314,67 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
+	r.GET("/reset-admin", func(c *gin.Context) {
+		token := c.Query("token")
+		dbToken := database.GetSetting("admin_reset_token")
+		expiryStr := database.GetSetting("admin_reset_expiry")
+		
+		if token == "" || token != dbToken {
+			c.String(http.StatusForbidden, "Invalid token")
+			return
+		}
+		
+		expiry, _ := strconv.ParseInt(expiryStr, 10, 64)
+		if time.Now().Unix() > expiry {
+			c.String(http.StatusForbidden, "Token expired")
+			return
+		}
+		
+		setCSRFCookie(c)
+		c.HTML(http.StatusOK, "reset-admin.html", gin.H{
+			"version": cfg.Version,
+		})
+	})
+
+	r.POST("/reset-admin", csrfMiddleware(), func(c *gin.Context) {
+		token := c.PostForm("token")
+		password := c.PostForm("password")
+		
+		dbToken := database.GetSetting("admin_reset_token")
+		expiryStr := database.GetSetting("admin_reset_expiry")
+		
+		if token == "" || token != dbToken {
+			c.JSON(http.StatusForbidden, gin.H{"error": "invalid_token"})
+			return
+		}
+		
+		expiry, _ := strconv.ParseInt(expiryStr, 10, 64)
+		if time.Now().Unix() > expiry {
+			c.JSON(http.StatusForbidden, gin.H{"error": "token_expired"})
+			return
+		}
+		
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_hash_password"})
+			return
+		}
+		
+		database.SetSetting("admin_password_hash", string(hashedPassword))
+		database.DeleteSetting("admin_reset_token")
+		database.DeleteSetting("admin_reset_expiry")
+		
+		// Clear admin sessions
+		adminUser := database.GetSetting("admin_username")
+		if adminUser != "" {
+			database.DB.Exec("DELETE FROM sessions WHERE username = ?", adminUser)
+		}
+		
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
 	r.GET("/", func(c *gin.Context) {
+
 		token, _ := c.Cookie("session_token")
 		var sessionUsername string
 		if token != "" {
@@ -263,6 +392,22 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		uploadAPIKey := database.GetSetting("upload_api_key")
 		isAdmin := sessionUsername == webdavUser
 
+		globalWebdavEnabled := database.GetSetting("webdav_enabled") == "true"
+		globalUploadAPIEnabled := database.GetSetting("upload_api_enabled") == "true"
+
+		if !isAdmin {
+			var userStatus struct {
+				WebDAVEnabled int `db:"webdav_enabled"`
+				APIEnabled    int `db:"api_enabled"`
+			}
+			err := database.DB.Get(&userStatus, "SELECT webdav_enabled, api_enabled FROM child_accounts WHERE username = ?", sessionUsername)
+			if err == nil {
+				webdavEnabled = (globalWebdavEnabled && userStatus.WebDAVEnabled == 1)
+				uploadAPIEnabled = (globalUploadAPIEnabled && userStatus.APIEnabled == 1)
+			}
+			webdavUser = sessionUsername
+		}
+
 		var userStorageUsed int64
 		if isAdmin {
 			database.DB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0")
@@ -272,15 +417,17 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 
 		c.HTML(http.StatusOK, "index.html", gin.H{
-			"max_upload_size_mb": cfg.MaxUploadSizeMB,
-			"webdav_enabled":     webdavEnabled,
-			"webdav_user":        webdavUser,
-			"upload_api_enabled": uploadAPIEnabled,
-			"upload_api_key":     uploadAPIKey,
-			"version":            cfg.Version,
-			"is_admin":           isAdmin,
-			"username":           sessionUsername,
-			"storage_used":       userStorageUsed,
+			"max_upload_size_mb":     cfg.MaxUploadSizeMB,
+			"webdav_enabled":         webdavEnabled,
+			"global_webdav_enabled":  globalWebdavEnabled,
+			"webdav_user":            webdavUser,
+			"upload_api_enabled":     uploadAPIEnabled,
+			"global_api_enabled":     globalUploadAPIEnabled,
+			"upload_api_key":         uploadAPIKey,
+			"version":                cfg.Version,
+			"is_admin":               isAdmin,
+			"username":               sessionUsername,
+			"storage_used":           userStorageUsed,
 		})
 	})
 
@@ -319,17 +466,26 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		dbHash := database.GetSetting("admin_password_hash")
 
 		var authSuccess bool
+		var forceChange bool
 		if username == dbUser && bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(password)) == nil {
 			authSuccess = true
 		} else {
-			var childHash string
-			err := database.DB.Get(&childHash, "SELECT password_hash FROM child_accounts WHERE username = ?", username)
-			if err == nil && bcrypt.CompareHashAndPassword([]byte(childHash), []byte(password)) == nil {
+			var child struct {
+				Hash        string `db:"password_hash"`
+				ForceChange int    `db:"force_password_change"`
+			}
+			err := database.DB.Get(&child, "SELECT password_hash, force_password_change FROM child_accounts WHERE username = ?", username)
+			if err == nil && bcrypt.CompareHashAndPassword([]byte(child.Hash), []byte(password)) == nil {
 				authSuccess = true
+				forceChange = child.ForceChange == 1
 			}
 		}
 
 		if authSuccess {
+			if forceChange {
+				c.JSON(http.StatusOK, gin.H{"status": "force_password_change", "username": username})
+				return
+			}
 			loginAttempts.Delete(ip) // Reset on success
 			sessionToken := uuid.New().String()
 			_, err := database.DB.Exec("INSERT INTO sessions (token, username) VALUES (?, ?)", sessionToken, username)
@@ -374,15 +530,41 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 
-		apiKey := database.GetSetting("upload_api_key")
-		if apiKey == "" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "No API key configured"})
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing Authorization header"})
 			return
 		}
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" || authHeader != "Bearer "+apiKey {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing API key"})
-			return
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+
+		var username string
+		var isAdmin bool
+
+		adminKey := database.GetSetting("upload_api_key")
+		if token == adminKey && adminKey != "" {
+			isAdmin = true
+		} else {
+			var userStatus struct {
+				Username    string `db:"username"`
+				Enabled     int    `db:"api_enabled"`
+				ForceChange int    `db:"force_password_change"`
+			}
+			err := database.DB.Get(&userStatus, "SELECT username, api_enabled, force_password_change FROM child_accounts WHERE api_key = ?", token)
+			if err != nil || userStatus.Username == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+				return
+			}
+			if userStatus.Enabled == 0 {
+				c.JSON(http.StatusForbidden, gin.H{"error": "API is disabled for this account"})
+				return
+			}
+			if userStatus.ForceChange == 1 {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Password change required via web interface before using API"})
+				return
+			}
+
+			username = userStatus.Username
+			isAdmin = false
 		}
 
 		// Limit request body to prevent OOM / disk-exhaustion attacks.
@@ -410,6 +592,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		path := c.PostForm("path")
 		if path == "" {
 			path = "/"
+		}
+		
+		dbPath := mapPath(path, username, isAdmin)
+		
+		if isAdmin && isChildAccountPath(dbPath) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Admin cannot upload to child account directory"})
+			return
 		}
 		shareMode := c.PostForm("share") // "public" → auto share link
 
@@ -539,10 +728,20 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			if isAdmin {
 				database.SetSetting("admin_password_hash", string(hashedPassword))
 			} else {
-				database.DB.Exec("UPDATE child_accounts SET password_hash = ? WHERE username = ?", string(hashedPassword), username)
+				database.DB.Exec("UPDATE child_accounts SET password_hash = ?, force_password_change = 0 WHERE username = ?", string(hashedPassword), username)
 			}
 			
-			// Optional: invalidate current sessions or leave as is. We'll leave it to not log them out immediately.
+			// If user doesn't have a session yet (e.g. just performed a forced password change via Basic Auth),
+			// create one now so they are logged in immediately.
+			token, _ := c.Cookie("session_token")
+			if token == "" {
+				sessionToken := uuid.New().String()
+				_, err = database.DB.Exec("INSERT INTO sessions (token, username) VALUES (?, ?)", sessionToken, username)
+				if err == nil {
+					c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
+				}
+			}
+
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 		
@@ -590,6 +789,102 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			database.SetSetting("upload_api_key", "")
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.GET("/settings/child-api-key", func(c *gin.Context) {
+			if c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admins should use global API key"})
+				return
+			}
+			username := c.GetString("username")
+			var apiKey *string
+			err := database.DB.Get(&apiKey, "SELECT api_key FROM child_accounts WHERE username = ?", username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"api_key": apiKey})
+		})
+
+		api.POST("/settings/child-api-key", func(c *gin.Context) {
+			if c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admins should use global API key"})
+				return
+			}
+			username := c.GetString("username")
+			newKey := utils.GenerateRandomString(32)
+			_, err := database.DB.Exec("UPDATE child_accounts SET api_key = ? WHERE username = ?", newKey, username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"api_key": newKey})
+		})
+
+		api.DELETE("/settings/child-api-key", func(c *gin.Context) {
+			if c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admins should use global API key"})
+				return
+			}
+			username := c.GetString("username")
+			_, err := database.DB.Exec("UPDATE child_accounts SET api_key = NULL WHERE username = ?", username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/child-webdav", func(c *gin.Context) {
+			if c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admins should use global WebDAV toggle"})
+				return
+			}
+			username := c.GetString("username")
+			enabled := c.PostForm("enabled") == "true"
+			
+			// Check if global WebDAV is enabled
+			if enabled && database.GetSetting("webdav_enabled") != "true" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "ADMIN_DISABLED"})
+				return
+			}
+
+			val := 0
+			if enabled {
+				val = 1
+			}
+			_, err := database.DB.Exec("UPDATE child_accounts SET webdav_enabled = ? WHERE username = ?", val, username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/child-api", func(c *gin.Context) {
+			if c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admins should use global API toggle"})
+				return
+			}
+			username := c.GetString("username")
+			enabled := c.PostForm("enabled") == "true"
+
+			// Check if global API is enabled
+			if enabled && database.GetSetting("upload_api_enabled") != "true" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "ADMIN_DISABLED"})
+				return
+			}
+
+			val := 0
+			if enabled {
+				val = 1
+			}
+			_, err := database.DB.Exec("UPDATE child_accounts SET api_enabled = ? WHERE username = ?", val, username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 
@@ -645,7 +940,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
-			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			hashedPassword, err := bcrypt.GenerateFromPassword([]byte("abc123"), bcrypt.DefaultCost)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
 				return
@@ -682,7 +977,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
-			_, err = tx.Exec("INSERT INTO child_accounts (username, password_hash) VALUES (?, ?)", username, string(hashedPassword))
+			_, err = tx.Exec("INSERT INTO child_accounts (username, password_hash, force_password_change) VALUES (?, ?, 1)", username, string(hashedPassword))
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user record"})
 				return
@@ -710,18 +1005,90 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 			username := c.Param("username")
 			
-			// Delete child account
-			_, err := database.DB.Exec("DELETE FROM child_accounts WHERE username = ?", username)
+			// Start transaction to ensure atomicity
+			tx, err := database.DB.Beginx()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			defer tx.Rollback()
+
+			// Rename folder to avoid collisions and mark as deleted for Admin inheritance
+			timestamp := time.Now().Format("20060102_150405")
+			newFolderName := fmt.Sprintf("deleted_%s_%s", username, timestamp)
 			
-			// Revoke sessions
+			// 1. Update the root folder record of the user
+			_, err = tx.Exec("UPDATE files SET filename = ? WHERE path = '/' AND filename = ? AND is_folder = 1", newFolderName, username)
+			if err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rename user folder"})
+				return
+			}
+
+			// 2. Update paths of all files and subfolders within that folder
+			oldPrefix := "/" + username
+			newPrefix := "/" + newFolderName
+			
+			// Update files/folders directly inside the user folder
+			_, err = tx.Exec("UPDATE files SET path = ? WHERE path = ?", newPrefix, oldPrefix)
+			if err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update direct file paths"})
+				return
+			}
+			
+			// Update files/folders in subfolders (recursive)
+			_, err = tx.Exec("UPDATE files SET path = ? || substr(path, ?) WHERE path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix+"/%")
+			if err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update nested file paths"})
+				return
+			}
+
+			// 3. Delete child account record
+			_, err = tx.Exec("DELETE FROM child_accounts WHERE username = ?", username)
+			if err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			
+			// 4. Revoke all sessions for this user
+			tx.Exec("DELETE FROM sessions WHERE username = ?", username)
+
+			if err := tx.Commit(); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit transaction"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/users/:username/reset-pass", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+			username := c.Param("username")
+
+			hashedPassword, err := bcrypt.GenerateFromPassword([]byte("abc123"), bcrypt.DefaultCost)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+				return
+			}
+
+			_, err = database.DB.Exec("UPDATE child_accounts SET password_hash = ?, force_password_change = 1 WHERE username = ?", string(hashedPassword), username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset password"})
+				return
+			}
+
+			// Revoke all sessions for this user
 			database.DB.Exec("DELETE FROM sessions WHERE username = ?", username)
 
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
+
 
 
 		api.GET("/progress/:task_id", func(c *gin.Context) {
@@ -739,6 +1106,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			isAdmin := c.GetBool("is_admin")
 			dbPath := mapPath(path, username, isAdmin)
 
+			if isAdmin && isChildAccountPath(dbPath) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+
 			var files []database.File
 			err := database.DB.Select(&files, "SELECT * FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC", dbPath)
 			if err != nil {
@@ -755,6 +1127,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 				var filtered []database.File
 				for _, f := range files {
+					// Admin isolation: hide folders that match active child account usernames
 					if f.IsFolder && userMap[f.Filename] {
 						continue
 					}
@@ -783,6 +1156,20 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			username := c.GetString("username")
 			isAdmin := c.GetBool("is_admin")
 			dbPath := mapPath(path, username, isAdmin)
+			
+			if isAdmin && isChildAccountPath(dbPath) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admin cannot create folders in child account directory"})
+				return
+			}
+
+			if isAdmin && dbPath == "/" {
+				var count int
+				database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", name)
+				if count > 0 {
+					c.JSON(http.StatusForbidden, gin.H{"error": "Folder name collides with a child account username"})
+					return
+				}
+			}
 
 			uniqueName := database.GetUniqueFilename(database.DB, dbPath, name, true, 0)
 			_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, dbPath)
@@ -806,6 +1193,20 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			username := c.GetString("username")
 			isAdmin := c.GetBool("is_admin")
 			dbPath := mapPath(path, username, isAdmin)
+
+			if isAdmin && isChildAccountPath(dbPath) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admin cannot upload to child account directory"})
+				return
+			}
+
+			if isAdmin && dbPath == "/" {
+				var count int
+				database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", filename)
+				if count > 0 {
+					c.JSON(http.StatusForbidden, gin.H{"error": "Filename collides with a child account username"})
+					return
+				}
+			}
 
 			taskID := c.PostForm("task_id")
 			chunkIndex, err := strconv.Atoi(c.PostForm("chunk_index"))
@@ -926,6 +1327,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			isAdmin := c.GetBool("is_admin")
 			req.Destination = mapPath(req.Destination, username, isAdmin)
 
+			if isAdmin && isChildAccountPath(req.Destination) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admin cannot paste to child account directory"})
+				return
+			}
+
 			tx, err := database.DB.Beginx()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
@@ -941,6 +1347,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 
 				if !verifyItemAccess(c, item.Path) {
+					continue
+				}
+
+				if isAdmin && isChildAccountPath(item.Path) {
 					continue
 				}
 
@@ -1051,7 +1461,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			
-			if !verifyItemAccess(c, item.Path) {
+			isAdmin := c.GetBool("is_admin")
+			if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
@@ -1132,7 +1543,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
-			if !verifyItemAccess(c, item.Path) {
+			isAdmin := c.GetBool("is_admin")
+			if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
@@ -1184,7 +1596,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 				return
 			}
-			if !verifyItemAccess(c, item.Path) {
+			isAdmin := c.GetBool("is_admin")
+			if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
@@ -1200,7 +1613,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 				return
 			}
-			if !verifyItemAccess(c, item.Path) {
+			isAdminDel := c.GetBool("is_admin")
+			if !verifyItemAccess(c, item.Path) || (isAdminDel && isChildAccountPath(item.Path)) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
@@ -1215,7 +1629,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.AbortWithStatus(http.StatusNotFound)
 				return
 			}
-			if !verifyItemAccess(c, item.Path) {
+			isAdmin := c.GetBool("is_admin")
+			if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
 				c.AbortWithStatus(http.StatusForbidden)
 				return
 			}
@@ -1229,7 +1644,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.AbortWithStatus(http.StatusNotFound)
 				return
 			}
-			if !verifyItemAccess(c, item.Path) {
+			isAdminStream := c.GetBool("is_admin")
+			if !verifyItemAccess(c, item.Path) || (isAdminStream && isChildAccountPath(item.Path)) {
 				c.AbortWithStatus(http.StatusForbidden)
 				return
 			}
@@ -1252,7 +1668,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 
-		if !verifyItemAccess(c, item.Path) {
+		isAdmin := c.GetBool("is_admin")
+		if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
 			return
 		}

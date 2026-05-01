@@ -78,6 +78,10 @@ func InitDB(dbPath string) {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		username TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
+		api_key TEXT UNIQUE,
+		webdav_enabled INTEGER DEFAULT 1,
+		api_enabled INTEGER DEFAULT 1,
+		force_password_change INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -92,6 +96,11 @@ func InitDB(dbPath string) {
 
 	// Migration for existing DBs
 	DB.Exec("ALTER TABLE sessions ADD COLUMN username TEXT DEFAULT ''")
+	DB.Exec("ALTER TABLE child_accounts ADD COLUMN api_key TEXT")
+	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_child_accounts_api_key ON child_accounts(api_key)")
+	DB.Exec("ALTER TABLE child_accounts ADD COLUMN webdav_enabled INTEGER DEFAULT 1")
+	DB.Exec("ALTER TABLE child_accounts ADD COLUMN api_enabled INTEGER DEFAULT 1")
+	DB.Exec("ALTER TABLE child_accounts ADD COLUMN force_password_change INTEGER DEFAULT 0")
 }
 
 func GetSetting(key string) string {

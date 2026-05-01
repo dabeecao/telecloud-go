@@ -23,6 +23,7 @@ import (
 	"context"
 	"embed"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -46,7 +47,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v2.8.2"
+	version = "v2.10.1"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -74,12 +75,20 @@ func main() {
 	database.InitDB(cfg.DatabasePath)
 
 	if *resetPassFlag {
-		database.DeleteSetting("admin_username")
-		database.DeleteSetting("admin_password_hash")
-		database.DB.Exec("DELETE FROM sessions")
-		log.Println("Admin username and password have been reset. All active sessions have been cleared. Please restart the app and visit the setup page.")
+		token := uuid.New().String()
+		expiry := time.Now().Add(15 * time.Minute).Unix()
+		database.SetSetting("admin_reset_token", token)
+		database.SetSetting("admin_reset_expiry", fmt.Sprintf("%d", expiry))
+
+		log.Println("================================================================")
+		log.Println("ADMIN PASSWORD RESET INITIATED")
+		log.Printf("Please visit the following URL to reset your admin password:\n")
+		log.Printf("http://<your-domain-or-ip>/reset-admin?token=%s\n", token)
+		log.Println("This link will expire in 15 minutes.")
+		log.Println("================================================================")
 		return
 	}
+
 	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
 		log.Printf("Warning: Could not create TempDir: %v\n", err)
 	}

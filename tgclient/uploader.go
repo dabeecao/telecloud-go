@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"crypto/tls"
+	"io"
 
 	"sync"
 	"time"
@@ -45,13 +47,18 @@ type UploadStatus struct {
 	Message  string `json:"message,omitempty"`
 	Filename string `json:"filename,omitempty"`
 	Owner    string `json:"owner,omitempty"`
+	Size     int64  `json:"size,omitempty"`
 }
 
 func UpdateTask(taskID string, status string, percent int, msg string) {
-	UpdateTaskWithFile(taskID, status, percent, msg, "", "")
+	UpdateTaskWithFile(taskID, status, percent, msg, "", "", 0)
 }
 
-func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string) {
+func UpdateTaskWithSize(taskID string, status string, percent int, msg string, size int64) {
+	UpdateTaskWithFile(taskID, status, percent, msg, "", "", size)
+}
+
+func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64) {
 	taskMutex.Lock()
 	defer taskMutex.Unlock()
 	
@@ -74,14 +81,22 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 		finalOwner = owner
 	}
 
+	var finalSize int64
+	if size > 0 {
+		finalSize = size
+	} else if existing, ok := UploadTasks[taskID]; ok {
+		finalSize = existing.Size
+	}
+
 	UploadTasks[taskID] = &UploadStatus{
 		Status:   status,
 		Percent:  percent,
 		Message:  msg,
 		Filename: finalFilename,
 		Owner:    finalOwner,
+		Size:     finalSize,
 	}
-	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg)
+	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, finalSize)
 
 	// Auto-cleanup: remove task from memory after 5 minutes once terminal
 	if status == "done" || status == "error" {
@@ -141,6 +156,21 @@ func (p uploadProgress) Chunk(ctx context.Context, state uploader.ProgressState)
 	return nil
 }
 
+type maxSizeReader struct {
+	r       io.Reader
+	maxSize int64
+	read    int64
+}
+
+func (m *maxSizeReader) Read(p []byte) (n int, err error) {
+	n, err = m.r.Read(p)
+	m.read += int64(n)
+	if m.maxSize > 0 && m.read > m.maxSize {
+		return n, fmt.Errorf("file_too_large")
+	}
+	return n, err
+}
+
 func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool, owner string) {
 	ctx, cancel := context.WithCancel(ctx)
 	taskMutex.Lock()
@@ -154,18 +184,24 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		cancel()
 	}()
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner)
+	stat, err := os.Stat(filePath)
+	var fileSize int64
+	if err == nil {
+		fileSize = stat.Size()
+	}
+
+	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, fileSize)
 
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner)
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, fileSize)
 		return
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner)
+	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, fileSize)
 
 	// Handle overwriting: single query instead of two
 	var existingID int
@@ -173,12 +209,6 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	var existingThumb *string
 	if overwrite {
 		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
-	}
-
-	stat, err := os.Stat(filePath)
-	if err != nil {
-		UpdateTask(taskID, "error", 0, "file_stat_error: "+err.Error())
-		return
 	}
 
 	uniqueFilename := filename
@@ -331,7 +361,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		cancel()
 	}()
 
-	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner)
+	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0)
 
 	// SSRF Protection
 	if isPrivateIP(url) {
@@ -344,19 +374,57 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	case remoteUploadSemaphore <- struct{}{}:
 		defer func() { <-remoteUploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner)
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, 0)
 		return
 	}
 
 	// 2. Get the file stream
+	defaultDialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	fallbackResolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return defaultDialer.DialContext(ctx, "udp", "1.1.1.1:53")
+		},
+	}
+	fallbackDialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Resolver:  fallbackResolver,
+	}
+
 	client := &http.Client{
-		Timeout: 0, // No timeout for download itself, context handles it
+		Timeout: 0, // No timeout for overall download, context handles cancellation
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := defaultDialer.DialContext(ctx, network, addr)
+				if err != nil {
+					// Fallback to Cloudflare DNS if system resolver fails (very common on Termux)
+					return fallbackDialer.DialContext(ctx, network, addr)
+				}
+				return conn, nil
+			},
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+			ExpectContinueTimeout: 1 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		UpdateTask(taskID, "error", 0, "request_creation_failed: "+err.Error())
 		return
 	}
+
+	// Add User-Agent to avoid being blocked by some servers
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -404,18 +472,18 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		mimeType = "application/octet-stream"
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner)
+	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, size)
 
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner)
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, size)
 		return
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner)
+	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, size)
 
 	// Handle overwriting
 	var existingID int
@@ -436,9 +504,19 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		WithProgress(uploadProgress{taskID: taskID, totalSize: size}).
 		WithThreads(cfg.UploadThreads)
 
+	// Enforce max size for streams with unknown ContentLength using maxSizeReader
+	var limit int64 = 0
+	if maxSizeMB > 0 {
+		limit = int64(maxSizeMB) * 1024 * 1024
+	}
+	bodyReader := &maxSizeReader{
+		r:       resp.Body,
+		maxSize: limit,
+	}
+
 	// Stream from Reader to Telegram
 	// Note: FromReader will read the stream. If it fails, we can't easily retry without restarting the HTTP request.
-	file, err := up.FromReader(ctx, uniqueFilename, resp.Body)
+	file, err := up.FromReader(ctx, uniqueFilename, bodyReader)
 	if err != nil {
 		if ctx.Err() != nil {
 			UpdateTask(taskID, "error", 0, "upload_cancelled")
@@ -535,9 +613,18 @@ func isPrivateIP(urlStr string) bool {
 	if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" {
 		return true
 	}
+	
+	// Check if the hostname is directly an IP address
+	if ip := net.ParseIP(hostname); ip != nil {
+		return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate()
+	}
+
 	ips, err := net.LookupIP(hostname)
 	if err != nil {
-		return true
+		// On Termux/Android, DNS lookup might fail due to strict network configurations
+		// or missing /etc/resolv.conf. If we can't look it up, we allow it to proceed.
+		// If it's truly an invalid domain, the HTTP client will fail to connect anyway.
+		return false
 	}
 	for _, ip := range ips {
 		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {

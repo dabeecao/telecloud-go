@@ -128,14 +128,16 @@ type TaskUpdate struct {
 	Status  string `json:"status"`
 	Percent int    `json:"percent"`
 	Message string `json:"message,omitempty"`
+	Size    int64  `json:"size,omitempty"`
 }
 
-func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string) {
+func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, size int64) {
 	update := TaskUpdate{
 		TaskID:  taskID,
 		Status:  status,
 		Percent: percent,
 		Message: msg,
+		Size:    size,
 	}
 	data, err := json.Marshal(update)
 	if err != nil {

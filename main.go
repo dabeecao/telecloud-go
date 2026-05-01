@@ -92,6 +92,14 @@ func main() {
 
 	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
 		log.Printf("Warning: Could not create TempDir: %v\n", err)
+	} else {
+		// Startup cleanup: remove all files in temp dir from previous sessions
+		files, _ := os.ReadDir(cfg.TempDir)
+		for _, f := range files {
+			if !f.IsDir() {
+				os.Remove(filepath.Join(cfg.TempDir, f.Name()))
+			}
+		}
 	}
 	cryptoSecret := database.GetSetting("crypto_secret")
 	if cryptoSecret == "" {

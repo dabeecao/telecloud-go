@@ -123,9 +123,12 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     echo "[+] Operating System: Termux (Android)"
 
     # Check Termux version (Play Store versions are restricted and cause e_type errors)
-    # Priority check via TERMUX_VERSION environment variable
-    local T_VER="${TERMUX_VERSION:-unknown}"
-    if [ "$T_VER" == "0.101" ] || [[ "$T_VER" == *"googleplay"* ]]; then
+    T_INFO=$(termux-info 2>/dev/null || echo "")
+    T_VER=$(echo "$T_INFO" | grep "TERMUX_VERSION" | cut -d'=' -f2)
+    T_VER=${T_VER:-$TERMUX_VERSION}
+    T_VER=${T_VER:-unknown}
+
+    if [[ "$T_VER" == *"googleplay"* ]] || [[ "$T_INFO" == *"googleplay"* ]] || [ "$T_VER" == "0.101" ]; then
         echo ""
         echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "⚠️  IMPORTANT WARNING: GOOGLE PLAY TERMUX DETECTED"

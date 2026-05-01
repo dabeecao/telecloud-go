@@ -19,8 +19,9 @@ type Hub struct {
 }
 
 type client struct {
-	hub  *Hub
-	conn *websocket.Conn
+	hub      *Hub
+	conn     *websocket.Conn
+	username string
 }
 
 func NewHub() *Hub {
@@ -49,16 +50,29 @@ func (h *Hub) Run(ctx context.Context) {
 			}
 			h.mu.Unlock()
 		case message := <-h.broadcast:
+			// message format expected to be handled elsewhere if needed, 
+			// but we'll focus on the specific TaskUpdate for targeted broadcast
 			h.mu.Lock()
 			for client := range h.clients {
-				err := client.conn.Write(ctx, websocket.MessageText, message)
-				if err != nil {
-					log.Printf("websocket write error: %v", err)
-					client.conn.Close(websocket.StatusInternalError, "")
-					delete(h.clients, client)
-				}
+				client.conn.Write(ctx, websocket.MessageText, message)
 			}
 			h.mu.Unlock()
+		}
+	}
+}
+
+// BroadcastToUser sends a message only to clients belonging to a specific user.
+func (h *Hub) BroadcastToUser(ctx context.Context, username string, message []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for client := range h.clients {
+		if client.username == username {
+			err := client.conn.Write(ctx, websocket.MessageText, message)
+			if err != nil {
+				log.Printf("websocket write error for user %s: %v", username, err)
+				client.conn.Close(websocket.StatusInternalError, "")
+				delete(h.clients, client)
+			}
 		}
 	}
 }
@@ -85,7 +99,7 @@ func GetHub() *Hub {
 	return globalHub
 }
 
-func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+func HandleWebSocket(w http.ResponseWriter, r *http.Request, username string) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // In a real app, you might want to check Origin
 	})
@@ -95,7 +109,7 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hub := GetHub()
-	cl := &client{hub: hub, conn: c}
+	cl := &client{hub: hub, conn: c, username: username}
 	hub.register <- cl
 
 	// Keep connection alive and handle disconnection
@@ -116,7 +130,7 @@ type TaskUpdate struct {
 	Message string `json:"message,omitempty"`
 }
 
-func BroadcastTaskUpdate(taskID, status string, percent int, msg string) {
+func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string) {
 	update := TaskUpdate{
 		TaskID:  taskID,
 		Status:  status,
@@ -128,9 +142,16 @@ func BroadcastTaskUpdate(taskID, status string, percent int, msg string) {
 		log.Printf("json marshal error: %v", err)
 		return
 	}
-	select {
-	case GetHub().broadcast <- data:
-	default:
-		// Hub bận hoặc không có client, drop update để không block goroutine upload
+	
+	// If owner is empty, broadcast to everyone (fallback)
+	if owner == "" {
+		select {
+		case GetHub().broadcast <- data:
+		default:
+		}
+		return
 	}
+
+	// Targeted broadcast
+	go GetHub().BroadcastToUser(context.Background(), owner, data)
 }

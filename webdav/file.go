@@ -143,9 +143,10 @@ type fileWriter struct {
 	file     *os.File
 	taskID    string
 	overwrite bool
+	owner     string
 }
 
-func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string, overwrite bool) *fileWriter {
+func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string, overwrite bool, owner string) *fileWriter {
 	taskID := uuid.New().String()
 	tempDir := filepath.Join(cfg.TempDir, "webdav")
 	os.MkdirAll(tempDir, os.ModePerm)
@@ -162,6 +163,7 @@ func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string
 		file:      f,
 		taskID:    taskID,
 		overwrite: overwrite,
+		owner:     owner,
 	}
 }
 
@@ -194,7 +196,7 @@ func (w *fileWriter) Close() error {
 				mimeType = "application/octet-stream"
 			}
 
-			tgclient.ProcessCompleteUpload(context.Background(), w.tempPath, w.filename, w.dir, mimeType, w.taskID, w.cfg, w.overwrite)
+			tgclient.ProcessCompleteUpload(context.Background(), w.tempPath, w.filename, w.dir, mimeType, w.taskID, w.cfg, w.overwrite, w.owner)
 			os.Remove(w.tempPath)
 		}()
 	}

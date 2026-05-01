@@ -4,7 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"mime"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
+
 	"sync"
 	"time"
 
@@ -25,24 +33,55 @@ var (
 	taskMutex   sync.Mutex
 
 	// Limit concurrent uploads to Telegram to prevent floodwait
-	uploadSemaphore = make(chan struct{}, 3)
+	uploadSemaphore       = make(chan struct{}, 3)
+	remoteUploadSemaphore = make(chan struct{}, 3)
 )
 
+
+
 type UploadStatus struct {
-	Status  string `json:"status"`
-	Percent int    `json:"percent"`
-	Message string `json:"message,omitempty"`
+	Status   string `json:"status"`
+	Percent  int    `json:"percent"`
+	Message  string `json:"message,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	Owner    string `json:"owner,omitempty"`
 }
 
 func UpdateTask(taskID string, status string, percent int, msg string) {
+	UpdateTaskWithFile(taskID, status, percent, msg, "", "")
+}
+
+func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string) {
 	taskMutex.Lock()
 	defer taskMutex.Unlock()
-	UploadTasks[taskID] = &UploadStatus{
-		Status:  status,
-		Percent: percent,
-		Message: msg,
+	
+	var finalFilename string
+	var finalOwner string
+	if existing, ok := UploadTasks[taskID]; ok {
+		finalFilename = filename
+		if filename == "" {
+			finalFilename = existing.Filename
+		}
+		finalOwner = owner
+		if owner == "" {
+			finalOwner = existing.Owner
+		}
+	} else {
+		finalFilename = filename
+		if filename == "" {
+			finalFilename = "File"
+		}
+		finalOwner = owner
 	}
-	ws.BroadcastTaskUpdate(taskID, status, percent, msg)
+
+	UploadTasks[taskID] = &UploadStatus{
+		Status:   status,
+		Percent:  percent,
+		Message:  msg,
+		Filename: finalFilename,
+		Owner:    finalOwner,
+	}
+	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg)
 
 	// Auto-cleanup: remove task from memory after 5 minutes once terminal
 	if status == "done" || status == "error" {
@@ -64,8 +103,15 @@ func GetTask(taskID string) *UploadStatus {
 	return &UploadStatus{Status: "pending", Percent: 0}
 }
 
-func CancelTask(taskID string) {
+func CancelTask(taskID string, username string) bool {
 	taskMutex.Lock()
+	
+	// Verify owner
+	if status, ok := UploadTasks[taskID]; !ok || status.Owner != username {
+		taskMutex.Unlock()
+		return false
+	}
+
 	if cancel, ok := TaskCancels[taskID]; ok {
 		cancel()
 		delete(TaskCancels, taskID)
@@ -73,24 +119,29 @@ func CancelTask(taskID string) {
 	taskMutex.Unlock()
 
 	// Gọi UpdateTask trong goroutine riêng để tránh deadlock (UpdateTask cũng lock taskMutex)
-	// UpdateTask sẽ broadcast WS cho frontend và trigger cleanup goroutine 5 phút
 	go UpdateTask(taskID, "error", 0, "upload_cancelled_waiting")
+	return true
 }
 
 
 type uploadProgress struct {
-	taskID string
+	taskID    string
+	totalSize int64
 }
 
 func (p uploadProgress) Chunk(ctx context.Context, state uploader.ProgressState) error {
-	if state.Total > 0 {
-		percent := int(float64(state.Uploaded) / float64(state.Total) * 100)
+	total := state.Total
+	if total <= 0 {
+		total = p.totalSize
+	}
+	if total > 0 {
+		percent := int(float64(state.Uploaded) / float64(total) * 100)
 		UpdateTask(p.taskID, "telegram", percent, "")
 	}
 	return nil
 }
 
-func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool) {
+func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool, owner string) {
 	ctx, cancel := context.WithCancel(ctx)
 	taskMutex.Lock()
 	TaskCancels[taskID] = cancel
@@ -103,18 +154,18 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		cancel()
 	}()
 
-	UpdateTask(taskID, "telegram", 0, "waiting_slot")
+	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner)
 
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTask(taskID, "error", 0, "upload_cancelled_waiting")
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner)
 		return
 	}
 
-	UpdateTask(taskID, "telegram", 0, "")
+	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner)
 
 	// Handle overwriting: single query instead of two
 	var existingID int
@@ -122,6 +173,12 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	var existingThumb *string
 	if overwrite {
 		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
+	}
+
+	stat, err := os.Stat(filePath)
+	if err != nil {
+		UpdateTask(taskID, "error", 0, "file_stat_error: "+err.Error())
+		return
 	}
 
 	uniqueFilename := filename
@@ -132,11 +189,10 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	api := Client.API()
 	up := uploader.NewUploader(api).
 		WithPartSize(uploader.MaximumPartSize).
-		WithProgress(uploadProgress{taskID: taskID}).
+		WithProgress(uploadProgress{taskID: taskID, totalSize: stat.Size()}).
 		WithThreads(cfg.UploadThreads)
 
 	var file tg.InputFileClass
-	var err error
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		file, err = up.FromPath(ctx, filePath)
@@ -253,6 +309,242 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	if localThumb != nil {
 		database.DB.Exec("UPDATE files SET thumb_path = ? WHERE message_id = ? AND path = ? AND filename = ?", *localThumb, msgID, path, uniqueFilename)
 	}
+}
+
+
+
+func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *config.Config, overwrite bool, maxSizeMB int, owner string) {
+	filename := filepath.Base(url)
+	if idx := strings.Index(filename, "?"); idx != -1 {
+		filename = filename[:idx]
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	taskMutex.Lock()
+	TaskCancels[taskID] = cancel
+	taskMutex.Unlock()
+
+	defer func() {
+		taskMutex.Lock()
+		delete(TaskCancels, taskID)
+		taskMutex.Unlock()
+		cancel()
+	}()
+
+	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner)
+
+	// SSRF Protection
+	if isPrivateIP(url) {
+		UpdateTask(taskID, "error", 0, "err_forbidden_url")
+		return
+	}
+
+	// 1. Wait for a slot in the remote upload queue (HTTP download limit)
+	select {
+	case remoteUploadSemaphore <- struct{}{}:
+		defer func() { <-remoteUploadSemaphore }()
+	case <-ctx.Done():
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner)
+		return
+	}
+
+	// 2. Get the file stream
+	client := &http.Client{
+		Timeout: 0, // No timeout for download itself, context handles it
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		UpdateTask(taskID, "error", 0, "request_creation_failed: "+err.Error())
+		return
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		UpdateTask(taskID, "error", 0, "connection_failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		msg := "err_remote_failed"
+		if resp.StatusCode == http.StatusNotFound {
+			msg = "err_remote_not_found"
+		} else if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+			msg = "err_remote_forbidden"
+		} else if resp.StatusCode >= 500 {
+			msg = "err_remote_server_error"
+		}
+		UpdateTask(taskID, "error", 0, msg)
+		return
+	}
+
+	size := resp.ContentLength
+	if maxSizeMB > 0 && size > int64(maxSizeMB)*1024*1024 {
+		UpdateTask(taskID, "error", 0, "file_too_large")
+		return
+	}
+
+	// Determine filename
+	filename = filepath.Base(url)
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if f, ok := params["filename"]; ok {
+				filename = f
+			}
+		}
+	}
+	// Clean filename
+	filename = filepath.Base(filename)
+	if filename == "" || filename == "." || filename == "/" {
+		filename = "downloaded_file"
+	}
+
+	mimeType := resp.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner)
+
+	// Wait for a slot in the upload queue
+	select {
+	case uploadSemaphore <- struct{}{}:
+		defer func() { <-uploadSemaphore }()
+	case <-ctx.Done():
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner)
+		return
+	}
+
+	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner)
+
+	// Handle overwriting
+	var existingID int
+	var existingMsgID *int
+	var existingThumb *string
+	if overwrite {
+		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
+	}
+
+	uniqueFilename := filename
+	if !overwrite || existingID == 0 {
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+	}
+
+	api := Client.API()
+	up := uploader.NewUploader(api).
+		WithPartSize(uploader.MaximumPartSize).
+		WithProgress(uploadProgress{taskID: taskID, totalSize: size}).
+		WithThreads(cfg.UploadThreads)
+
+	// Stream from Reader to Telegram
+	// Note: FromReader will read the stream. If it fails, we can't easily retry without restarting the HTTP request.
+	file, err := up.FromReader(ctx, uniqueFilename, resp.Body)
+	if err != nil {
+		if ctx.Err() != nil {
+			UpdateTask(taskID, "error", 0, "upload_cancelled")
+		} else {
+			UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error())
+		}
+		return
+	}
+
+	sender := message.NewSender(api)
+	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
+	if err != nil {
+		UpdateTask(taskID, "error", 0, "Resolve peer error: "+err.Error())
+		return
+	}
+
+	caption := fmt.Sprintf("Path: %s\nFilename: %s\nSource: %s", path, uniqueFilename, url)
+	docBuilder := message.UploadedDocument(file, html.String(nil, caption)).Filename(uniqueFilename).MIME(mimeType)
+
+	res, err := sender.To(peer).Media(ctx, docBuilder)
+	if err != nil {
+		UpdateTask(taskID, "error", 0, err.Error())
+		return
+	}
+
+	var msgID int
+	if updReq, ok := res.(*tg.Updates); ok {
+		for _, u := range updReq.Updates {
+			if m, ok := u.(*tg.UpdateNewMessage); ok {
+				if msg, ok := m.Message.(*tg.Message); ok {
+					msgID = msg.ID
+					break
+				}
+			} else if m, ok := u.(*tg.UpdateNewChannelMessage); ok {
+				if msg, ok := m.Message.(*tg.Message); ok {
+					msgID = msg.ID
+					break
+				}
+			}
+		}
+	}
+
+	if msgID <= 0 {
+		UpdateTask(taskID, "error", 0, "err_tg_msgid")
+		return
+	}
+
+	// Insert to DB
+	for i := 0; i < 5; i++ {
+		_, err = database.DB.Exec(
+			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, NULL)",
+			msgID, uniqueFilename, path, size, mimeType,
+		)
+		if err == nil {
+			break
+		}
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if err != nil {
+		UpdateTask(taskID, "error", 0, "err_db_error: "+err.Error())
+		return
+	}
+
+	// Overwrite cleanup
+	if overwrite && existingID > 0 {
+		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		if existingMsgID != nil {
+			var count int
+			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *existingMsgID)
+			if count == 0 {
+				DeleteMessages(context.Background(), cfg, []int{*existingMsgID})
+			}
+		}
+		if existingThumb != nil {
+			var count int
+			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
+			if count == 0 {
+				os.Remove(*existingThumb)
+			}
+		}
+	}
+
+	UpdateTask(taskID, "done", 100, "")
+}
+
+func isPrivateIP(urlStr string) bool {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return true
+	}
+	hostname := u.Hostname()
+	if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" {
+		return true
+	}
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return true
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
+			return true
+		}
+	}
+	return false
 }
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
@@ -409,4 +701,16 @@ func DeleteMessages(ctx context.Context, cfg *config.Config, msgIDs []int) error
 		ID:     msgIDs,
 	})
 	return err
+}
+func GetActiveTasks(username string) map[string]*UploadStatus {
+	taskMutex.Lock()
+	defer taskMutex.Unlock()
+	
+	tasks := make(map[string]*UploadStatus)
+	for id, status := range UploadTasks {
+		if status.Owner == username {
+			tasks[id] = status
+		}
+	}
+	return tasks
 }

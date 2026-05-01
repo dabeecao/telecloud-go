@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -142,6 +143,8 @@ func isChildAccountPath(dbPath string) bool {
 	database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
 	return exists > 0
 }
+
+
 
 // securityHeadersMiddleware adds standard security headers to prevent common web attacks.
 func securityHeadersMiddleware() gin.HandlerFunc {
@@ -646,7 +649,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		// we can process this in the background.
 		if async && shareMode != "public" {
 			go func() {
-				tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg, overwrite)
+				tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg, overwrite, username)
 				os.Remove(tempFilePath)
 			}()
 			
@@ -1138,7 +1141,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		})
 
 		api.GET("/ws", func(c *gin.Context) {
-			ws.HandleWebSocket(c.Writer, c.Request)
+			username := c.GetString("username")
+			ws.HandleWebSocket(c.Writer, c.Request, username)
 		})
 
 		api.GET("/files", func(c *gin.Context) {
@@ -1326,7 +1330,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 				go func() {
 					defer os.Remove(tempFilePath)
-					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, cfg, false)
+					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, cfg, false, username)
 				}()
 
 				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "Received all, pushing to Telegram"})
@@ -1339,13 +1343,68 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"status": "chunk_received", "chunk": chunkIndex})
 		})
 
+		api.POST("/remote-upload", func(c *gin.Context) {
+			remoteURL := c.PostForm("url")
+			uPath := c.PostForm("path")
+			overwrite := c.PostForm("overwrite") == "true"
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+
+			if remoteURL == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "url_required"})
+				return
+			}
+
+			// Validate URL format
+			u, err := url.ParseRequestURI(remoteURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url"})
+				return
+			}
+
+			dbPath := mapPath(uPath, username, isAdmin)
+			if isAdmin && isChildAccountPath(dbPath) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+
+			// Check if destination path exists and is a folder
+			if dbPath != "/" {
+				var folder database.File
+				err = database.DB.Get(&folder, "SELECT is_folder FROM files WHERE path = ? AND filename = ? AND is_folder = 1", filepath.Dir(dbPath), filepath.Base(dbPath))
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "folder_not_found"})
+					return
+				}
+			}
+
+			taskID := uuid.New().String()
+			go tgclient.ProcessRemoteUpload(context.Background(), remoteURL, dbPath, taskID, cfg, overwrite, cfg.MaxUploadSizeMB, username)
+
+			c.JSON(http.StatusOK, gin.H{
+				"status": "processing",
+				"task_id": taskID,
+			})
+		})
+
+		api.GET("/tasks", func(c *gin.Context) {
+			username := c.GetString("username")
+			c.JSON(http.StatusOK, gin.H{
+				"tasks": tgclient.GetActiveTasks(username),
+			})
+		})
+
 		api.POST("/cancel_upload", func(c *gin.Context) {
 			taskID := c.PostForm("task_id")
 			filename := c.PostForm("filename")
+			username := c.GetString("username")
 
-			// 1. Cancel the telegram upload if it's currently syncing
+			// 1. Cancel the telegram upload (only if owner matches)
 			if taskID != "" {
-				tgclient.CancelTask(taskID)
+				if !tgclient.CancelTask(taskID, username) {
+					c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+					return
+				}
 			}
 
 			// 2. Delete the temporary file if it's partially uploaded

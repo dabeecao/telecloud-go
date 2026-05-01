@@ -142,7 +142,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 
 	// Writing a new file
 	if err != nil && (flag&os.O_CREATE) != 0 {
-		return newFileWriter(ctx, fs.cfg, dir, base, false), nil
+		return newFileWriter(ctx, fs.cfg, dir, base, false, username), nil
 	}
 
 	if err != nil {
@@ -177,7 +177,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 
 	if (flag & os.O_WRONLY) != 0 || (flag & os.O_RDWR) != 0 {
 		// Existing file being overwritten
-		return newFileWriter(ctx, fs.cfg, dir, base, true), nil
+		return newFileWriter(ctx, fs.cfg, dir, base, true, username), nil
 	}
 
 	// Reading an existing file

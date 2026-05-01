@@ -428,6 +428,36 @@ download_file() {
     return 1
 }
 
+check_port_listening() {
+    local port=$1
+    if command -v lsof &>/dev/null; then
+        lsof -i :$port >/dev/null 2>&1
+    elif command -v netstat &>/dev/null; then
+        netstat -tuln | grep -q ":$port "
+    elif command -v ss &>/dev/null; then
+        ss -tuln | grep -q ":$port "
+    else
+        pgrep -x telecloud >/dev/null
+    fi
+}
+
+wait_for_port() {
+    local port=$1
+    local state=$2 # "open" or "closed"
+    local timeout=${3:-15}
+    local count=0
+    while [ $count -lt $timeout ]; do
+        if [ "$state" == "open" ]; then
+            check_port_listening $port && return 0
+        else
+            ! check_port_listening $port && return 0
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    return 1
+}
+
 if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     OS_TYPE="termux"
     BASE_DIR="$HOME/telecloud-go"
@@ -452,9 +482,14 @@ pause() {
 
 check_status() {
     echo "=========================================="
-    echo "            TRẠNG THÁI HỆ THỐNG             "
-    echo "=========================================="
-    [ -f "$BASE_DIR/version.txt" ] && echo "📌 Phiên bản        : $(cat $BASE_DIR/version.txt)"
+    
+    # Lấy phiên bản trực tiếp từ binary (so với main.go)
+    local BIN_VER=$("$BASE_DIR/telecloud" -version 2>/dev/null | grep -oE "v[0-9.]+" | head -n 1)
+    if [ -n "$BIN_VER" ]; then
+        echo "📌 Phiên bản        : $BIN_VER"
+    else
+        [ -f "$BASE_DIR/version.txt" ] && echo "📌 Phiên bản        : $(cat $BASE_DIR/version.txt)"
+    fi
     
     if [ -f "$BASE_DIR/.env" ]; then
         APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
@@ -466,11 +501,11 @@ check_status() {
             (systemctl is-active --quiet telecloud) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
             (systemctl is-active --quiet telecloud-tunnel) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
         else
-            (pgrep -x telecloud >/dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+            (check_port_listening ${APP_PORT:-8091}) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
         fi
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
-        (pgrep -f "\./telecloud" > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+        (check_port_listening ${APP_PORT:-8091}) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
         (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || true
     fi
     if [ -f "$BASE_DIR/domain.txt" ]; then
@@ -495,11 +530,10 @@ start_app() {
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
             echo "[+] Đang kiểm tra trạng thái..."
-            sleep 3
-            if systemctl is-active --quiet telecloud; then
+            if wait_for_port ${APP_PORT:-8091} "open" 15; then
                 echo "✅ Đã khởi động."
             else
-                echo "❌ LỖI: Ứng dụng không thể khởi chạy. Vui lòng kiểm tra log (Mục 5)."
+                echo "❌ LỖI: Ứng dụng không thể phản hồi trên cổng ${APP_PORT:-8091}. Vui lòng kiểm tra log (Mục 5)."
                 return 1
             fi
         else
@@ -520,11 +554,10 @@ start_app() {
         [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
         
         echo "[+] Đang kiểm tra trạng thái..."
-        sleep 3
-        if pgrep -f "\./telecloud" > /dev/null; then
+        if wait_for_port ${APP_PORT:-8091} "open" 15; then
             echo "✅ Đã khởi động."
         else
-            echo "❌ LỖI: Ứng dụng không thể khởi chạy. Vui lòng kiểm tra log (Mục 5)."
+            echo "❌ LỖI: Ứng dụng không thể phản hồi trên cổng ${APP_PORT:-8091}. Vui lòng kiểm tra log (Mục 5)."
             return 1
         fi
     fi
@@ -543,6 +576,10 @@ stop_app() {
         pkill -f "\./telecloud" 2>/dev/null || true
         pkill -f "cloudflared tunnel run" 2>/dev/null || true
     fi
+    
+    # Đợi ứng dụng dừng hoàn toàn (Giải phóng port)
+    APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+    wait_for_port ${APP_PORT:-8091} "closed" 10
     echo "✅ Đã dừng toàn bộ."
 }
 
@@ -758,7 +795,10 @@ update_app() {
     fi
 
     LATEST=$(echo "$API_DATA" | jq -r ".tag_name" 2>/dev/null || echo "null")
-    LOCAL=$(cat "$BASE_DIR/version.txt" 2>/dev/null)
+    
+    # Lấy phiên bản cục bộ trực tiếp từ binary
+    LOCAL=$("$BASE_DIR/telecloud" -version 2>/dev/null | grep -oE "v[0-9.]+" | head -n 1)
+    [ -z "$LOCAL" ] && LOCAL=$(cat "$BASE_DIR/version.txt" 2>/dev/null)
 
     if [ "$LATEST" == "null" ]; then
         echo "❌ Lỗi: Không nhận diện được phiên bản từ GitHub."; return
@@ -807,7 +847,6 @@ update_app() {
     rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
     hash -r 2>/dev/null
     echo "✅ Đã cập nhật xong. Vui lòng chọn Khởi động lại."
-    echo "[!] Lưu ý: Nếu bạn dùng Cloudflare, hãy Purge Cache để cập nhật giao diện mới nhất."
 }
 
 update_setup_script() {

@@ -427,6 +427,36 @@ download_file() {
     return 1
 }
 
+check_port_listening() {
+    local port=$1
+    if command -v lsof &>/dev/null; then
+        lsof -i :$port >/dev/null 2>&1
+    elif command -v netstat &>/dev/null; then
+        netstat -tuln | grep -q ":$port "
+    elif command -v ss &>/dev/null; then
+        ss -tuln | grep -q ":$port "
+    else
+        pgrep -x telecloud >/dev/null
+    fi
+}
+
+wait_for_port() {
+    local port=$1
+    local state=$2 # "open" or "closed"
+    local timeout=${3:-15}
+    local count=0
+    while [ $count -lt $timeout ]; do
+        if [ "$state" == "open" ]; then
+            check_port_listening $port && return 0
+        else
+            ! check_port_listening $port && return 0
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    return 1
+}
+
 if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     OS_TYPE="termux"
     BASE_DIR="$HOME/telecloud-go"
@@ -451,9 +481,14 @@ pause() {
 
 check_status() {
     echo "=========================================="
-    echo "               SYSTEM STATUS              "
-    echo "=========================================="
-    [ -f "$BASE_DIR/version.txt" ] && echo "📌 Version          : $(cat $BASE_DIR/version.txt)"
+    
+    # Get version directly from binary (compare with main.go)
+    local BIN_VER=$("$BASE_DIR/telecloud" -version 2>/dev/null | grep -oE "v[0-9.]+" | head -n 1)
+    if [ -n "$BIN_VER" ]; then
+        echo "📌 Version          : $BIN_VER"
+    else
+        [ -f "$BASE_DIR/version.txt" ] && echo "📌 Version          : $(cat $BASE_DIR/version.txt)"
+    fi
     
     if [ -f "$BASE_DIR/.env" ]; then
         APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
@@ -465,11 +500,11 @@ check_status() {
             (systemctl is-active --quiet telecloud) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
             (systemctl is-active --quiet telecloud-tunnel) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
         else
-            (pgrep -x telecloud >/dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+            (check_port_listening ${APP_PORT:-8091}) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
         fi
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Background): Running" || echo "❌ TMUX (Background): Stopped"
-        (pgrep -f "\./telecloud" > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+        (check_port_listening ${APP_PORT:-8091}) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
         (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || true
     fi
     if [ -f "$BASE_DIR/domain.txt" ]; then
@@ -494,11 +529,10 @@ start_app() {
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
             echo "[+] Checking status..."
-            sleep 3
-            if systemctl is-active --quiet telecloud; then
+            if wait_for_port ${APP_PORT:-8091} "open" 15; then
                 echo "✅ Application started successfully."
             else
-                echo "❌ ERROR: Application failed to start. Please check the logs (Option 5)."
+                echo "❌ ERROR: Application failed to respond on port ${APP_PORT:-8091}. Please check the logs (Option 5)."
                 return 1
             fi
         else
@@ -519,11 +553,10 @@ start_app() {
         [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
         
         echo "[+] Checking status..."
-        sleep 3
-        if pgrep -f "\./telecloud" > /dev/null; then
+        if wait_for_port ${APP_PORT:-8091} "open" 15; then
             echo "✅ Application started successfully."
         else
-            echo "❌ ERROR: Application failed to start. Please check the logs (Option 5)."
+            echo "❌ ERROR: Application failed to respond on port ${APP_PORT:-8091}. Please check the logs (Option 5)."
             return 1
         fi
     fi
@@ -542,6 +575,10 @@ stop_app() {
         pkill -f "\./telecloud" 2>/dev/null || true
         pkill -f "cloudflared tunnel run" 2>/dev/null || true
     fi
+
+    # Wait for application to stop completely (Release port)
+    APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" 2>/dev/null | cut -d'=' -f2)
+    wait_for_port ${APP_PORT:-8091} "closed" 10
     echo "✅ Stopped everything."
 }
 
@@ -757,7 +794,10 @@ update_app() {
     fi
 
     LATEST=$(echo "$API_DATA" | jq -r ".tag_name" 2>/dev/null || echo "null")
-    LOCAL=$(cat "$BASE_DIR/version.txt" 2>/dev/null)
+
+    # Get local version directly from binary
+    LOCAL=$("$BASE_DIR/telecloud" -version 2>/dev/null | grep -oE "v[0-9.]+" | head -n 1)
+    [ -z "$LOCAL" ] && LOCAL=$(cat "$BASE_DIR/version.txt" 2>/dev/null)
 
     if [ "$LATEST" == "null" ]; then
         echo "❌ Error: Could not identify version from GitHub."; return
@@ -806,7 +846,6 @@ update_app() {
     rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
     hash -r 2>/dev/null
     echo "✅ Update complete. Please choose Restart."
-    echo "[!] Note: If you use Cloudflare, please Purge Cache to get the latest interface."
 }
 
 update_setup_script() {

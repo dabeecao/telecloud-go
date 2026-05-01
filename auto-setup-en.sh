@@ -147,6 +147,8 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
         if [ "$confirm_ps" != "y" ]; then
             exit 1
         fi
+        echo "[-] It won't run anyway, why so stubborn? Try it and see..."
+        sleep 2
     fi
 
 elif [ "$(uname -s)" == "Darwin" ]; then

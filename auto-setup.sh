@@ -147,6 +147,8 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
         if [ "$confirm_ps" != "y" ]; then
             exit 1
         fi
+        echo "[-] Có chạy được đâu cố chấp làm gì... Thử đi rồi biết!"
+        sleep 2
     fi
 elif [ "$(uname -s)" == "Darwin" ]; then
     OS_TYPE="macos"

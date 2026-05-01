@@ -48,7 +48,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v2.12.1"
+	version = "v2.13.0"
 	commit  = "none"
 	date    = "unknown"
 )

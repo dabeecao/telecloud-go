@@ -15,15 +15,28 @@ check_internet() {
 
 # CPU architecture normalization function
 normalize_arch() {
-    local arch=$(uname -m)
-    case "$arch" in
-        x86_64)          echo "amd64" ;;
-        aarch64|arm64)   echo "arm64" ;;
-        armv7l|armhf)    echo "armv7" ;;
-        armv6l)          echo "armv6" ;;
-        i386|i686)       echo "386" ;;
-        *)               echo "$arch" ;;
-    esac
+    local arch
+    # Prefer dpkg in Termux for better accuracy (avoids 32-bit on 64-bit kernel issues)
+    if [ -n "$PREFIX" ] && command -v dpkg &>/dev/null; then
+        arch=$(dpkg --print-architecture)
+        case "$arch" in
+            aarch64) echo "arm64" ;;
+            arm)     echo "armv7" ;;
+            i686)    echo "386" ;;
+            x86_64)  echo "amd64" ;;
+            *)       echo "$arch" ;;
+        esac
+    else
+        arch=$(uname -m)
+        case "$arch" in
+            x86_64)          echo "amd64" ;;
+            aarch64|arm64)   echo "arm64" ;;
+            armv7l|armhf)    echo "armv7" ;;
+            armv6l)          echo "armv6" ;;
+            i386|i686)       echo "386" ;;
+            *)               echo "$arch" ;;
+        esac
+    fi
 }
 
 # Detect package manager using /etc/os-release and available commands
@@ -108,6 +121,30 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     BIN_DIR="$PREFIX/bin"
     PKG_MGR="pkg"
     echo "[+] Operating System: Termux (Android)"
+
+    # Check Termux version (Play Store versions are restricted and cause e_type errors)
+    TERMUX_VER=$(pkg info termux-tools 2>/dev/null | grep "Version" | awk '{print $2}' || echo "unknown")
+    if [ "$TERMUX_VER" == "0.101" ] || [[ "$TERMUX_VER" == *"googleplay"* ]] || [[ "$TERMUX_VERSION" == *"googleplay"* ]]; then
+        echo ""
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "⚠️  IMPORTANT WARNING: GOOGLE PLAY TERMUX DETECTED"
+        echo "----------------------------------------------------------------"
+        echo "You are using Termux from Google Play ($TERMUX_VER)."
+        echo "This version is restricted by Google's policies and CANNOT run"
+        echo "Go applications like TeleCloud on Android 10+ (Error: e_type)."
+        echo ""
+        echo "HOW TO FIX:"
+        echo "1. Uninstall the current Termux app."
+        echo "2. Download and install the latest version from F-Droid or GitHub:"
+        echo "https://github.com/termux/termux-app/releases"
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo ""
+        read -p "[?] Do you want to continue despite potential errors? (y/n): " confirm_ps
+        if [ "$confirm_ps" != "y" ]; then
+            exit 1
+        fi
+    fi
+
 elif [ "$(uname -s)" == "Darwin" ]; then
     OS_TYPE="macos"
     BASE_DIR="$HOME/telecloud-go"
@@ -399,15 +436,27 @@ set -e
 
 # --- HELPER FUNCTIONS ---
 normalize_arch() {
-    local arch=$(uname -m)
-    case "$arch" in
-        x86_64)          echo "amd64" ;;
-        aarch64|arm64)   echo "arm64" ;;
-        armv7l|armhf)    echo "armv7" ;;
-        armv6l)          echo "armv6" ;;
-        i386|i686)       echo "386" ;;
-        *)               echo "$arch" ;;
-    esac
+    local arch
+    if [ -n "$PREFIX" ] && command -v dpkg &>/dev/null; then
+        arch=$(dpkg --print-architecture)
+        case "$arch" in
+            aarch64) echo "arm64" ;;
+            arm)     echo "armv7" ;;
+            i686)    echo "386" ;;
+            x86_64)  echo "amd64" ;;
+            *)       echo "$arch" ;;
+        esac
+    else
+        arch=$(uname -m)
+        case "$arch" in
+            x86_64)          echo "amd64" ;;
+            aarch64|arm64)   echo "arm64" ;;
+            armv7l|armhf)    echo "armv7" ;;
+            armv6l)          echo "armv6" ;;
+            i386|i686)       echo "386" ;;
+            *)               echo "$arch" ;;
+        esac
+    fi
 }
 
 download_file() {

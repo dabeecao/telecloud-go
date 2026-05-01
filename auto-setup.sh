@@ -15,15 +15,28 @@ check_internet() {
 
 # Hàm chuẩn hoá kiến trúc CPU
 normalize_arch() {
-    local arch=$(uname -m)
-    case "$arch" in
-        x86_64)          echo "amd64" ;;
-        aarch64|arm64)   echo "arm64" ;;
-        armv7l|armhf)    echo "armv7" ;;
-        armv6l)          echo "armv6" ;;
-        i386|i686)       echo "386" ;;
-        *)               echo "$arch" ;;
-    esac
+    local arch
+    # Ưu tiên dùng dpkg nếu ở trong Termux để chính xác hơn (tránh lỗi 32bit trên kernel 64bit)
+    if [ -n "$PREFIX" ] && command -v dpkg &>/dev/null; then
+        arch=$(dpkg --print-architecture)
+        case "$arch" in
+            aarch64) echo "arm64" ;;
+            arm)     echo "armv7" ;;
+            i686)    echo "386" ;;
+            x86_64)  echo "amd64" ;;
+            *)       echo "$arch" ;;
+        esac
+    else
+        arch=$(uname -m)
+        case "$arch" in
+            x86_64)          echo "amd64" ;;
+            aarch64|arm64)   echo "arm64" ;;
+            armv7l|armhf)    echo "armv7" ;;
+            armv6l)          echo "armv6" ;;
+            i386|i686)       echo "386" ;;
+            *)               echo "$arch" ;;
+        esac
+    fi
 }
 
 # Hàm phát hiện package manager dựa vào /etc/os-release và lệnh có sẵn
@@ -108,6 +121,30 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     BIN_DIR="$PREFIX/bin"
     PKG_MGR="pkg"
     echo "[+] Hệ điều hành: Termux (Android)"
+
+    # Kiểm tra phiên bản Termux (Bản Play Store bị lỗi e_type)
+    # Các bản từ Play Store (0.101 hoặc có đuôi 1002) đều bị hạn chế thực thi
+    TERMUX_VER=$(pkg info termux-tools 2>/dev/null | grep "Version" | awk '{print $2}' || echo "unknown")
+    if [ "$TERMUX_VER" == "0.101" ] || [[ "$TERMUX_VER" == *"googleplay"* ]] || [[ "$TERMUX_VERSION" == *"googleplay"* ]]; then
+        echo ""
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "⚠️  CẢNH BÁO QUAN TRỌNG: PHÁT HIỆN TERMUX BẢN GOOGLE PLAY"
+        echo "----------------------------------------------------------------"
+        echo "Bạn đang sử dụng Termux tải từ Google Play ($TERMUX_VER)."
+        echo "Bản này bị hạn chế bởi chính sách của Google nên KHÔNG THỂ chạy"
+        echo "các ứng dụng Go như TeleCloud trên Android 10+ (lỗi e_type)."
+        echo ""
+        echo "CÁCH KHẮC PHỤC:"
+        echo "1. Gỡ cài đặt Termux hiện tại."
+        echo "2. Tải và cài đặt bản mới nhất từ F-Droid hoặc GitHub:"
+        echo "https://github.com/termux/termux-app/releases"
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo ""
+        read -p "[?] Bạn vẫn muốn tiếp tục mặc dù có thể gặp lỗi? (y/n): " confirm_ps
+        if [ "$confirm_ps" != "y" ]; then
+            exit 1
+        fi
+    fi
 elif [ "$(uname -s)" == "Darwin" ]; then
     OS_TYPE="macos"
     BASE_DIR="$HOME/telecloud-go"
@@ -400,15 +437,27 @@ set -e
 
 # --- CÁC HÀM TIỆN ÍCH ---
 normalize_arch() {
-    local arch=$(uname -m)
-    case "$arch" in
-        x86_64)          echo "amd64" ;;
-        aarch64|arm64)   echo "arm64" ;;
-        armv7l|armhf)    echo "armv7" ;;
-        armv6l)          echo "armv6" ;;
-        i386|i686)       echo "386" ;;
-        *)               echo "$arch" ;;
-    esac
+    local arch
+    if [ -n "$PREFIX" ] && command -v dpkg &>/dev/null; then
+        arch=$(dpkg --print-architecture)
+        case "$arch" in
+            aarch64) echo "arm64" ;;
+            arm)     echo "armv7" ;;
+            i686)    echo "386" ;;
+            x86_64)  echo "amd64" ;;
+            *)       echo "$arch" ;;
+        esac
+    else
+        arch=$(uname -m)
+        case "$arch" in
+            x86_64)          echo "amd64" ;;
+            aarch64|arm64)   echo "arm64" ;;
+            armv7l|armhf)    echo "armv7" ;;
+            armv6l)          echo "armv6" ;;
+            i386|i686)       echo "386" ;;
+            *)               echo "$arch" ;;
+        esac
+    fi
 }
 
 download_file() {

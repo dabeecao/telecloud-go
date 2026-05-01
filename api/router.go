@@ -692,10 +692,18 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		c.JSON(http.StatusOK, resp)
 	})
 
+	r.GET("/api/passkey/login/begin", LoginPasskeyBegin)
+	r.POST("/api/passkey/login/finish", LoginPasskeyFinish)
+
 	api := r.Group("/api")
 	api.Use(authMiddleware())
 	api.Use(csrfMiddleware())
 	{
+		api.GET("/passkey/register/begin", RegisterPasskeyBegin)
+		api.POST("/passkey/register/finish", RegisterPasskeyFinish)
+		api.GET("/passkeys", ListPasskeys)
+		api.DELETE("/passkeys/:id", DeletePasskey)
+		api.POST("/passkeys/:id/rename", RenamePasskey)
 		api.POST("/settings/password", func(c *gin.Context) {
 			oldPassword := c.PostForm("old_password")
 			newPassword := c.PostForm("new_password")
@@ -704,6 +712,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			isAdmin := c.GetBool("is_admin")
 
 			var dbHash string
+			var forceChange int
 			if isAdmin {
 				dbHash = database.GetSetting("admin_password_hash")
 			} else {
@@ -712,11 +721,14 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					c.JSON(http.StatusForbidden, gin.H{"error": "user_not_found"})
 					return
 				}
+				database.DB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", username)
 			}
 
-			if bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(oldPassword)) != nil {
-				c.JSON(http.StatusForbidden, gin.H{"error": "incorrect_old_password"})
-				return
+			if oldPassword != "" || forceChange == 0 {
+				if bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(oldPassword)) != nil {
+					c.JSON(http.StatusForbidden, gin.H{"error": "incorrect_old_password"})
+					return
+				}
 			}
 			
 			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -922,9 +934,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 			username := c.PostForm("username")
 			password := c.PostForm("password")
-			if username == "" || password == "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "username and password required"})
+			if username == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "username required"})
 				return
+			}
+			if password == "" {
+				password = "abc123"
 			}
 
 			// Validate username (no spaces, no special chars, only a-z, 0-9, ., _, -)
@@ -940,7 +955,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
-			hashedPassword, err := bcrypt.GenerateFromPassword([]byte("abc123"), bcrypt.DefaultCost)
+			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
 				return
@@ -1055,6 +1070,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			
 			// 4. Revoke all sessions for this user
 			tx.Exec("DELETE FROM sessions WHERE username = ?", username)
+			
+			// 5. Delete all passkeys for this user
+			tx.Exec("DELETE FROM passkeys WHERE username = ?", username)
 
 			if err := tx.Commit(); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit transaction"})

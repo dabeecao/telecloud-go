@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,7 +48,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v2.10.1"
+	version = "v2.10.0"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -99,6 +100,20 @@ func main() {
 	}
 	utils.InitCrypto(cryptoSecret)
 	utils.InitMedia(cfg.ThumbsDir)
+
+	rpid := database.GetSetting("webauthn_rpid")
+	if rpid == "" {
+		rpid = cfg.WebAuthnRPID
+	}
+	rporigin := database.GetSetting("webauthn_rporigin")
+	origins := []string{}
+	if rporigin != "" {
+		origins = strings.Split(rporigin, ",")
+	} else if cfg.WebAuthnRPOrigin != "" {
+		origins = strings.Split(cfg.WebAuthnRPOrigin, ",")
+	}
+	api.InitWebAuthn(rpid, origins)
+
 	startCleanupTask(cfg)
 
 	if err := tgclient.InitClient(cfg, *authFlag); err != nil {

@@ -22,6 +22,8 @@ type Config struct {
 	Version         string
 	SessionFile     string
 	FFMPEGPath      string
+	WebAuthnRPID     string
+	WebAuthnRPOrigin   string
 }
 
 func Load() *Config {
@@ -59,6 +61,8 @@ func Load() *Config {
 		ProxyURL:        getEnv("PROXY_URL", ""),
 		SessionFile:     getEnv("SESSION_FILE", "session.json"),
 		FFMPEGPath:      getEnv("FFMPEG_PATH", "ffmpeg"),
+		WebAuthnRPID:     getEnv("WEBAUTHN_RPID", "localhost"),
+		WebAuthnRPOrigin:   getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
 	}
 }
 

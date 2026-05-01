@@ -40,7 +40,13 @@ This project has been **completely rewritten in Golang** from the original proje
 * 📂 **WebDAV** Support: Mount TeleCloud as a network drive on your computer (Windows, macOS, Linux).
 * 🔌 **Upload API**: Allows remote file uploads via HTTP API (Bearer Token) for integration into scripts or CI/CD.
 * 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
+* 🔐 **Passkey**: Supports secure login using biometrics (TouchID/FaceID) or security keys (WebAuthn).
 * 🌐 **Multi-language**: Supports Vietnamese and English UI
+
+---
+
+> [!NOTE]
+> **From version 2.12.0 onwards**, TeleCloud implements automatic Cache Busting for static assets. You no longer need to "Purge Cache" on Cloudflare or your browser after every update.
 
 ---
 

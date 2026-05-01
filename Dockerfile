@@ -34,9 +34,10 @@ RUN BUILDARCH=$(echo "${BUILDPLATFORM}" | cut -d'/' -f2) && \
 RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh
 
 # Build Go binary for TARGET architecture
+ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build \
     -p 2 \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.version=${VERSION}" \
     -o telecloud .
 
 # Create data directory and set permissions for the nonroot user (UID 65532)

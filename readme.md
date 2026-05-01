@@ -38,7 +38,13 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 📂 Hỗ trợ **WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
 * 🔌 **Upload API**: Cho phép upload file từ xa qua HTTP API (Bearer Token) để tích hợp vào script hoặc CI/CD.
 * 👥 **Quản lý đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
+* 🔐 **Passkey**: Hỗ trợ đăng nhập bảo mật bằng vân tay, khuôn mặt hoặc khóa bảo mật (WebAuthn).
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ tiếng Việt và tiếng Anh ở giao diện sử dụng
+
+---
+
+> [!NOTE]
+> **Từ phiên bản 2.12.0 trở đi**, TeleCloud đã hỗ trợ cơ chế Cache Busting tự động cho các tệp tĩnh. Bạn không còn cần phải "Purge Cache" (Xóa cache) trên Cloudflare hay trình duyệt mỗi khi cập nhật phiên bản mới nữa.
 
 ---
 

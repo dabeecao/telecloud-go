@@ -85,9 +85,23 @@ func InitDB(dbPath string) {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS passkeys (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT NOT NULL,
+		credential_id BLOB UNIQUE NOT NULL,
+		public_key BLOB NOT NULL,
+		attestation_type TEXT,
+		aaguid BLOB,
+		sign_count INTEGER DEFAULT 0,
+		transports TEXT,
+		name TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename ON files(path, filename);
+	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
@@ -101,6 +115,9 @@ func InitDB(dbPath string) {
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN webdav_enabled INTEGER DEFAULT 1")
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN api_enabled INTEGER DEFAULT 1")
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN force_password_change INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE passkeys ADD COLUMN backup_eligible BOOLEAN DEFAULT 0")
+	DB.Exec("ALTER TABLE passkeys ADD COLUMN backup_state BOOLEAN DEFAULT 0")
+	DB.Exec("ALTER TABLE passkeys ADD COLUMN name TEXT")
 }
 
 func GetSetting(key string) string {

@@ -336,15 +336,24 @@ cloudflared_setup() {
         cloudflared tunnel login || return 1
     fi
 
+    # Lấy hoặc tạo tên tunnel ngẫu nhiên
+    if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
+        TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
+    else
+        RAND_SUFFIX=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
+        TUNNEL_NAME="telecloud-$RAND_SUFFIX"
+        echo "$TUNNEL_NAME" > "$BASE_DIR/tunnel-name.txt"
+    fi
+
     if [ ! -f "$BASE_DIR/tunnel.txt" ]; then
-        echo "[+] Đang tạo Cloudflare Tunnel..."
-        cloudflared tunnel create telecloud-tunnel > "$BASE_DIR/tunnel.txt" || return 1
+        echo "[+] Đang tạo Cloudflare Tunnel: $TUNNEL_NAME..."
+        cloudflared tunnel create "$TUNNEL_NAME" > "$BASE_DIR/tunnel.txt" || return 1
     fi
 
     read -p "Nhập tên miền của bạn (VD: telecloud.domain.com) hoặc Enter để bỏ qua: " MY_DOMAIN
     if [ ! -z "$MY_DOMAIN" ]; then
         echo "[+] Đang trỏ DNS (Force)..."
-        cloudflared tunnel route dns -f telecloud-tunnel "$MY_DOMAIN" || echo "[!] Lỗi trỏ DNS. Có thể thiết lập lại trong Menu."
+        cloudflared tunnel route dns -f "$TUNNEL_NAME" "$MY_DOMAIN" || echo "[!] Lỗi trỏ DNS. Có thể thiết lập lại trong Menu."
         echo "$MY_DOMAIN" > "$BASE_DIR/domain.txt"
         echo "✅ Đã trỏ DNS xong!"
     fi
@@ -378,6 +387,7 @@ EOF
 
         # Dịch vụ Cloudflare Tunnel (nếu có)
         if [ -f "$BASE_DIR/tunnel.txt" ]; then
+            local TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "telecloud-tunnel")
             cat > /etc/systemd/system/telecloud-tunnel.service <<EOF
 [Unit]
 Description=Telecloud Cloudflared Tunnel
@@ -385,7 +395,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$(command -v cloudflared) tunnel run --url http://localhost:$APP_PORT telecloud-tunnel
+ExecStart=$(command -v cloudflared) tunnel run --url http://localhost:$APP_PORT $TUNNEL_NAME
 Restart=always
 RestartSec=3
 
@@ -416,8 +426,9 @@ EOF
         cat > "$BASE_DIR/run-cloudflared.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
+TUNNEL_NAME=\$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "telecloud-tunnel")
 while true; do
-    cloudflared tunnel run --url http://localhost:$APP_PORT telecloud-tunnel >> "$BASE_DIR/tunnel.log" 2>&1
+    cloudflared tunnel run --url http://localhost:$APP_PORT \$TUNNEL_NAME >> "$BASE_DIR/tunnel.log" 2>&1
     sleep 3
 done
 EOF
@@ -521,7 +532,7 @@ check_status() {
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
         (pgrep -f "\./telecloud" > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || true
+        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
     fi
     if [ -f "$BASE_DIR/domain.txt" ]; then
         echo "🔗 Tên miền         : https://$(cat $BASE_DIR/domain.txt)"
@@ -633,12 +644,24 @@ manage_tunnel() {
             if [ ! -f "$HOME/.cloudflared/cert.pem" ] && [ ! -f "/etc/cloudflared/cert.pem" ]; then
                 cloudflared tunnel login
             fi
-            if [ ! -f "$BASE_DIR/tunnel.txt" ]; then
-                cloudflared tunnel create telecloud-tunnel > "$BASE_DIR/tunnel.txt"
+
+            # Lấy hoặc tạo tên tunnel ngẫu nhiên
+            if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
+                TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
+            else
+                RAND_SUFFIX=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
+                TUNNEL_NAME="telecloud-$RAND_SUFFIX"
+                echo "$TUNNEL_NAME" > "$BASE_DIR/tunnel-name.txt"
             fi
+
+            if [ ! -f "$BASE_DIR/tunnel.txt" ]; then
+                echo "[+] Đang tạo tunnel: $TUNNEL_NAME..."
+                cloudflared tunnel create "$TUNNEL_NAME" > "$BASE_DIR/tunnel.txt"
+            fi
+
             read -p "Nhập tên miền muốn trỏ (VD: telecloud.domain.com): " NEW_DOMAIN
             if [ ! -z "$NEW_DOMAIN" ]; then
-                cloudflared tunnel route dns -f telecloud-tunnel "$NEW_DOMAIN"
+                cloudflared tunnel route dns -f "$TUNNEL_NAME" "$NEW_DOMAIN"
                 if [ $? -eq 0 ]; then
                     echo "$NEW_DOMAIN" > "$BASE_DIR/domain.txt"
                     echo "✅ Đã trỏ DNS xong! (Hãy restart app để áp dụng)"
@@ -648,6 +671,7 @@ manage_tunnel() {
             fi
             ;;
         2)
+            TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "telecloud-tunnel")
             if [ "$OS_TYPE" == "linux" ]; then
                 if command -v systemctl &>/dev/null; then
                     systemctl stop telecloud-tunnel 2>/dev/null
@@ -656,9 +680,11 @@ manage_tunnel() {
             else
                 pkill -f "cloudflared tunnel run" 2>/dev/null
             fi
-            cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
+            echo "[+] Đang gỡ bỏ tunnel $TUNNEL_NAME từ Cloudflare..."
+            cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null
             rm -f "$BASE_DIR/tunnel.txt"
             rm -f "$BASE_DIR/domain.txt"
+            rm -f "$BASE_DIR/tunnel-name.txt"
             echo "✅ Đã xoá Tunnel."
             echo "📢 Hãy xoá bản ghi DNS cũ tại dash.cloudflare.com nếu không dùng nữa!"
             ;;
@@ -903,22 +929,28 @@ telecloud_commands() {
 }
 
 uninstall() {
-    echo "⚠️ CẢNH BÁO: Bạn sắp xoá sạch ứng dụng và Tunnel."
+    echo "⚠️ CẢNH BÁO: Bạn sắp xoá sạch hoàn toàn ứng dụng và dữ liệu."
     read -p "Xác nhận gỡ cài đặt? (y/n): " cf
     if [ "$cf" == "y" ]; then
+        echo "[+] Đang dừng ứng dụng..."
         stop_app
-        echo "[+] Đang xoá Tunnel trên hệ thống Cloudflare..."
-        cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
 
-        echo "------------------------------------------------------"
-        echo "📢 LƯU Ý QUAN TRỌNG:"
-        echo "Script đã xoá Tunnel trên hệ thống, nhưng bản ghi DNS"
-        echo "trên Dashboard Cloudflare vẫn còn tồn tại."
-        echo "Bạn HÃY NHỚ truy cập dash.cloudflare.com để xoá"
-        echo "bản ghi DNS cũ để tránh rác hệ thống."
-        echo "------------------------------------------------------"
+        if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
+            TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
+            echo "[+] Đang xoá Tunnel '$TUNNEL_NAME' trên hệ thống Cloudflare..."
+            cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
+            
+            echo "------------------------------------------------------"
+            echo "📢 LƯU Ý QUAN TRỌNG:"
+            echo "Script đã xoá Tunnel trên hệ thống, nhưng bản ghi DNS"
+            echo "trên Dashboard Cloudflare vẫn còn tồn tại."
+            echo "Bạn HÃY NHỚ truy cập dash.cloudflare.com để xoá"
+            echo "bản ghi DNS cũ để tránh rác hệ thống."
+            echo "------------------------------------------------------"
+        fi
         
         if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null; then
+            echo "[+] Đang xóa các dịch vụ systemd..."
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
             systemctl disable telecloud telecloud-tunnel 2>/dev/null || true
             rm -f /etc/systemd/system/telecloud.service 2>/dev/null || true
@@ -926,11 +958,17 @@ uninstall() {
             systemctl daemon-reload 2>/dev/null || true
         fi
         
-        echo "[+] Đang xóa tệp tin..."
-        [ -n "$BASE_DIR" ] && rm -rf "$BASE_DIR" || true
-        [ -n "$BIN_DIR" ] && rm -f "$BIN_DIR/telecloud" || true
+        echo "[+] Đang xóa thư mục ứng dụng: $BASE_DIR"
+        if [ -d "$BASE_DIR" ]; then
+            rm -rf "$BASE_DIR"
+        fi
+
+        echo "[+] Đang xóa lệnh 'telecloud'..."
+        if [ -n "$BIN_DIR" ] && [ -f "$BIN_DIR/telecloud" ]; then
+            rm -f "$BIN_DIR/telecloud"
+        fi
         
-        echo "✅ Đã gỡ bỏ sạch sẽ. Script sẽ thoát."
+        echo "✅ Đã gỡ bỏ sạch sẽ toàn bộ ứng dụng."
         exit
     fi
 }

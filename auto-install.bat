@@ -245,7 +245,7 @@ if !errorlevel! neq 0 (
 set /p domain="Nhap ten mien cua ban (VD: tele.domain.com): "
 if not "!domain!"=="" (
     echo [+] Dang thiet lap DNS route...
-    "!CF_EXE!" tunnel route dns !TUNNEL_NAME! !domain!
+    "!CF_EXE!" tunnel route dns -f !TUNNEL_NAME! !domain!
     echo !domain! > domain.txt
 )
 
@@ -287,7 +287,7 @@ if "!domain!"=="" (
     goto CLOUDFLARED_SETUP
 )
 echo [+] Dang cap nhat DNS route cho '!TUNNEL_NAME!'...
-"!CF_EXE!" tunnel route dns !TUNNEL_NAME! !domain!
+"!CF_EXE!" tunnel route dns -f !TUNNEL_NAME! !domain!
 echo !domain! > domain.txt
 echo [v] Da cap nhat ten mien thanh: !domain!
 pause

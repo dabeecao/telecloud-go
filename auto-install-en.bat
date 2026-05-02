@@ -245,7 +245,7 @@ if !errorlevel! neq 0 (
 set /p domain="Enter your domain (e.g. tele.yourdomain.com): "
 if not "!domain!"=="" (
     echo [+] Setting up DNS route...
-    "!CF_EXE!" tunnel route dns !TUNNEL_NAME! !domain!
+    "!CF_EXE!" tunnel route dns -f !TUNNEL_NAME! !domain!
     echo !domain! > domain.txt
 )
 
@@ -287,7 +287,7 @@ if "!domain!"=="" (
     goto CLOUDFLARED_SETUP
 )
 echo [+] Updating DNS route for '!TUNNEL_NAME!'...
-"!CF_EXE!" tunnel route dns !TUNNEL_NAME! !domain!
+"!CF_EXE!" tunnel route dns -f !TUNNEL_NAME! !domain!
 echo !domain! > domain.txt
 echo [v] Domain updated to: !domain!
 pause

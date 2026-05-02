@@ -336,15 +336,24 @@ cloudflared_setup() {
         cloudflared tunnel login || return 1
     fi
 
+    # Fetch or generate a random tunnel name
+    if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
+        TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
+    else
+        RAND_SUFFIX=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
+        TUNNEL_NAME="telecloud-$RAND_SUFFIX"
+        echo "$TUNNEL_NAME" > "$BASE_DIR/tunnel-name.txt"
+    fi
+
     if [ ! -f "$BASE_DIR/tunnel.txt" ]; then
-        echo "[+] Creating Cloudflare Tunnel..."
-        cloudflared tunnel create telecloud-tunnel > "$BASE_DIR/tunnel.txt" || return 1
+        echo "[+] Creating Cloudflare Tunnel: $TUNNEL_NAME..."
+        cloudflared tunnel create "$TUNNEL_NAME" > "$BASE_DIR/tunnel.txt" || return 1
     fi
 
     read -p "Enter your domain (e.g., telecloud.domain.com) or press Enter to skip: " MY_DOMAIN
     if [ ! -z "$MY_DOMAIN" ]; then
         echo "[+] Routing DNS (Force)..."
-        cloudflared tunnel route dns -f telecloud-tunnel "$MY_DOMAIN" || echo "[!] DNS routing failed. You can reconfigure it in the Menu."
+        cloudflared tunnel route dns -f "$TUNNEL_NAME" "$MY_DOMAIN" || echo "[!] DNS routing failed. You can reconfigure it in the Menu."
         echo "$MY_DOMAIN" > "$BASE_DIR/domain.txt"
         echo "✅ DNS routed successfully!"
     fi
@@ -378,6 +387,7 @@ EOF
 
         # Cloudflare Tunnel service (if configured)
         if [ -f "$BASE_DIR/tunnel.txt" ]; then
+            local TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "telecloud-tunnel")
             cat > /etc/systemd/system/telecloud-tunnel.service <<EOF
 [Unit]
 Description=Telecloud Cloudflared Tunnel
@@ -385,7 +395,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$(command -v cloudflared) tunnel run --url http://localhost:$APP_PORT telecloud-tunnel
+ExecStart=$(command -v cloudflared) tunnel run --url http://localhost:$APP_PORT $TUNNEL_NAME
 Restart=always
 RestartSec=3
 
@@ -416,8 +426,9 @@ EOF
         cat > "$BASE_DIR/run-cloudflared.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
+TUNNEL_NAME=\$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "telecloud-tunnel")
 while true; do
-    cloudflared tunnel run --url http://localhost:$APP_PORT telecloud-tunnel >> "$BASE_DIR/tunnel.log" 2>&1
+    cloudflared tunnel run --url http://localhost:$APP_PORT \$TUNNEL_NAME >> "$BASE_DIR/tunnel.log" 2>&1
     sleep 3
 done
 EOF
@@ -521,7 +532,7 @@ check_status() {
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Background): Running" || echo "❌ TMUX (Background): Stopped"
         (pgrep -f "\./telecloud" > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || true
+        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
     fi
     if [ -f "$BASE_DIR/domain.txt" ]; then
         echo "🔗 Domain           : https://$(cat $BASE_DIR/domain.txt)"
@@ -633,12 +644,24 @@ manage_tunnel() {
             if [ ! -f "$HOME/.cloudflared/cert.pem" ] && [ ! -f "/etc/cloudflared/cert.pem" ]; then
                 cloudflared tunnel login
             fi
-            if [ ! -f "$BASE_DIR/tunnel.txt" ]; then
-                cloudflared tunnel create telecloud-tunnel > "$BASE_DIR/tunnel.txt"
+
+            # Fetch or generate a random tunnel name
+            if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
+                TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
+            else
+                RAND_SUFFIX=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
+                TUNNEL_NAME="telecloud-$RAND_SUFFIX"
+                echo "$TUNNEL_NAME" > "$BASE_DIR/tunnel-name.txt"
             fi
+
+            if [ ! -f "$BASE_DIR/tunnel.txt" ]; then
+                echo "[+] Creating tunnel: $TUNNEL_NAME..."
+                cloudflared tunnel create "$TUNNEL_NAME" > "$BASE_DIR/tunnel.txt"
+            fi
+
             read -p "Enter the domain to route (e.g., telecloud.domain.com): " NEW_DOMAIN
             if [ ! -z "$NEW_DOMAIN" ]; then
-                cloudflared tunnel route dns -f telecloud-tunnel "$NEW_DOMAIN"
+                cloudflared tunnel route dns -f "$TUNNEL_NAME" "$NEW_DOMAIN"
                 if [ $? -eq 0 ]; then
                     echo "$NEW_DOMAIN" > "$BASE_DIR/domain.txt"
                     echo "✅ DNS routed successfully! (Please restart the app to apply)"
@@ -648,6 +671,7 @@ manage_tunnel() {
             fi
             ;;
         2)
+            TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "telecloud-tunnel")
             if [ "$OS_TYPE" == "linux" ]; then
                 if command -v systemctl &>/dev/null; then
                     systemctl stop telecloud-tunnel 2>/dev/null
@@ -656,9 +680,11 @@ manage_tunnel() {
             else
                 pkill -f "cloudflared tunnel run" 2>/dev/null
             fi
-            cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
+            echo "[+] Removing tunnel $TUNNEL_NAME from Cloudflare..."
+            cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null
             rm -f "$BASE_DIR/tunnel.txt"
             rm -f "$BASE_DIR/domain.txt"
+            rm -f "$BASE_DIR/tunnel-name.txt"
             echo "✅ Tunnel removed."
             echo "📢 Remember to remove the old DNS record at dash.cloudflare.com!"
             ;;
@@ -903,22 +929,29 @@ telecloud_commands() {
 }
 
 uninstall() {
-    echo "⚠️ WARNING: You are about to completely remove the app and Tunnel."
+    echo "⚠️ WARNING: You are about to completely remove the application and all data."
     read -p "Confirm uninstallation? (y/n): " cf
     if [ "$cf" == "y" ]; then
+        echo "[+] Stopping the application..."
         stop_app
-        echo "[+] Deleting Tunnel on Cloudflare..."
-        cloudflared tunnel delete -f telecloud-tunnel 2>/dev/null
 
-        echo "------------------------------------------------------"
-        echo "📢 IMPORTANT NOTE:"
-        echo "The script has deleted the Tunnel, but the DNS records"
-        echo "on your Cloudflare Dashboard still exist."
-        echo "PLEASE REMEMBER to visit dash.cloudflare.com and"
-        echo "delete the old DNS records to keep your setup clean."
-        echo "------------------------------------------------------"
+        if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
+            TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
+            echo "[+] Removing Tunnel '$TUNNEL_NAME' from Cloudflare system..."
+            cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
+            
+            echo "------------------------------------------------------"
+            echo "📢 IMPORTANT NOTE:"
+            echo "The script has deleted the Tunnel from the system,"
+            echo "but the DNS record on the Cloudflare Dashboard"
+            echo "still exists."
+            echo "REMEMBER to visit dash.cloudflare.com to delete"
+            echo "the old DNS record to avoid system clutter."
+            echo "------------------------------------------------------"
+        fi
         
         if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null; then
+            echo "[+] Removing systemd services..."
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
             systemctl disable telecloud telecloud-tunnel 2>/dev/null || true
             rm -f /etc/systemd/system/telecloud.service 2>/dev/null || true
@@ -926,11 +959,17 @@ uninstall() {
             systemctl daemon-reload 2>/dev/null || true
         fi
         
-        echo "[+] Removing files..."
-        [ -n "$BASE_DIR" ] && rm -rf "$BASE_DIR" || true
-        [ -n "$BIN_DIR" ] && rm -f "$BIN_DIR/telecloud" || true
+        echo "[+] Removing application directory: $BASE_DIR"
+        if [ -d "$BASE_DIR" ]; then
+            rm -rf "$BASE_DIR"
+        fi
+
+        echo "[+] Removing 'telecloud' command..."
+        if [ -n "$BIN_DIR" ] && [ -f "$BIN_DIR/telecloud" ]; then
+            rm -f "$BIN_DIR/telecloud"
+        fi
         
-        echo "✅ Uninstalled successfully. Script will exit."
+        echo "✅ Application successfully uninstalled."
         exit
     fi
 }
@@ -941,16 +980,16 @@ while true; do
     echo "         TELECLOUD MANAGER MENU           "
     echo "=========================================="
     echo "  1. System Status"
-    echo "  2. Start App"
-    echo "  3. Stop App"
-    echo "  4. Restart App"
-    echo "  5. Manage Tunnel (Install/Route/Remove)"
+    echo "  2. Start Application"
+    echo "  3. Stop Application"
+    echo "  4. Restart Application"
+    echo "  5. Manage Remote Access (Cloudflare Tunnel)"
     echo "  6. View Logs"
     echo "  7. Edit Config (.env)"
     echo "  8. Telecloud Commands (Auth / Reset Pass)"
     echo "  9. Check for Updates"
-    echo "  10. Manage Backup"
-    echo "  11. Uninstall"
+    echo "  10. Manage Backups"
+    echo "  11. Uninstall Application"
     echo "  12. Exit"
     echo "=========================================="
     read -p "Choose an option (1-12): " c

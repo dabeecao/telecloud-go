@@ -52,11 +52,19 @@ This project has been **completely rewritten in Golang** from the original proje
 
 ---
 
-## 🛠️ Automatic Installation (Linux / Termux / macOS / Raspberry Pi)
-
-This is the simplest and most automated way to install, configure, and manage TeleCloud. The script supports multiple environments such as Ubuntu, Debian, CentOS, Arch, macOS (Homebrew), Termux, and ARM architectures (Raspberry Pi).
-
 The script automatically installs dependencies (FFmpeg, Tmux, Cloudflared...), configures the service, and provides a convenient management menu via the `telecloud` command.
+
+### 🪟 Automatic Installation on Windows
+
+Easily install and manage TeleCloud on Windows using the automated script:
+
+1. Download the [**`auto-install-en.bat`**](https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-install-en.bat) file to your desired installation folder.
+2. Right-click and select **Run as Administrator**.
+3. Use the Menu to:
+    * Automatically install FFmpeg & Cloudflared.
+    * Download the latest TeleCloud release from GitHub.
+    * Simple Cloudflare Tunnel (custom domain) setup.
+    * Start/Stop application in the background and view logs.
 
 ### ⚠️ Note for Termux Users
 

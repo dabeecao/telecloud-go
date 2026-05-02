@@ -182,11 +182,9 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 
 	// Reading an existing file
 	var rs io.ReadSeeker
-	if item.MessageID != nil {
-		rs, err = tgclient.GetTelegramFileReader(ctx, *item.MessageID, item.Size, fs.cfg)
-		if err != nil {
-			return nil, err
-		}
+	rs, err = tgclient.GetTelegramFileReader(ctx, item, fs.cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	return &telecloudFile{
@@ -227,15 +225,36 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 			oldPrefix = "/" + item.Filename
 		}
 		var children []database.File
-		database.DB.Select(&children, "SELECT message_id, thumb_path FROM files WHERE (path = ? OR path LIKE ?) AND message_id IS NOT NULL", oldPrefix, oldPrefix+"/%")
+		database.DB.Select(&children, "SELECT * FROM files WHERE (path = ? OR path LIKE ?)", oldPrefix, oldPrefix+"/%")
 
 		var msgIDsToDelete []int
 		for _, child := range children {
+			// Collect parts
+			var partMsgIDs []int
+			database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", child.ID)
+			for _, pm := range partMsgIDs {
+				var count int
+				database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
+				if count <= 1 {
+					msgIDsToDelete = append(msgIDsToDelete, pm)
+				}
+			}
+
 			if child.MessageID != nil {
 				var count int
 				database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *child.MessageID)
 				if count <= 1 {
-					msgIDsToDelete = append(msgIDsToDelete, *child.MessageID)
+					// Check if not already added from parts
+					found := false
+					for _, m := range msgIDsToDelete {
+						if m == *child.MessageID {
+							found = true
+							break
+						}
+					}
+					if !found {
+						msgIDsToDelete = append(msgIDsToDelete, *child.MessageID)
+					}
 				}
 			}
 			if child.ThumbPath != nil {
@@ -250,12 +269,38 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 			tgclient.DeleteMessages(ctx, fs.cfg, msgIDsToDelete)
 		}
 	} else {
+		var msgIDsToDelete []int
+		
+		// Collect parts
+		var partMsgIDs []int
+		database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", item.ID)
+		for _, pm := range partMsgIDs {
+			var count int
+			database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
+			if count <= 1 {
+				msgIDsToDelete = append(msgIDsToDelete, pm)
+			}
+		}
+
 		if item.MessageID != nil {
 			var count int
 			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *item.MessageID)
 			if count <= 1 {
-				tgclient.DeleteMessages(ctx, fs.cfg, []int{*item.MessageID})
+				// Check if not already added from parts
+				found := false
+				for _, m := range msgIDsToDelete {
+					if m == *item.MessageID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					msgIDsToDelete = append(msgIDsToDelete, *item.MessageID)
+				}
 			}
+		}
+		if len(msgIDsToDelete) > 0 {
+			tgclient.DeleteMessages(ctx, fs.cfg, msgIDsToDelete)
 		}
 		if item.ThumbPath != nil {
 			os.Remove(*item.ThumbPath)

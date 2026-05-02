@@ -28,8 +28,8 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 
 ## ✨ Tính năng
 
-* 📁 Lưu trữ file trực tiếp trên Telegram không giới hạn dung lượng
-* 🎬 Phát video và nhạc trực tiếp trong trang quản lý và liên kết chia sẻ
+* 📁 Lưu trữ file trực tiếp trên Telegram **không giới hạn dung lượng** (Tự động chia nhỏ file siêu lớn thành các mảnh 2GB/4GB).
+* 🎬 Phát video và nhạc trực tiếp trong trang quản lý và liên kết chia sẻ (Hỗ trợ phát mượt mà các file đã chia nhỏ).
 * 🔗 Liên kết chia sẻ có thể chọn liên kết thường hoặc link tải trực tiếp (Direct Link), hỗ trợ chia sẻ cả **Thư mục**.
 * 🗂️ Giao diện quản lý (File Browser) trực quan, hỗ trợ chế độ xem **Lưới (Grid)** và **Danh sách (List)**.
 * ⬆️ Upload song song (Multi-threading) tốc độ cao
@@ -110,8 +110,7 @@ Nội dung chính trong tệp `.env`:
 *   `API_ID` & `API_HASH`: Lấy tại [my.telegram.org](https://my.telegram.org).
 *   `LOG_GROUP_ID`: ID nhóm/kênh lưu file hoặc điền `me` để lưu vào Saved Messages.
 *   `PORT`: Cổng muốn chạy ứng dụng.
-*   `MAX_UPLOAD_SIZE_MB`: Kích thước file tối đa được phép upload. Đặt là `0` để hệ thống tự động nhận diện (2GB cho tài khoản thường, 4GB cho Premium).
-*   `TG_UPLOAD_THREADS`: (Tùy chọn) Số luồng upload đồng thời. Mặc định là `2`. Có thể tăng lên `4` nếu mạng mạnh, hoặc giảm xuống `1` nếu bị Telegram ngắt kết nối liên tục khi upload file lớn.
+*   `TG_UPLOAD_THREADS`: (Tùy chọn) Số luồng upload đồng thời cho mỗi file part. Mặc định là `2`. Có thể tăng lên `4` nếu mạng mạnh.
 *   `DATABASE_PATH`: (Tùy chọn) Đường dẫn tới file database (mặc định: `database.db`).
 *   `THUMBS_DIR`: (Tùy chọn) Đường dẫn tới thư mục chứa ảnh thumbnail (mặc định: `./static/thumbs`).
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).

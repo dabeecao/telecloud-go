@@ -420,7 +420,6 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 
 		c.HTML(http.StatusOK, "index.html", gin.H{
-			"max_upload_size_mb":     cfg.MaxUploadSizeMB,
 			"webdav_enabled":         webdavEnabled,
 			"global_webdav_enabled":  globalWebdavEnabled,
 			"webdav_user":            webdavUser,
@@ -572,22 +571,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			isAdmin = false
 		}
 
-		// Limit request body to prevent OOM / disk-exhaustion attacks.
-		// Allow max upload size + 32 KB overhead for multipart form fields.
-		maxBytes := int64(cfg.MaxUploadSizeMB) * 1024 * 1024
-		if maxBytes <= 0 {
-			maxBytes = 4000 * 1024 * 1024 // fallback: 4 GB (premium Telegram limit)
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes+32*1024)
-
 		file, header, err := c.Request.FormFile("file")
 		if err != nil {
-			if err.Error() == "http: request body too large" {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-					"error": fmt.Sprintf("File too large. Maximum allowed size is %d MB", cfg.MaxUploadSizeMB),
-				})
-				return
-			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided"})
 			return
 		}
@@ -625,17 +610,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			return
 		}
 
-		// Validate kích thước thực tế sau khi ghi xong (không tin vào header.Size do client cung cấp)
-		if cfg.MaxUploadSizeMB > 0 {
-			fi, statErr := os.Stat(tempFilePath)
-			if statErr == nil && fi.Size() > int64(cfg.MaxUploadSizeMB)*1024*1024 {
-				os.Remove(tempFilePath)
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-					"error": fmt.Sprintf("File too large. Maximum allowed size is %d MB", cfg.MaxUploadSizeMB),
-				})
-				return
-			}
-		}
+		// Multi-part upload allows any size, splitting will happen in ProcessCompleteUpload
 
 		mimeType := header.Header.Get("Content-Type")
 		if mimeType == "" {
@@ -649,7 +624,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		// we can process this in the background.
 		if async && shareMode != "public" {
 			go func() {
-				tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, path, mimeType, taskID, cfg, overwrite, username)
+				tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, cfg, overwrite, username)
 				os.Remove(tempFilePath)
 			}()
 			
@@ -664,7 +639,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 		// Synchronous upload — block until Telegram upload + DB insert done
 		defer os.Remove(tempFilePath)
-		fileID, finalName, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, filename, path, mimeType, cfg, overwrite)
+		fileID, finalName, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, filename, dbPath, mimeType, cfg, overwrite, username)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed: " + err.Error()})
 			return
@@ -1382,7 +1357,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			if taskID == "" {
 				taskID = uuid.New().String()
 			}
-			go tgclient.ProcessRemoteUpload(context.Background(), remoteURL, dbPath, taskID, cfg, overwrite, cfg.MaxUploadSizeMB, username)
+			go tgclient.ProcessRemoteUpload(context.Background(), remoteURL, dbPath, taskID, cfg, overwrite, username)
 
 			c.JSON(http.StatusOK, gin.H{
 				"status": "processing",
@@ -1527,22 +1502,50 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 							newPrefix = "/" + uniqueName
 						}
 						
-						_, err = tx.Exec(`INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, share_token)
-                            SELECT message_id, filename, ? || SUBSTR(path, ?), size, mime_type, is_folder, thumb_path, NULL
-                            FROM files WHERE path = ? OR path LIKE ?`, newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+						var children []database.File
+						err = tx.Select(&children, "SELECT * FROM files WHERE path = ? OR path LIKE ?", oldPrefix, oldPrefix+"/%")
 						if err != nil {
 							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 							return
+						}
+						
+						for _, child := range children {
+							newChildPath := newPrefix + child.Path[len(oldPrefix):]
+							res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
+								child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath)
+							if err != nil {
+								c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+								return
+							}
+							
+							if !child.IsFolder {
+								newChildID, err := res.LastInsertId()
+								if err == nil {
+									_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newChildID, child.ID)
+									if err != nil {
+										c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+										return
+									}
+								}
+							}
 						}
 					} else {
 						// Only copy files that have a valid Telegram message reference
 						if item.MessageID == nil {
 							continue
 						}
-						_, err = tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath)
+						res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath)
 						if err != nil {
 							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 							return
+						}
+						newFileID, err := res.LastInsertId()
+						if err == nil {
+							_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newFileID, item.ID)
+							if err != nil {
+								c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+								return
+							}
 						}
 					}
 				}
@@ -1576,15 +1579,36 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					oldPrefix = "/" + item.Filename
 				}
 				var children []database.File
-				database.DB.Select(&children, "SELECT message_id, thumb_path FROM files WHERE (path = ? OR path LIKE ?) AND message_id IS NOT NULL", oldPrefix, oldPrefix+"/%")
+				database.DB.Select(&children, "SELECT * FROM files WHERE (path = ? OR path LIKE ?)", oldPrefix, oldPrefix+"/%")
 
 				var msgIDsToDelete []int
 				for _, child := range children {
+					// Collect parts
+					var partMsgIDs []int
+					database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", child.ID)
+					for _, pm := range partMsgIDs {
+						var count int
+						database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
+						if count <= 1 {
+							msgIDsToDelete = append(msgIDsToDelete, pm)
+						}
+					}
+
 					if child.MessageID != nil {
 						var count int
 						database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *child.MessageID)
 						if count <= 1 {
-							msgIDsToDelete = append(msgIDsToDelete, *child.MessageID)
+							// Check if not already added from parts
+							found := false
+							for _, m := range msgIDsToDelete {
+								if m == *child.MessageID {
+									found = true
+									break
+								}
+							}
+							if !found {
+								msgIDsToDelete = append(msgIDsToDelete, *child.MessageID)
+							}
 						}
 					}
 					if child.ThumbPath != nil {
@@ -1604,11 +1628,33 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 			} else {
 				var msgIDsToDelete []int
+				
+				// Collect parts
+				var partMsgIDs []int
+				database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", item.ID)
+				for _, pm := range partMsgIDs {
+					var count int
+					database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
+					if count <= 1 {
+						msgIDsToDelete = append(msgIDsToDelete, pm)
+					}
+				}
+
 				if item.MessageID != nil {
 					var count int
 					database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *item.MessageID)
 					if count <= 1 {
-						msgIDsToDelete = append(msgIDsToDelete, *item.MessageID)
+						// Check if not already added from parts
+						found := false
+						for _, m := range msgIDsToDelete {
+							if m == *item.MessageID {
+								found = true
+								break
+							}
+						}
+						if !found {
+							msgIDsToDelete = append(msgIDsToDelete, *item.MessageID)
+						}
 					}
 				}
 				if item.ThumbPath != nil {
@@ -1743,7 +1789,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		api.GET("/files/:id/stream", func(c *gin.Context) {
 			id, _ := strconv.Atoi(c.Param("id"))
 			var item database.File
-			if err := database.DB.Get(&item, "SELECT path, message_id, filename, mime_type, size FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+			if err := database.DB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
 				c.AbortWithStatus(http.StatusNotFound)
 				return
 			}
@@ -1759,14 +1805,14 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 				c.Header("Content-Type", mime)
 			}
-			tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
+			tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg)
 		})
 	}
 
 	r.GET("/download/:id", authMiddleware(), func(c *gin.Context) {
 		id, _ := strconv.Atoi(c.Param("id"))
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT path, message_id, filename, mime_type, size FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+		if err := database.DB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 			return
 		}
@@ -1783,7 +1829,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 		c.SetCookie("dl_started", "1", 15, "/", "", false, false)
 
-		if err := tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg); err != nil {
+		if err := tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg); err != nil {
 			// Handle error
 			fmt.Println("Stream error:", err)
 		}
@@ -1798,7 +1844,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT message_id, filename, mime_type, size FROM files WHERE share_token = ?", *shareToken); err != nil || item.MessageID == nil {
+		if err := database.DB.Get(&item, "SELECT * FROM files WHERE share_token = ?", *shareToken); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 			return
 		}
@@ -1808,7 +1854,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.Header("Content-Type", *item.MimeType)
 		}
 
-		if err := tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg); err != nil {
+		if err := tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg); err != nil {
 			fmt.Println("Stream error:", err)
 		}
 	})
@@ -1893,7 +1939,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	r.GET("/s/:token/stream", func(c *gin.Context) {
 		token := c.Param("token")
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT message_id, filename, size, mime_type FROM files WHERE share_token = ?", token); err != nil || item.MessageID == nil {
+		if err := database.DB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil || item.MessageID == nil {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
@@ -1906,13 +1952,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.Header("Content-Type", mime)
 		}
 		
-		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
+		tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg)
 	})
 
 	r.POST("/s/:token/dl", func(c *gin.Context) {
 		token := c.Param("token")
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT message_id, filename, size, mime_type FROM files WHERE share_token = ?", token); err != nil || item.MessageID == nil {
+		if err := database.DB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
@@ -1923,7 +1969,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 		c.SetCookie("dl_started", "1", 15, "/", "", false, false)
 
-		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
+		tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg)
 	})
 
 	r.GET("/s/:token/thumb", func(c *gin.Context) {
@@ -1953,7 +1999,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT message_id, filename, size, mime_type, path FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+		if err := database.DB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
@@ -1971,7 +2017,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.Header("Content-Type", mime)
 		}
 		
-		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
+		tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg)
 	})
 
 	r.GET("/s/:token/file/:id/dl", func(c *gin.Context) {
@@ -1990,7 +2036,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 
 		var item database.File
-		if err := database.DB.Get(&item, "SELECT message_id, filename, size, mime_type, path FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+		if err := database.DB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
@@ -2006,7 +2052,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 		c.SetCookie("dl_started", "1", 15, "/", "", false, false)
 
-		tgclient.ServeTelegramFile(c.Request, c.Writer, *item.MessageID, item.Filename, item.Size, cfg)
+		tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg)
 	})
 
 	r.GET("/s/:token/file/:id/thumb", func(c *gin.Context) {

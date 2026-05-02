@@ -11,7 +11,6 @@ import (
 type Config struct {
 	APIID           int
 	APIHash         string
-	MaxUploadSizeMB int
 	UploadThreads   int
 	DatabasePath    string
 	ThumbsDir       string
@@ -24,6 +23,7 @@ type Config struct {
 	FFMPEGPath      string
 	WebAuthnRPID     string
 	WebAuthnRPOrigin   string
+	MaxPartSize      int64
 }
 
 func Load() *Config {
@@ -39,8 +39,6 @@ func Load() *Config {
 		log.Fatal("Error: API_ID and API_HASH must be set in .env. Please get them from https://my.telegram.org")
 	}
 
-	maxUploadSizeMB, _ := strconv.Atoi(getEnv("MAX_UPLOAD_SIZE_MB", "0"))
-
 	uploadThreads, _ := strconv.Atoi(getEnv("TG_UPLOAD_THREADS", "2"))
 	if uploadThreads <= 0 {
 		uploadThreads = 2
@@ -48,10 +46,12 @@ func Load() *Config {
 
 	logGroupID := os.Getenv("LOG_GROUP_ID")
 
+	// MaxPartSize will be auto-detected in tgclient based on account status (Premium/Regular)
+	maxPartSizeMB := int64(1900) 
+
 	return &Config{
 		APIID:           apiID,
 		APIHash:         apiHash,
-		MaxUploadSizeMB: maxUploadSizeMB,
 		UploadThreads:   uploadThreads,
 		DatabasePath:    getEnv("DATABASE_PATH", "database.db"),
 		ThumbsDir:       getEnv("THUMBS_DIR", "static/thumbs"),
@@ -63,6 +63,7 @@ func Load() *Config {
 		FFMPEGPath:      getEnv("FFMPEG_PATH", "ffmpeg"),
 		WebAuthnRPID:     getEnv("WEBAUTHN_RPID", "localhost"),
 		WebAuthnRPOrigin:   getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
+		MaxPartSize:      maxPartSizeMB * 1024 * 1024,
 	}
 }
 

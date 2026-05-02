@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"telecloud/config"
+	"telecloud/database"
 
 	"github.com/gotd/td/tg"
 )
@@ -110,10 +111,10 @@ func (r *tgFileReader) Seek(offset int64, whence int) (int64, error) {
 	return r.offset, nil
 }
 
-func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filename string, size int64, cfg *config.Config) error {
+func ServeTelegramFile(c *http.Request, w http.ResponseWriter, file database.File, cfg *config.Config) error {
 	ctx := c.Context()
 
-	reader, err := GetTelegramFileReader(ctx, msgID, size, cfg)
+	reader, err := GetTelegramFileReader(ctx, file, cfg)
 	if err != nil {
 		return err
 	}
@@ -123,13 +124,32 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, msgID int, filena
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 
 	// Serve inline so browsers play it directly instead of downloading
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, file.Filename))
 
-	http.ServeContent(w, c, filename, time.Time{}, reader)
+	http.ServeContent(w, c, file.Filename, time.Time{}, reader)
 	return nil
 }
 
-func GetTelegramFileReader(ctx context.Context, msgID int, size int64, cfg *config.Config) (io.ReadSeeker, error) {
+func GetTelegramFileReader(ctx context.Context, file database.File, cfg *config.Config) (io.ReadSeeker, error) {
+	// Check if this file has multiple parts
+	parts, err := database.GetFileParts(file.ID)
+	if err == nil && len(parts) > 1 {
+		return &multiPartReader{
+			ctx:   ctx,
+			parts: parts,
+			size:  file.Size,
+			cfg:   cfg,
+		}, nil
+	}
+
+	// Single part (or legacy file)
+	if file.MessageID == nil {
+		return nil, fmt.Errorf("file has no message ID")
+	}
+	return getSinglePartReader(ctx, *file.MessageID, file.Size, cfg)
+}
+
+var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *config.Config) (io.ReadSeeker, error) {
 	// Check cache first
 	cacheMutex.RLock()
 	cached, ok := locationCache[msgID]
@@ -215,4 +235,90 @@ func GetTelegramFileReader(ctx context.Context, msgID int, size int64, cfg *conf
 	}
 
 	return reader, nil
+}
+
+type multiPartReader struct {
+	ctx    context.Context
+	parts  []database.FilePart
+	size   int64
+	offset int64
+	cfg    *config.Config
+
+	currentReader io.ReadSeeker
+	currentIndex  int
+}
+
+func (r *multiPartReader) Read(p []byte) (int, error) {
+	if r.offset >= r.size {
+		return 0, io.EOF
+	}
+
+	for {
+		if r.currentReader == nil {
+			// Find which part contains the current offset
+			var partStart int64
+			found := false
+			for i, p := range r.parts {
+				if r.offset < partStart+p.Size {
+					r.currentIndex = i
+					reader, err := getSinglePartReader(r.ctx, p.MessageID, p.Size, r.cfg)
+					if err != nil {
+						return 0, err
+					}
+					// Seek to the relative offset within this part
+					_, err = reader.Seek(r.offset-partStart, io.SeekStart)
+					if err != nil {
+						return 0, err
+					}
+					r.currentReader = reader
+					found = true
+					break
+				}
+				partStart += p.Size
+			}
+			if !found {
+				return 0, io.EOF
+			}
+		}
+
+		n, err := r.currentReader.Read(p)
+		if n > 0 {
+			r.offset += int64(n)
+			return n, nil
+		}
+		if err == io.EOF {
+			r.currentReader = nil
+			r.currentIndex++
+			if r.currentIndex >= len(r.parts) {
+				return 0, io.EOF
+			}
+			continue
+		}
+		return n, err
+	}
+}
+
+func (r *multiPartReader) Seek(offset int64, whence int) (int64, error) {
+	var newOffset int64
+	switch whence {
+	case io.SeekStart:
+		newOffset = offset
+	case io.SeekCurrent:
+		newOffset = r.offset + offset
+	case io.SeekEnd:
+		newOffset = r.size + offset
+	}
+
+	if newOffset < 0 {
+		newOffset = 0
+	}
+	if newOffset > r.size {
+		newOffset = r.size
+	}
+
+	if newOffset != r.offset {
+		r.offset = newOffset
+		r.currentReader = nil // Force re-acquisition and seek of the correct part
+	}
+	return r.offset, nil
 }

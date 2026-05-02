@@ -141,8 +141,8 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 			return fmt.Errorf("not authorized, please run with -auth flag first to login")
 		}
 
-		// Detect MaxUploadSizeMB if not set
-		if cfg.MaxUploadSizeMB <= 0 {
+		// Always detect Telegram account status to set part size
+		{
 			api := Client.API()
 			fullUser, err := api.UsersGetFullUser(ctx, &tg.InputUserSelf{})
 			if err == nil {
@@ -154,14 +154,14 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 					}
 				}
 				if isPremium {
-					cfg.MaxUploadSizeMB = 4000
+					cfg.MaxPartSize = 3900 * 1024 * 1024
 				} else {
-					cfg.MaxUploadSizeMB = 2000
+					cfg.MaxPartSize = 1900 * 1024 * 1024
 				}
-				log.Printf("Detected Telegram account status: Premium=%v. Automatically setting MaxUploadSizeMB to %d", isPremium, cfg.MaxUploadSizeMB)
+				log.Printf("Detected Telegram account status: Premium=%v. Automatically setting MaxPartSize to %d bytes", isPremium, cfg.MaxPartSize)
 			} else {
-				cfg.MaxUploadSizeMB = 2000 // Fallback
-				log.Printf("Could not detect Telegram account status: %v. Using default 2000 MB", err)
+				cfg.MaxPartSize = 1900 * 1024 * 1024 // Fallback
+				log.Printf("Could not detect Telegram account status: %v. Using default limits", err)
 			}
 		}
 

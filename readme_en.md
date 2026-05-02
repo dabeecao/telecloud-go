@@ -30,8 +30,8 @@ This project has been **completely rewritten in Golang** from the original proje
 
 ## ✨ Features
 
-* 📁 Store files directly on Telegram with virtually unlimited storage
-* 🎬 Stream videos and music directly in the web interface and shared links
+* 📁 Store files directly on Telegram with **unlimited file size** (Automatically splits large files into 2GB/4GB parts).
+* 🎬 Stream videos and music directly in the web interface and shared links (Seamless streaming of split files).
 * 🔗 Share links with options for normal links, direct download links, and **Folder Sharing**.
 * 🗂️ Intuitive file management interface (File Browser) with **Grid** and **List** view modes.
 * ⬆️ High-speed parallel uploads (multi-threading)
@@ -119,8 +119,7 @@ Main fields in `.env`:
 * `API_ID` & `API_HASH`: Get from [https://my.telegram.org](https://my.telegram.org)
 * `LOG_GROUP_ID`: ID of the group/channel storing files or use `me` for Saved Messages
 * `PORT`: Port to run the application
-* `MAX_UPLOAD_SIZE_MB`: Maximum upload file size. Set to `0` for automatic detection (2GB for Normal, 4GB for Premium accounts)
-* `TG_UPLOAD_THREADS`: (Optional) Number of concurrent upload threads. Default is `2`. Increase to `4` for maximum speed, or decrease to `1` if Telegram forcefully closes your connection during large uploads.
+* `TG_UPLOAD_THREADS`: (Optional) Number of concurrent upload threads per file part. Default is `2`. Increase to `4` for maximum speed.
 * `DATABASE_PATH`: (Optional) Path to the database file (default: `database.db`)
 * `THUMBS_DIR`: (Optional) Directory for storing thumbnails (default: `./static/thumbs`)
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process.

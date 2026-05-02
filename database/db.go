@@ -98,10 +98,20 @@ func InitDB(dbPath string) {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS file_parts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		file_id INTEGER NOT NULL,
+		message_id INTEGER NOT NULL,
+		part_index INTEGER NOT NULL,
+		size INTEGER NOT NULL,
+		FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename ON files(path, filename);
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
+	CREATE INDEX IF NOT EXISTS idx_file_parts_file_id ON file_parts(file_id);
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
@@ -118,6 +128,23 @@ func InitDB(dbPath string) {
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN backup_eligible BOOLEAN DEFAULT 0")
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN backup_state BOOLEAN DEFAULT 0")
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN name TEXT")
+	
+	// Ensure foreign keys are enabled
+	DB.Exec("PRAGMA foreign_keys = ON")
+}
+
+type FilePart struct {
+	ID        int   `db:"id" json:"id"`
+	FileID    int   `db:"file_id" json:"file_id"`
+	MessageID int   `db:"message_id" json:"message_id"`
+	PartIndex int   `db:"part_index" json:"part_index"`
+	Size      int64 `db:"size" json:"size"`
+}
+
+func GetFileParts(fileID int) ([]FilePart, error) {
+	var parts []FilePart
+	err := DB.Select(&parts, "SELECT * FROM file_parts WHERE file_id = ? ORDER BY part_index ASC", fileID)
+	return parts, err
 }
 
 func GetSetting(key string) string {

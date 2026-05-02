@@ -309,15 +309,11 @@ create_env() {
         read -p "LOG_GROUP_ID [Mặc định me]: " LOG_GROUP_ID
         LOG_GROUP_ID=${LOG_GROUP_ID:-me}
 
-        read -p "MAX_UPLOAD_SIZE_MB [Mặc định 0 - Tự nhận diện]: " MAX_UPLOAD
-        MAX_UPLOAD=${MAX_UPLOAD:-0}
-
         cat > "$BASE_DIR/.env" <<EOF
 API_ID=$API_ID
 API_HASH=$API_HASH
 LOG_GROUP_ID=$LOG_GROUP_ID
 PORT=$PORT
-MAX_UPLOAD_SIZE_MB=$MAX_UPLOAD
 EOF
         
         if command -v ffmpeg &> /dev/null; then
@@ -861,7 +857,6 @@ update_app() {
     rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
     hash -r 2>/dev/null
     echo "✅ Đã cập nhật xong. Vui lòng chọn Khởi động lại."
-    echo "[!] Lưu ý: Nếu bạn dùng Cloudflare, hãy Purge Cache để cập nhật giao diện mới nhất."
 }
 
 update_setup_script() {

@@ -181,14 +181,7 @@ func (w *fileWriter) Close() error {
 
 		// Push to Telegram in background
 		go func() {
-			// Enforce MaxUploadSizeMB: kiểm tra kích thước thực sau khi ghi xong
-			if w.cfg.MaxUploadSizeMB > 0 {
-				fi, statErr := os.Stat(w.tempPath)
-				if statErr == nil && fi.Size() > int64(w.cfg.MaxUploadSizeMB)*1024*1024 {
-					os.Remove(w.tempPath)
-					return // Bỏ qua – vượt giới hạn kích thước
-				}
-			}
+			// Multi-part upload allows any size
 
 			// Detect MIME type from extension
 			mimeType := mime.TypeByExtension(filepath.Ext(w.filename))

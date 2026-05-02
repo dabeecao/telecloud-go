@@ -788,6 +788,13 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		}
 	}
 	success = true
+	
+	// Generate thumbnail and update DB
+	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
+	if localThumb != nil {
+		database.DB.Exec("UPDATE files SET thumb_path = ? WHERE id = ?", *localThumb, fileID)
+	}
+
 	return fileID, uniqueFilename, nil
 }
 

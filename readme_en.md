@@ -36,7 +36,6 @@ This project has been **completely rewritten in Golang** from the original proje
 * 🗂️ Intuitive file management interface (File Browser) with **Grid** and **List** view modes.
 * ⬆️ High-speed parallel uploads (multi-threading)
 * 📦 Chunked uploads for better speed and stability
-* 👤 Supports **Userbot** with powerful **MTProto** (upload files up to 2GB/4GB)
 * 📂 **WebDAV** Support: Mount TeleCloud as a network drive on your computer (Windows, macOS, Linux).
 * 🔌 **Upload API**: Allows remote file uploads via HTTP API (Bearer Token) for integration into scripts or CI/CD.
 * 📥 **URL Download**: Supports downloading files directly from a URL to your storage.

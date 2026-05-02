@@ -34,7 +34,6 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 🗂️ Giao diện quản lý (File Browser) trực quan, hỗ trợ chế độ xem **Lưới (Grid)** và **Danh sách (List)**.
 * ⬆️ Upload song song (Multi-threading) tốc độ cao
 * 📦 Upload chia nhỏ (chunk) để tối ưu tốc độ và ổn định
-* 👤 Hỗ trợ **Userbot** với **MTProto** mạnh mẽ (tải lên file lớn đến 2GB/4GB)
 * 📂 Hỗ trợ **WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
 * 🔌 **Upload API**: Cho phép upload file từ xa qua HTTP API (Bearer Token) để tích hợp vào script hoặc CI/CD.
 * 📥 **Tải từ URL**: Hỗ trợ tải tệp trực tiếp từ đường dẫn URL về bộ lưu trữ.

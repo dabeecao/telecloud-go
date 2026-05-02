@@ -122,7 +122,7 @@ func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode)
 		}
 	}
 
-	_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", base, dir)
+	_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder, owner) VALUES (?, ?, 1, ?)", base, dir, username)
 	return err
 }
 
@@ -335,7 +335,7 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 		return os.ErrNotExist
 	}
 
-	uniqueName := database.GetUniqueFilename(tx, newDir, newBase, item.IsFolder, item.ID)
+	uniqueName := database.GetUniqueFilename(tx, newDir, newBase, item.IsFolder, item.ID, username)
 	
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename

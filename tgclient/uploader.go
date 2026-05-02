@@ -207,7 +207,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	uniqueFilename := filename
 	if !overwrite || existingID == 0 {
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 	}
 
 	api := Client.API()
@@ -218,14 +218,14 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	for i := 0; i < 5; i++ {
 		var res sql.Result
 		res, dbErr = database.DB.Exec(
-			"INSERT INTO files (filename, path, size, mime_type, is_folder) VALUES (?, ?, ?, ?, 0)",
-			uniqueFilename, path, fileSize, mimeType,
+			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+			uniqueFilename, path, fileSize, mimeType, owner,
 		)
 		if dbErr == nil {
 			fileID, _ = res.LastInsertId()
 			break
 		}
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -496,7 +496,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 	uniqueFilename := filename
 	if !overwrite || existingID == 0 {
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 	}
 
 	api := Client.API()
@@ -507,14 +507,14 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	for i := 0; i < 5; i++ {
 		var res sql.Result
 		res, dbErr = database.DB.Exec(
-			"INSERT INTO files (filename, path, size, mime_type, is_folder) VALUES (?, ?, ?, ?, 0)",
-			uniqueFilename, path, size, mimeType,
+			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+			uniqueFilename, path, size, mimeType, owner,
 		)
 		if dbErr == nil {
 			fileID, _ = res.LastInsertId()
 			break
 		}
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -672,7 +672,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 
 	uniqueFilename := filename
 	if !overwrite || existingID == 0 {
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 	}
 
 	fileInfo, _ := os.Stat(filePath)
@@ -695,7 +695,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 			fileID, _ = res.LastInsertId()
 			break
 		}
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0)
+		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 		time.Sleep(100 * time.Millisecond)
 	}
 	if dbErr != nil {

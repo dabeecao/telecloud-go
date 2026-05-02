@@ -19,6 +19,7 @@ type File struct {
 	ShareToken *string   `db:"share_token" json:"share_token"`
 	IsFolder   bool      `db:"is_folder" json:"is_folder"`
 	ThumbPath  *string   `db:"thumb_path" json:"thumb_path"`
+	Owner      string    `db:"owner" json:"owner"`
 	CreatedAt  time.Time `db:"created_at" json:"created_at"`
 	
 	// Virtual fields
@@ -60,6 +61,7 @@ func InitDB(dbPath string) {
 		share_token TEXT UNIQUE,
 		is_folder BOOLEAN DEFAULT 0,
 		thumb_path TEXT,
+		owner TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -109,7 +111,6 @@ func InitDB(dbPath string) {
 
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
-	CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename ON files(path, filename);
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
 	CREATE INDEX IF NOT EXISTS idx_file_parts_file_id ON file_parts(file_id);
 	`
@@ -128,6 +129,8 @@ func InitDB(dbPath string) {
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN backup_eligible BOOLEAN DEFAULT 0")
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN backup_state BOOLEAN DEFAULT 0")
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN name TEXT")
+	DB.Exec("ALTER TABLE files ADD COLUMN owner TEXT DEFAULT ''")
+	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename_owner ON files(path, filename, owner)")
 	
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
@@ -170,7 +173,7 @@ type Queryer interface {
 	Get(dest interface{}, query string, args ...interface{}) error
 }
 
-func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeID int) string {
+func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeID int, owner string) string {
 	if filename == "" {
 		return "unnamed"
 	}
@@ -180,7 +183,7 @@ func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeI
 
 	for counter <= 1000 {
 		var id int
-		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND id != ? LIMIT 1", path, finalName, excludeID)
+		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND owner = ? AND id != ? LIMIT 1", path, finalName, owner, excludeID)
 		if err != nil { // Not found or error
 			break
 		}

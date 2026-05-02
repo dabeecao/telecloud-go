@@ -1000,7 +1000,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			// Create the user folder
-			_, err = tx.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, '/', 1)", username)
+			_, err = tx.Exec("INSERT INTO files (filename, path, is_folder, owner) VALUES (?, '/', 1, ?)", username, username)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create folder"})
 				return
@@ -1191,8 +1191,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 			}
 
-			uniqueName := database.GetUniqueFilename(database.DB, dbPath, name, true, 0)
-			_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, dbPath)
+			uniqueName := database.GetUniqueFilename(database.DB, dbPath, name, true, 0, username)
+			_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder, owner) VALUES (?, ?, 1, ?)", uniqueName, dbPath, username)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -1454,7 +1454,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				if req.Action == "move" {
 					excludeID = item.ID
 				}
-				uniqueName := database.GetUniqueFilename(tx, req.Destination, item.Filename, item.IsFolder, excludeID)
+				username := c.GetString("username")
+				uniqueName := database.GetUniqueFilename(tx, req.Destination, item.Filename, item.IsFolder, excludeID, username)
 
 				switch req.Action {
 				case "move":
@@ -1487,7 +1488,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					}
 				case "copy":
 					if item.IsFolder {
-						_, err = tx.Exec("INSERT INTO files (filename, path, is_folder) VALUES (?, ?, 1)", uniqueName, req.Destination)
+						_, err = tx.Exec("INSERT INTO files (filename, path, is_folder, owner) VALUES (?, ?, 1, ?)", uniqueName, req.Destination, username)
 						if err != nil {
 							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 							return
@@ -1511,8 +1512,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 						
 						for _, child := range children {
 							newChildPath := newPrefix + child.Path[len(oldPrefix):]
-							res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
-								child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath)
+							res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+								child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath, username)
 							if err != nil {
 								c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 								return
@@ -1534,7 +1535,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 						if item.MessageID == nil {
 							continue
 						}
-						res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path) VALUES (?, ?, ?, ?, ?, 0, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath)
+						res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, 0, ?, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath, username)
 						if err != nil {
 							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 							return
@@ -1706,7 +1707,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				}
 			}
 
-			uniqueName := database.GetUniqueFilename(tx, item.Path, newName, item.IsFolder, id)
+			username := c.GetString("username")
+			uniqueName := database.GetUniqueFilename(tx, item.Path, newName, item.IsFolder, id, username)
 
 			if item.IsFolder {
 				basePath := item.Path

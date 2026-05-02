@@ -425,6 +425,25 @@ The project is provided **“as-is”**, without any guarantees of stability or 
 
 ---
 
+## 🌍 Contributing Translations (Localization)
+
+If you would like to contribute a new language or improve an existing translation, please follow these steps:
+
+> [!IMPORTANT]
+> The entire frontend source code of TeleCloud is hosted in a separate repository: [**dabeecao/telecloud-frontend**](https://github.com/dabeecao/telecloud-frontend). All contributions related to the UI and translations should be submitted as Pull Requests to that repository.
+
+1.  **Locate translation files**: Language files are located in the `static/locales/` directory (within the frontend repository) in JSON format (e.g., `en.json`, `vi.json`).
+2.  **Add a new language**:
+    *   Create a new JSON file with the ISO language code (e.g., `fr.json` for French).
+    *   Copy the content from `en.json` and translate the values into your language.
+    *   Open `static/js/common.js` and add the new language to the `availableLangs` array:
+        ```javascript
+        { code: 'fr', name: 'Français', flag: '🇫🇷' }
+        ```
+3.  **Submit a Pull Request**: Submit your PR to the [telecloud-frontend](https://github.com/dabeecao/telecloud-frontend) repository. Once accepted, it will be updated in the main project via the submodule.
+
+---
+
 ## 🙏 Credits
 
 This project uses amazing libraries:

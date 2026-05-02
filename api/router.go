@@ -1308,7 +1308,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, cfg, false, username)
 				}()
 
-				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "Received all, pushing to Telegram"})
+				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "pushing_to_tg"})
 				return
 			}
 

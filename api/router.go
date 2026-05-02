@@ -121,6 +121,20 @@ func unmapPath(dbPath, username string, isAdmin bool) string {
 	return dbPath
 }
 
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+
 func verifyItemAccess(c *gin.Context, path string) bool {
 	isAdmin := c.GetBool("is_admin")
 	if isAdmin {
@@ -1890,13 +1904,15 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 		
 		c.HTML(http.StatusOK, "share.html", gin.H{
-			"filename":   item.Filename,
-			"size":       item.Size,
-			"created_at": item.CreatedAt.Format("2006-01-02 15:04:05"),
-			"token":      token,
-			"has_thumb":  hasThumb,
-			"version":    cfg.Version,
+			"filename":       item.Filename,
+			"size":           item.Size,
+			"formatted_size": formatBytes(item.Size),
+			"created_at":     item.CreatedAt.Format("2006-01-02 15:04:05"),
+			"token":          token,
+			"has_thumb":      hasThumb,
+			"version":        cfg.Version,
 		})
+
 	})
 
 	r.GET("/s/:token/api/files", func(c *gin.Context) {

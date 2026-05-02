@@ -150,7 +150,7 @@ func newFileWriter(ctx context.Context, cfg *config.Config, dir, filename string
 	taskID := uuid.New().String()
 	tempDir := filepath.Join(cfg.TempDir, "webdav")
 	os.MkdirAll(tempDir, os.ModePerm)
-	tempPath := filepath.Join(tempDir, taskID+"_"+filename)
+	tempPath := filepath.Join(tempDir, taskID+"_"+filepath.Base(filename))
 
 	f, _ := os.OpenFile(tempPath, os.O_CREATE|os.O_RDWR, 0644)
 

@@ -1244,8 +1244,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 			taskID := c.PostForm("task_id")
 
-			// [SECURITY] Validate taskID must be a valid UUID to prevent path traversal
-			if _, uuidErr := uuid.Parse(taskID); uuidErr != nil {
+			// [SECURITY] Basic validation for taskID to prevent path traversal characters
+			if taskID == "" || strings.Contains(taskID, "..") || strings.ContainsAny(taskID, "/\\") {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_task_id"})
 				return
 			}
@@ -1271,6 +1271,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			// [SECURITY] Use filepath.Base to strip any path traversal from filename
 			safeFilename := filepath.Base(filename)
 			tempFilePath := filepath.Join(tempDir, taskID+"_"+safeFilename)
+
+			// Boundary check: ensure resolved path is still inside TempDir
+			rel, err := filepath.Rel(tempDir, tempFilePath)
+			if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_path"})
+				return
+			}
 
 			// Constant chunk size from frontend is 10MB
 			const chunkSize = 10 * 1024 * 1024
@@ -1412,14 +1419,16 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			if taskID != "" && filename != "" {
 				// [SECURITY FIX CRIT-01] Validate taskID is a UUID and sanitize filename
 				// to prevent path traversal attacks (e.g. filename="../../database.db")
-				if _, uuidErr := uuid.Parse(taskID); uuidErr != nil {
+				// [SECURITY FIX] Basic validation for taskID
+				if taskID == "" || strings.Contains(taskID, "..") || strings.ContainsAny(taskID, "/\\") {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_task_id"})
 					return
 				}
 				safeFilename := filepath.Base(filename) // Strip any path components
 				tempFilePath := filepath.Join(cfg.TempDir, taskID+"_"+safeFilename)
 				// Boundary check: ensure resolved path is still inside TempDir
-				if !strings.HasPrefix(filepath.Clean(tempFilePath), filepath.Clean(cfg.TempDir)) {
+				rel, err := filepath.Rel(cfg.TempDir, tempFilePath)
+				if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_path"})
 					return
 				}

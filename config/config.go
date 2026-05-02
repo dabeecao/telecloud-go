@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/joho/godotenv"
@@ -57,7 +58,7 @@ func Load() *Config {
 		ThumbsDir:       getEnv("THUMBS_DIR", "static/thumbs"),
 		LogGroupID:      logGroupID,
 		Port:            getEnv("PORT", "8091"),
-		TempDir:         getEnv("TEMP_DIR", os.TempDir()+"/telecloud_temp_chunks"),
+		TempDir:         getEnv("TEMP_DIR", filepath.Join(os.TempDir(), "telecloud_temp_chunks")),
 		ProxyURL:        getEnv("PROXY_URL", ""),
 		SessionFile:     getEnv("SESSION_FILE", "session.json"),
 		FFMPEGPath:      getEnv("FFMPEG_PATH", "ffmpeg"),

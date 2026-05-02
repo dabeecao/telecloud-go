@@ -1863,7 +1863,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		token := c.Param("token")
 		var item database.File
 		if err := database.DB.Get(&item, "SELECT filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ?", token); err != nil {
-			c.HTML(http.StatusNotFound, "error.html", gin.H{"error_message": "File not found or link has been revoked."})
+			c.HTML(http.StatusNotFound, "error.html", gin.H{
+				"error_message": "File not found or link has been revoked.",
+				"version":       cfg.Version,
+			})
 			return
 		}
 		
@@ -1885,11 +1888,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		}
 		
 		c.HTML(http.StatusOK, "share.html", gin.H{
-			"filename": item.Filename,
-			"size": item.Size,
+			"filename":   item.Filename,
+			"size":       item.Size,
 			"created_at": item.CreatedAt.Format("2006-01-02 15:04:05"),
-			"token": token,
-			"has_thumb": hasThumb,
+			"token":      token,
+			"has_thumb":  hasThumb,
+			"version":    cfg.Version,
 		})
 	})
 

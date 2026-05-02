@@ -1243,6 +1243,13 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			taskID := c.PostForm("task_id")
+
+			// [SECURITY] Validate taskID must be a valid UUID to prevent path traversal
+			if _, uuidErr := uuid.Parse(taskID); uuidErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_task_id"})
+				return
+			}
+
 			chunkIndex, err := strconv.Atoi(c.PostForm("chunk_index"))
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid chunk_index"})
@@ -1261,7 +1268,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 			tempDir := cfg.TempDir
 			os.MkdirAll(tempDir, os.ModePerm)
-			tempFilePath := filepath.Join(tempDir, taskID+"_"+filename)
+			// [SECURITY] Use filepath.Base to strip any path traversal from filename
+			safeFilename := filepath.Base(filename)
+			tempFilePath := filepath.Join(tempDir, taskID+"_"+safeFilename)
 
 			// Constant chunk size from frontend is 10MB
 			const chunkSize = 10 * 1024 * 1024
@@ -1401,7 +1410,19 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 			// 2. Delete the temporary file if it's partially uploaded
 			if taskID != "" && filename != "" {
-				tempFilePath := filepath.Join(cfg.TempDir, taskID+"_"+filename)
+				// [SECURITY FIX CRIT-01] Validate taskID is a UUID and sanitize filename
+				// to prevent path traversal attacks (e.g. filename="../../database.db")
+				if _, uuidErr := uuid.Parse(taskID); uuidErr != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_task_id"})
+					return
+				}
+				safeFilename := filepath.Base(filename) // Strip any path components
+				tempFilePath := filepath.Join(cfg.TempDir, taskID+"_"+safeFilename)
+				// Boundary check: ensure resolved path is still inside TempDir
+				if !strings.HasPrefix(filepath.Clean(tempFilePath), filepath.Clean(cfg.TempDir)) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_path"})
+					return
+				}
 				os.Remove(tempFilePath)
 			}
 

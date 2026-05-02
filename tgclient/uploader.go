@@ -453,8 +453,8 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	size := resp.ContentLength
 	// Multi-part remote upload allows any size
 
-	// Determine filename
-	filename = filepath.Base(url)
+	// Determine filename from final URL after redirects
+	filename = filepath.Base(resp.Request.URL.Path)
 	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
 		if _, params, err := mime.ParseMediaType(cd); err == nil {
 			if f, ok := params["filename"]; ok {

@@ -44,7 +44,12 @@ import (
 	"telecloud/ws"
 )
 
-//go:embed web/templates web/static/css/*.min.css web/static/css/tailwind.css web/static/css/plyr.css web/static/css/prism.css web/static/js/*.min.js web/static/js/plyr.polyfilled.js web/static/js/prism.js web/static/fonts web/static/webfonts web/static/favicon.ico web/static/locales/*.min.json
+//go:embed web/templates
+//go:embed web/static/css/*.min.css web/static/css/tailwind.css web/static/css/plyr.css web/static/css/prism.css
+//go:embed web/static/js/*.min.js web/static/js/plyr.polyfilled.js web/static/js/prism.js
+//go:embed web/static/fonts web/static/webfonts
+//go:embed web/static/favicon.ico
+//go:embed web/static/locales/*.min.json
 var contentFS embed.FS
 
 var (

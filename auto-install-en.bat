@@ -25,7 +25,7 @@ echo ==========================================
 echo       TeleCloud Management Menu (Windows)
 echo ==========================================
 echo 1. Install / Update TeleCloud
-echo 2. Setup Cloudflare Tunnel
+echo 2. Manage Cloudflare Tunnel
 echo 3. Authenticate with Telegram (First Time)
 echo 4. Start TeleCloud (Background)
 echo 5. Stop TeleCloud
@@ -126,15 +126,42 @@ pause
 goto MENU
 
 :CLOUDFLARED_SETUP
+cls
+echo ==========================================
+echo     Cloudflare Tunnel Manager
+echo ==========================================
+echo 1. Setup / Update tunnel
+echo 2. View tunnel status
+echo 3. Change domain
+echo 4. Delete tunnel
+echo 5. Back
+echo ==========================================
+set /p cf_choice="Select an option (1-5): "
+
+if "!cf_choice!"=="1" goto CF_DO_SETUP
+if "!cf_choice!"=="2" goto CF_STATUS
+if "!cf_choice!"=="3" goto CF_CHANGE_DOMAIN
+if "!cf_choice!"=="4" goto CF_DELETE
+if "!cf_choice!"=="5" goto MENU
+goto CLOUDFLARED_SETUP
+
+:: -------------------------------------------------------
+:CF_DO_SETUP
 echo [+] Checking for Cloudflared...
-where cloudflared >nul 2>nul
-if !errorlevel! equ 0 (
-    echo [v] Cloudflared is already installed on the system.
+
+set "CF_EXE="
+if exist "cloudflared.exe" (
+    set "CF_EXE=%CD%\cloudflared.exe"
+    echo [v] Found cloudflared.exe in current directory.
     goto CF_LOGIN
 )
 
-if exist "cloudflared.exe" (
-    echo [v] Found cloudflared.exe in current directory.
+:: Refresh PATH to detect winget-installed cloudflared
+for /f "tokens=*" %%p in ('powershell -NoProfile -Command "[System.Environment]::GetEnvironmentVariable('PATH','Machine')"') do set "PATH=%%p;%PATH%"
+where cloudflared >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [v] Cloudflared is already installed on the system.
+    set "CF_EXE=cloudflared"
     goto CF_LOGIN
 )
 
@@ -143,40 +170,156 @@ where winget >nul 2>nul
 if !errorlevel! equ 0 (
     echo [+] Installing via winget...
     winget install Cloudflare.cloudflared
-    if !errorlevel! equ 0 goto CF_LOGIN
+    for /f "tokens=*" %%p in ('powershell -NoProfile -Command "[System.Environment]::GetEnvironmentVariable('PATH','Machine')"') do set "PATH=%%p;%PATH%"
+    where cloudflared >nul 2>nul
+    if !errorlevel! equ 0 (
+        set "CF_EXE=cloudflared"
+        goto CF_LOGIN
+    )
 )
 
-echo [!] winget not found or installation failed. Downloading cloudflared.exe directly...
+echo [!] winget not available. Downloading cloudflared.exe directly...
 powershell -Command "$progressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile 'cloudflared.exe'"
 
 if exist "cloudflared.exe" (
     echo [v] Downloaded cloudflared.exe successfully.
+    set "CF_EXE=%CD%\cloudflared.exe"
 ) else (
     echo [!] Could not download cloudflared.exe.
     pause
-    goto MENU
+    goto CLOUDFLARED_SETUP
 )
 
 :CF_LOGIN
-echo [+] Logging into Cloudflare...
-cloudflared tunnel login
-
-echo [+] Creating tunnel 'telecloud-tunnel'...
-cloudflared tunnel create telecloud-tunnel
-if %errorlevel% neq 0 (
-    echo [!] Tunnel creation skipped (it may already exist).
+if "!CF_EXE!"=="" (
+    if exist "cloudflared.exe" (
+        set "CF_EXE=%CD%\cloudflared.exe"
+    ) else (
+        set "CF_EXE=cloudflared"
+    )
 )
 
+:: Skip login if already authenticated (cert.pem exists)
+if exist "%USERPROFILE%\.cloudflared\cert.pem" (
+    echo [v] Already logged into Cloudflare, skipping login.
+    goto CF_CREATE_TUNNEL
+)
+
+echo [+] Opening browser to log into Cloudflare...
+"!CF_EXE!" tunnel login
+if !errorlevel! neq 0 (
+    echo [!] Cloudflare login failed. Please try again.
+    pause
+    goto CLOUDFLARED_SETUP
+)
+
+:CF_CREATE_TUNNEL
+:: Load saved tunnel name or generate a new random one
+set "TUNNEL_NAME="
+if exist "tunnel-name.txt" (
+    for /f "usebackq tokens=*" %%a in ("tunnel-name.txt") do set "TUNNEL_NAME=%%a"
+)
+if "!TUNNEL_NAME!"=="" (
+    for /f "tokens=*" %%r in ('powershell -NoProfile -Command "-join ('abcdefghijklmnopqrstuvwxyz0123456789'.ToCharArray() | Get-Random -Count 6)"') do set "RAND_SUFFIX=%%r"
+    set "TUNNEL_NAME=telecloud-!RAND_SUFFIX!"
+    echo !TUNNEL_NAME! > tunnel-name.txt
+    echo [+] New tunnel name: !TUNNEL_NAME!
+)
+
+:: Check if tunnel already exists
+"!CF_EXE!" tunnel info !TUNNEL_NAME! >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [v] Tunnel '!TUNNEL_NAME!' already exists, skipping creation.
+    goto CF_DOMAIN
+)
+
+echo [+] Creating tunnel '!TUNNEL_NAME!'...
+"!CF_EXE!" tunnel create !TUNNEL_NAME!
+if !errorlevel! neq 0 (
+    echo [!] Tunnel creation failed. Please check and try again.
+    pause
+    goto CLOUDFLARED_SETUP
+)
+
+:CF_DOMAIN
 set /p domain="Enter your domain (e.g. tele.yourdomain.com): "
-if not "%domain%"=="" (
+if not "!domain!"=="" (
     echo [+] Setting up DNS route...
-    cloudflared tunnel route dns telecloud-tunnel %domain%
-    echo %domain% > domain.txt
+    "!CF_EXE!" tunnel route dns !TUNNEL_NAME! !domain!
+    echo !domain! > domain.txt
 )
 
-echo [v] Cloudflare Tunnel setup finished.
+echo [v] Cloudflare Tunnel setup complete.
 pause
-goto MENU
+goto CLOUDFLARED_SETUP
+
+:: -------------------------------------------------------
+:CF_STATUS
+cls
+echo [+] Fetching tunnel info...
+if exist "cloudflared.exe" ( set "CF_EXE=%CD%\cloudflared.exe" ) else ( set "CF_EXE=cloudflared" )
+set "TUNNEL_NAME=telecloud"
+if exist "tunnel-name.txt" (
+    for /f "usebackq tokens=*" %%a in ("tunnel-name.txt") do set "TUNNEL_NAME=%%a"
+)
+echo [+] Tunnel name: !TUNNEL_NAME!
+"!CF_EXE!" tunnel info !TUNNEL_NAME!
+if !errorlevel! neq 0 (
+    echo [!] Tunnel '!TUNNEL_NAME!' not found. It may not have been created yet.
+)
+if exist "domain.txt" (
+    for /f "usebackq tokens=*" %%a in ("domain.txt") do echo [+] Current domain: %%a
+)
+pause
+goto CLOUDFLARED_SETUP
+
+:: -------------------------------------------------------
+:CF_CHANGE_DOMAIN
+if exist "cloudflared.exe" ( set "CF_EXE=%CD%\cloudflared.exe" ) else ( set "CF_EXE=cloudflared" )
+set "TUNNEL_NAME=telecloud"
+if exist "tunnel-name.txt" (
+    for /f "usebackq tokens=*" %%a in ("tunnel-name.txt") do set "TUNNEL_NAME=%%a"
+)
+set /p domain="Enter new domain (e.g. tele.yourdomain.com): "
+if "!domain!"=="" (
+    echo [!] Domain cannot be empty.
+    pause
+    goto CLOUDFLARED_SETUP
+)
+echo [+] Updating DNS route for '!TUNNEL_NAME!'...
+"!CF_EXE!" tunnel route dns !TUNNEL_NAME! !domain!
+echo !domain! > domain.txt
+echo [v] Domain updated to: !domain!
+pause
+goto CLOUDFLARED_SETUP
+
+:: -------------------------------------------------------
+:CF_DELETE
+set "TUNNEL_NAME=telecloud"
+if exist "tunnel-name.txt" (
+    for /f "usebackq tokens=*" %%a in ("tunnel-name.txt") do set "TUNNEL_NAME=%%a"
+)
+echo [!] WARNING: This will permanently delete tunnel '!TUNNEL_NAME!' from Cloudflare!
+set /p confirm_del="Type YES to confirm deletion: "
+if /i not "!confirm_del!"=="YES" (
+    echo [x] Cancelled.
+    pause
+    goto CLOUDFLARED_SETUP
+)
+if exist "cloudflared.exe" ( set "CF_EXE=%CD%\cloudflared.exe" ) else ( set "CF_EXE=cloudflared" )
+echo [+] Removing DNS route...
+"!CF_EXE!" tunnel route dns --overwrite-dns !TUNNEL_NAME! >nul 2>nul
+echo [+] Deleting tunnel...
+"!CF_EXE!" tunnel delete -f !TUNNEL_NAME!
+if !errorlevel! equ 0 (
+    echo [v] Tunnel deleted successfully.
+    if exist "domain.txt" del domain.txt
+    if exist "tunnel-name.txt" del tunnel-name.txt
+) else (
+    echo [!] Tunnel deletion failed. Please check and try again.
+)
+pause
+goto CLOUDFLARED_SETUP
 
 :AUTH
 echo [+] Starting authentication flow...
@@ -202,14 +345,18 @@ powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c %BIN_NA
 if exist "domain.txt" (
     for /f "usebackq tokens=*" %%a in ("domain.txt") do set "MY_DOMAIN=%%a"
     if not "!MY_DOMAIN!"=="" (
+        set "TUNNEL_NAME=telecloud"
+        if exist "tunnel-name.txt" (
+            for /f "usebackq tokens=*" %%t in ("tunnel-name.txt") do set "TUNNEL_NAME=%%t"
+        )
         set "APP_PORT=8091"
         for /f "tokens=2 delims==" %%i in ('findstr /R "^PORT=" .env 2^>nul') do (
             set "TMP_PORT=%%i"
             set "TMP_PORT=!TMP_PORT: =!"
             if not "!TMP_PORT!"=="" set "APP_PORT=!TMP_PORT!"
         )
-        echo [+] Starting Cloudflare Tunnel for !MY_DOMAIN! on port !APP_PORT!...
-        powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c cloudflared tunnel run --url http://localhost:!APP_PORT! telecloud-tunnel >> tunnel.log 2>&1' -WindowStyle Hidden"
+        echo [+] Starting Cloudflare Tunnel '!TUNNEL_NAME!' for !MY_DOMAIN! on port !APP_PORT!...
+        powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c cloudflared tunnel run --url http://localhost:!APP_PORT! !TUNNEL_NAME! >> tunnel.log 2>&1' -WindowStyle Hidden"
     )
 )
 
@@ -228,7 +375,7 @@ goto MENU
 :VIEW_LOGS
 cls
 echo ==========================================
-echo 1. View App Logs (Telecloud)
+echo 1. View App Logs (TeleCloud)
 echo 2. View Tunnel Logs (Cloudflared)
 echo 3. Back
 echo ==========================================

@@ -124,20 +124,22 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request, username string) {
 }
 
 type TaskUpdate struct {
-	TaskID  string `json:"task_id"`
-	Status  string `json:"status"`
-	Percent int    `json:"percent"`
-	Message string `json:"message,omitempty"`
-	Size    int64  `json:"size,omitempty"`
+	TaskID        string `json:"task_id"`
+	Status        string `json:"status"`
+	Percent       int    `json:"percent"`
+	Message       string `json:"message,omitempty"`
+	Size          int64  `json:"size,omitempty"`
+	UploadedBytes int64  `json:"uploaded_bytes,omitempty"`
 }
 
-func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, size int64) {
+func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, size int64, uploadedBytes int64) {
 	update := TaskUpdate{
-		TaskID:  taskID,
-		Status:  status,
-		Percent: percent,
-		Message: msg,
-		Size:    size,
+		TaskID:        taskID,
+		Status:        status,
+		Percent:       percent,
+		Message:       msg,
+		Size:          size,
+		UploadedBytes: uploadedBytes,
 	}
 	data, err := json.Marshal(update)
 	if err != nil {

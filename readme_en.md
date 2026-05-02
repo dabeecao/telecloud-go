@@ -52,9 +52,10 @@ This project has been **completely rewritten in Golang** from the original proje
 
 ---
 
-The script automatically installs dependencies (FFmpeg, Tmux, Cloudflared...), configures the service, and provides a convenient management menu via the `telecloud` command.
 
-### 🪟 Automatic Installation on Windows
+## 🛠️ Automatic Installation
+
+### Automatic Installation on Windows
 
 Easily install and manage TeleCloud on Windows using the automated script:
 
@@ -66,12 +67,11 @@ Easily install and manage TeleCloud on Windows using the automated script:
     * Simple Cloudflare Tunnel (custom domain) setup.
     * Start/Stop application in the background and view logs.
 
-### ⚠️ Note for Termux Users
+### Automatic Installation on Linux / Termux / macOS / Raspberry Pi
 
-For Termux, you should download Termux from one of the following sources:
+This is the simplest and most automated way to install, configure, and manage TeleCloud. The script supports multiple environments such as Ubuntu, Debian, CentOS, Arch, macOS (Homebrew), Termux, and ARM architectures (Raspberry Pi).
 
-- [GitHub Releases (recommended)](https://github.com/termux/termux-app/releases)
-- [F-Droid](https://f-droid.org/packages/com.termux/)
+The script automatically installs dependencies (FFmpeg, Tmux, Cloudflared...), configures the service, and provides a convenient management menu via the `telecloud` command.
 
 **Usage (Universal Command):**
 ```bash
@@ -88,6 +88,13 @@ Or if you have already cloned the repository:
 chmod +x auto-setup-en.sh
 ./auto-setup-en.sh
 ```
+
+#### ⚠️ Note for Termux Users
+
+For Termux, you should download Termux from one of the following sources:
+
+- [GitHub Releases (recommended)](https://github.com/termux/termux-app/releases)
+- [F-Droid](https://f-droid.org/packages/com.termux/)
 
 ---
 

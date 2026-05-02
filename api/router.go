@@ -1129,6 +1129,25 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.JSON(http.StatusOK, tgclient.GetTask(taskID))
 		})
 
+		api.GET("/upload/check/:task_id", func(c *gin.Context) {
+			taskID := c.Param("task_id")
+			username := c.GetString("username")
+
+			// Check if task exists and belongs to user
+			var task struct {
+				ID string `db:"id"`
+			}
+			err := database.DB.Get(&task, "SELECT id FROM upload_tasks WHERE id = ? AND owner = ?", taskID, username)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"chunks": []int{}})
+				return
+			}
+
+			var chunks []int
+			database.DB.Select(&chunks, "SELECT chunk_index FROM upload_chunks WHERE task_id = ? ORDER BY chunk_index ASC", taskID)
+			c.JSON(http.StatusOK, gin.H{"chunks": chunks})
+		})
+
 		api.GET("/ws", func(c *gin.Context) {
 			username := c.GetString("username")
 			ws.HandleWebSocket(c.Writer, c.Request, username)
@@ -1296,6 +1315,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
+			// Store metadata in DB if it's the first chunk
+			database.DB.Exec("INSERT OR IGNORE INTO upload_tasks (id, filename, owner) VALUES (?, ?, ?)", taskID, safeFilename, username)
+
 			// WriteAt is safe for concurrent goroutines writing non-overlapping offsets
 			out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
@@ -1309,19 +1331,29 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
-			// Lock only to update the received-chunks map
-			state.Lock()
-			if state.received[chunkIndex] {
-				// Chunk đã được nhận rồi (do retry gửi lại) – idempotent, bỏ qua
-				state.Unlock()
-				c.JSON(http.StatusOK, gin.H{"status": "chunk_already_received", "chunk": chunkIndex})
+			// Record chunk in DB
+			_, err = database.DB.Exec("INSERT OR IGNORE INTO upload_chunks (task_id, chunk_index) VALUES (?, ?)", taskID, chunkIndex)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_record_chunk"})
 				return
 			}
+
+			// Update in-memory tracker (for active progress)
+			state.Lock()
+			// If memory tracker is empty but DB has chunks (after restart), we should sync them
+			// but for simplicity, we just trust the memory tracker for the current session
+			// and use DB for "Resume" check API.
 			state.received[chunkIndex] = true
-			actualReceived := len(state.received)
+			
+			// Count total chunks from DB to be accurate
+			var actualReceived int
+			database.DB.Get(&actualReceived, "SELECT COUNT(*) FROM upload_chunks WHERE task_id = ?", taskID)
+			
 			isDone := actualReceived == totalChunks
 			if isDone {
 				chunkTrackerSync.Delete(taskID)
+				database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskID)
+				database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskID)
 			}
 			state.Unlock()
 
@@ -1433,6 +1465,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					return
 				}
 				os.Remove(tempFilePath)
+				chunkTrackerSync.Delete(taskID)
+				database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskID)
+				database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskID)
 			}
 
 			c.JSON(http.StatusOK, gin.H{"status": "cancelled"})

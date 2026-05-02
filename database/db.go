@@ -109,6 +109,20 @@ func InitDB(dbPath string) {
 		FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
 	);
 
+	CREATE TABLE IF NOT EXISTS upload_tasks (
+		id TEXT PRIMARY KEY,
+		filename TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS upload_chunks (
+		task_id TEXT NOT NULL,
+		chunk_index INTEGER NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (task_id, chunk_index)
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);

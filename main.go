@@ -98,11 +98,16 @@ func main() {
 	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
 		log.Printf("Warning: Could not create TempDir: %v\n", err)
 	} else {
-		// Startup cleanup: remove all files in temp dir from previous sessions
+		// Startup cleanup: remove only old files in temp dir from previous sessions
+		// to allow resumable uploads after server restart.
+		now := time.Now()
 		files, _ := os.ReadDir(cfg.TempDir)
 		for _, f := range files {
 			if !f.IsDir() {
-				os.Remove(filepath.Join(cfg.TempDir, f.Name()))
+				info, err := f.Info()
+				if err == nil && now.Sub(info.ModTime()) > 24*time.Hour {
+					os.Remove(filepath.Join(cfg.TempDir, f.Name()))
+				}
 			}
 		}
 	}
@@ -236,6 +241,13 @@ func startCleanupTask(cfg *config.Config) {
 				}
 				if now.Sub(info.ModTime()) > 24*time.Hour {
 					os.Remove(path)
+					// Extract taskId from filename (taskId_filename)
+					filename := filepath.Base(path)
+					if idx := strings.Index(filename, "_"); idx != -1 {
+						taskId := filename[:idx]
+						database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskId)
+						database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskId)
+					}
 				}
 				return nil
 			})

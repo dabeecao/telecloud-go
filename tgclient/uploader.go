@@ -40,23 +40,24 @@ var (
 )
 
 type UploadStatus struct {
-	Status   string `json:"status"`
-	Percent  int    `json:"percent"`
-	Message  string `json:"message,omitempty"`
-	Filename string `json:"filename,omitempty"`
-	Owner    string `json:"owner,omitempty"`
-	Size     int64  `json:"size,omitempty"`
+	Status        string `json:"status"`
+	Percent       int    `json:"percent"`
+	Message       string `json:"message,omitempty"`
+	Filename      string `json:"filename,omitempty"`
+	Owner         string `json:"owner,omitempty"`
+	Size          int64  `json:"size,omitempty"`
+	UploadedBytes int64  `json:"uploaded_bytes,omitempty"`
 }
 
 func UpdateTask(taskID string, status string, percent int, msg string) {
-	UpdateTaskWithFile(taskID, status, percent, msg, "", "", 0)
+	UpdateTaskWithFile(taskID, status, percent, msg, "", "", 0, 0)
 }
 
-func UpdateTaskWithSize(taskID string, status string, percent int, msg string, size int64) {
-	UpdateTaskWithFile(taskID, status, percent, msg, "", "", size)
+func UpdateTaskWithSize(taskID string, status string, percent int, msg string, size int64, uploaded int64) {
+	UpdateTaskWithFile(taskID, status, percent, msg, "", "", size, uploaded)
 }
 
-func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64) {
+func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64, uploaded int64) {
 	taskMutex.Lock()
 	defer taskMutex.Unlock()
 
@@ -86,15 +87,23 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 		finalSize = existing.Size
 	}
 
-	UploadTasks[taskID] = &UploadStatus{
-		Status:   status,
-		Percent:  percent,
-		Message:  msg,
-		Filename: finalFilename,
-		Owner:    finalOwner,
-		Size:     finalSize,
+	var finalUploaded int64
+	if uploaded > 0 {
+		finalUploaded = uploaded
+	} else if existing, ok := UploadTasks[taskID]; ok {
+		finalUploaded = existing.UploadedBytes
 	}
-	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, finalSize)
+
+	UploadTasks[taskID] = &UploadStatus{
+		Status:        status,
+		Percent:       percent,
+		Message:       msg,
+		Filename:      finalFilename,
+		Owner:        finalOwner,
+		Size:          finalSize,
+		UploadedBytes: finalUploaded,
+	}
+	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, finalSize, finalUploaded)
 
 	// Auto-cleanup: remove task from memory after 5 minutes once terminal
 	if status == "done" || status == "error" {
@@ -144,8 +153,9 @@ type uploadProgress struct {
 
 func (p uploadProgress) Chunk(ctx context.Context, state uploader.ProgressState) error {
 	if p.totalSize > 0 {
-		percent := int(float64(p.previousSize+state.Uploaded) / float64(p.totalSize) * 100)
-		UpdateTask(p.taskID, "telegram", percent, "")
+		currentUploaded := p.previousSize + state.Uploaded
+		percent := int(float64(currentUploaded) / float64(p.totalSize) * 100)
+		UpdateTaskWithSize(p.taskID, "telegram", percent, "", p.totalSize, currentUploaded)
 	}
 	return nil
 }
@@ -184,18 +194,18 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		fileSize = stat.Size()
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, fileSize)
+	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, fileSize, 0)
 
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, fileSize)
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, fileSize, 0)
 		return
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, fileSize)
+	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, fileSize, 0)
 
 	// Handle overwriting: single query instead of two
 	var existingID int
@@ -331,7 +341,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	}
 
 	// Signal done to user immediately, then generate thumbnail during cooldown
-	UpdateTask(taskID, "done", 100, "")
+	UpdateTaskWithSize(taskID, "done", 100, "", fileSize, fileSize)
 	success = true
 
 	// Cooldown before releasing the semaphore slot
@@ -365,7 +375,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		cancel()
 	}()
 
-	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0)
+	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0, 0)
 
 	// SSRF Protection
 	if isPrivateIP(url) {
@@ -378,7 +388,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	case remoteUploadSemaphore <- struct{}{}:
 		defer func() { <-remoteUploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, 0)
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, 0, 0)
 		return
 	}
 
@@ -473,18 +483,18 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		mimeType = "application/octet-stream"
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, size)
+	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, size, 0)
 
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, size)
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, size, 0)
 		return
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, size)
+	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, size, 0)
 
 	// Handle overwriting
 	var existingID int

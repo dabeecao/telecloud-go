@@ -7,8 +7,11 @@ ARG TARGETARCH
 ARG BUILDPLATFORM
 WORKDIR /app
 
-# Install curl and Node.js for frontend minification
-RUN apt-get update && apt-get install -y curl nodejs npm && rm -rf /var/lib/apt/lists/*
+# Install curl and Node.js 20+ for frontend (tailwindcss oxide requires node >= 20)
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 # Download dependencies first (cache layer)
 COPY go.mod go.sum ./

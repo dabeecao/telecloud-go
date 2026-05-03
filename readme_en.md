@@ -40,6 +40,7 @@ This project has been **completely rewritten in Golang** from the original proje
 * 📂 **WebDAV** Support: Mount TeleCloud as a network drive on your computer (Windows, macOS, Linux).
 * 🔌 **Upload API**: Allows remote file uploads via HTTP API (Bearer Token) for integration into scripts or CI/CD.
 * 📥 **URL Download**: Supports downloading files directly from a URL to your storage.
+* 🎥 **Media Downloader**: Supports downloading Videos and Music from various platforms (YouTube, TikTok, Facebook...) using **yt-dlp** directly in the UI.
 * ⚡ **Background Download**: Supports background URL downloads with real-time progress notifications, no browser session required.
 * 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
 * 🔐 **Passkey**: Supports secure login using biometrics (TouchID/FaceID) or security keys (WebAuthn).
@@ -104,14 +105,14 @@ This is the fastest way to run TeleCloud without installing a development enviro
 
 ### 1. System Requirements
 
-You need to install **FFmpeg** so the system can generate thumbnails for videos and audio files.
+You need to install **FFmpeg** and **yt-dlp** for the system to generate thumbnails and download media from URLs.
 
-* **Ubuntu/Debian:** `sudo apt install ffmpeg`
-* **Redhat-based:** `sudo yum install ffmpeg` via [RPM Fusion](https://rpmfusion.org/)
-* **Alpine Linux:** `apk add ffmpeg`
-* **Windows:** Download a prebuilt version from [ffmpeg.org](https://ffmpeg.org/download.html) and add it to PATH.
+* **Ubuntu/Debian:** `sudo apt install ffmpeg python3` and download yt-dlp binary.
+* **Redhat-based:** `sudo yum install ffmpeg python3` via [RPM Fusion](https://rpmfusion.org/)
+* **Alpine Linux:** `apk add ffmpeg python3 yt-dlp`
+* **Windows:** Download a prebuilt version from [ffmpeg.org](https://ffmpeg.org/download.html) and [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) and add them to PATH.
 
-If FFmpeg is not installed, the project will still run, but thumbnail generation will not work.
+If FFmpeg or yt-dlp are not installed, the project will still run, but thumbnail generation and URL media downloading will not work.
 
 ---
 
@@ -140,6 +141,9 @@ Main fields in `.env`:
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process.
 * `PROXY_URL`: (Optional) Proxy to connect MTProto, supports HTTP and SOCKS5 (e.g. `socks5://127.0.0.1:1080`)
 * `FFMPEG_PATH`: (Optional) Path to FFmpeg (default: `ffmpeg`). Set to "disabled" to skip video/audio thumbnails if FFmpeg is not installed or causing crashes.
+* `YTDLP_PATH`: (Optional) Path to yt-dlp (default: `yt-dlp`). Set to "disabled" to skip URL media downloading if yt-dlp is not installed.
+
+* **Note on Themes**: The application supports multiple UI themes (Neon, Cyberpunk, Lavender, Forest) and a System theme mode. These are configured directly in the Web UI Settings after logging in, and do not require any environment variables.
 
 ---
 
@@ -355,32 +359,11 @@ docker compose down
 
 > 📁 All persistent data (database, thumbnails, temp files) is stored in the `./data/` directory on your host machine.
 
-### 🎬 (Optional) Enable FFmpeg for thumbnail generation
+### 🎬 FFmpeg and yt-dlp Built-in
 
-The Docker image uses a minimal base (`distroless`) and **does not include FFmpeg**. If you want thumbnail support for videos and audio files, install FFmpeg on the host and mount the binary into the container:
+The Docker image now uses Alpine Linux as its base and **includes FFmpeg and yt-dlp built-in**. 
+You **do not** need to install or mount any external binaries. Thumbnail generation and URL media downloads will work automatically out of the box!
 
-**Step 1:** Install FFmpeg on the host (if not already installed):
-```bash
-sudo apt install ffmpeg   # Ubuntu/Debian
-```
-
-**Step 2:** Add to `docker-compose.yml`:
-```yaml
-services:
-  telecloud:
-    volumes:
-      - ./data:/app/data
-      - /usr/bin/ffmpeg:/usr/bin/ffmpeg:ro   # Mount FFmpeg binary from host
-    environment:
-      - FFMPEG_PATH=/usr/bin/ffmpeg           # Tell the app where to find it
-```
-
-**Step 3:** Restart the container:
-```bash
-docker compose up -d
-```
-
-> 💡 If you don’t need thumbnails, no action is required — the app works normally without FFmpeg.
 
 ---
 
@@ -471,6 +454,7 @@ This project uses amazing libraries:
 * [plyr](https://github.com/sampotts/plyr): HTML5 media player
 * [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter — used for code highlighting in file preview.
 * [FontAwesome](https://fontawesome.com): The world's most popular icon set.
+* [yt-dlp](https://github.com/yt-dlp/yt-dlp): A feature-rich command-line audio/video downloader.
 * [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): A modern and clean sans-serif typeface.
 
 Thanks to all contributors for their great tools.

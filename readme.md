@@ -38,6 +38,7 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 📂 Hỗ trợ **WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
 * 🔌 **Upload API**: Cho phép upload file từ xa qua HTTP API (Bearer Token) để tích hợp vào script hoặc CI/CD.
 * 📥 **Tải từ URL**: Hỗ trợ tải tệp trực tiếp từ đường dẫn URL về bộ lưu trữ.
+* 🎥 **Tải đa phương tiện**: Hỗ trợ tải Video, Nhạc từ các nền tảng (YouTube, TikTok, Facebook...) bằng **yt-dlp** ngay trong giao diện.
 * ⚡ **Tải trong nền**: Hỗ trợ tải tệp từ URL trong nền, không cần treo trình duyệt, có thông báo tiến trình real-time.
 * 👥 **Quản lý đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
 * 🔐 **Passkey**: Hỗ trợ đăng nhập bảo mật bằng vân tay, khuôn mặt hoặc khóa bảo mật (WebAuthn).
@@ -101,15 +102,14 @@ Về Termux bạn nên tải nó từ một trong hai nguồn sau:
 Đây là cách nhanh nhất để chạy TeleCloud mà không cần cài đặt môi trường lập trình.
 
 ### 1. Yêu cầu hệ thống
-Bạn cần cài đặt **FFmpeg** để hệ thống có thể tạo ảnh thu nhỏ (thumbnail) cho video và tệp âm thanh.
+Bạn cần cài đặt **FFmpeg** và **yt-dlp** để hệ thống có thể tạo ảnh thu nhỏ (thumbnail) cho video/âm thanh và tải xuống tệp phương tiện từ URL.
 
-*   **Ubuntu/Debian:** `sudo apt install ffmpeg`
-*   **Redhat-base:** `sudo yum install ffmpeg` thông qua [Fedora and Red Hat Enterprise Linux packages
-](https://rpmfusion.org/)
-*   **Alpine Linux:** `apk add ffmpeg`
-*   **Windows:** Tải bản build sẵn tại [ffmpeg.org](https://ffmpeg.org/download.html) và thêm vào PATH.
+*   **Ubuntu/Debian:** `sudo apt install ffmpeg python3` và tải file binary của yt-dlp.
+*   **Redhat-base:** `sudo yum install ffmpeg python3` thông qua [Fedora and Red Hat Enterprise Linux packages](https://rpmfusion.org/)
+*   **Alpine Linux:** `apk add ffmpeg python3 yt-dlp`
+*   **Windows:** Tải bản build sẵn tại [ffmpeg.org](https://ffmpeg.org/download.html) và [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) rồi thêm vào PATH.
 
-Nếu bạn không cài FFmpeg dự án vẫn có thể hoạt động nhưng tính năng tạo thumb (ảnh thu nhỏ của tệp) sẽ không hoạt động.
+Nếu bạn không cài FFmpeg hoặc yt-dlp, dự án vẫn có thể hoạt động nhưng tính năng tạo ảnh thu nhỏ và tải tệp phương tiện từ URL sẽ không hoạt động.
 
 ### 2. Tải về TeleCloud
 Truy cập mục [**Releases**](https://github.com/dabeecao/telecloud-go/releases) và tải về phiên bản phù hợp với hệ điều hành của bạn (Linux, Windows, hoặc macOS).
@@ -131,6 +131,9 @@ Nội dung chính trong tệp `.env`:
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).
 *   `PROXY_URL`: (Tùy chọn) Proxy để kết nối MTProto, hỗ trợ HTTP và SOCKS5 (VD: `socks5://127.0.0.1:1080`).
 *   `FFMPEG_PATH`: (Tùy chọn) Đường dẫn tới file FFmpeg (mặc định: `ffmpeg`). Đặt thành "disabled" để bỏ qua hình thu nhỏ video/âm thanh nếu FFmpeg không được cài đặt hoặc gây ra lỗi.
+*   `YTDLP_PATH`: (Tùy chọn) Đường dẫn tới yt-dlp (mặc định: `yt-dlp`). Đặt thành "disabled" để bỏ qua chức năng tải tệp phương tiện nếu yt-dlp không được cài đặt.
+
+*   **Lưu ý về Theme (Giao diện)**: Ứng dụng hỗ trợ nhiều theme giao diện khác nhau (Neon, Cyberpunk, Lavender, Forest) cũng như chế độ hệ thống (System). Việc cấu hình Theme được thực hiện trực tiếp trong phần Cài đặt của Giao diện Web sau khi đăng nhập và không yêu cầu bất kỳ biến môi trường nào.
  
 #### 🔑 Lấy API_ID và API_HASH
 
@@ -330,32 +333,11 @@ docker compose down
 
 > 📁 Toàn bộ dữ liệu (database, ảnh thumbnail, file tạm) được lưu trong thư mục `./data/` trên máy chủ của bạn.
 
-### 🎬 (Tùy chọn) Bật FFmpeg để tạo thumbnail
+### 🎬 Tích hợp sẵn FFmpeg và yt-dlp
 
-Image Docker sử dụng nền tảng tối giản (`distroless`) nên **không đi kèm FFmpeg**. Nếu bạn muốn hỗ trợ tạo ảnh thu nhỏ (thumbnail) cho video và âm thanh, hãy cài FFmpeg trên máy chủ rồi mount binary vào container:
+Image Docker hiện sử dụng nền tảng Alpine Linux và **đã tích hợp sẵn FFmpeg và yt-dlp**. 
+Bạn **không cần** phải cài đặt hay mount các file thực thi (binary) bên ngoài vào. Tính năng tạo ảnh thu nhỏ và tải phương tiện từ URL sẽ hoạt động ngay lập tức!
 
-**Bước 1:** Cài FFmpeg trên máy chủ (nếu chưa có):
-```bash
-sudo apt install ffmpeg   # Ubuntu/Debian
-```
-
-**Bước 2:** Thêm vào `docker-compose.yml`:
-```yaml
-services:
-  telecloud:
-    volumes:
-      - ./data:/app/data
-      - /usr/bin/ffmpeg:/usr/bin/ffmpeg:ro   # Mount binary FFmpeg từ host
-    environment:
-      - FFMPEG_PATH=/usr/bin/ffmpeg           # Báo cho app biết đường dẫn
-```
-
-**Bước 3:** Khởi động lại container:
-```bash
-docker compose up -d
-```
-
-> 💡 Nếu không cần thumbnail, không cần làm gì thêm — ứng dụng vẫn hoạt động bình thường.
 
 ---
 
@@ -438,6 +420,7 @@ Dự án sử dụng các thư viện tuyệt vời:
 * [plyr](https://github.com/sampotts/plyr): A simple HTML5, YouTube and Vimeo player
 * [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter — dùng để tô màu code trong tính năng xem trước tệp.
 * [FontAwesome](https://fontawesome.com): Bộ biểu tượng phổ biến nhất thế giới.
+* [yt-dlp](https://github.com/yt-dlp/yt-dlp): A feature-rich command-line audio/video downloader.
 * [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): Một bộ font chữ sans-serif hiện đại và dễ đọc.
 
 Xin cảm ơn các đội ngũ phát triển đã cung cấp những công cụ hữu ích cho cộng đồng.

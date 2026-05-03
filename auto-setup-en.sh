@@ -202,6 +202,18 @@ install_dependencies() {
         read -p "[?] Do you want to install FFmpeg? (y/n): " install_ffmpeg
         [ "$install_ffmpeg" == "y" ] && pkg_install "ffmpeg"
 
+        echo ""
+        echo "[!] yt-dlp allows downloading video/audio from YouTube, Facebook, TikTok..."
+        read -p "[?] Do you want to install yt-dlp? (y/n): " install_ytdlp
+        if [ "$install_ytdlp" == "y" ]; then
+            pkg_install "python3" "python3"
+            if ! pkg_install "yt-dlp"; then
+                echo "[+] Package manager installation failed, downloading yt-dlp binary directly..."
+                download_file "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$BIN_DIR/yt-dlp"
+                chmod +x "$BIN_DIR/yt-dlp"
+            fi
+        fi
+
         # Only install Cloudflared if using Cloudflare Tunnel
         if [ "${TUNNEL_METHOD:-}" == "cloudflare" ]; then
             if ! command -v cloudflared &>/dev/null; then
@@ -227,9 +239,14 @@ install_dependencies() {
         echo "[!] On Exynos chips or weak devices, FFmpeg may cause errors or system hangs."
         read -p "[?] Do you want to install FFmpeg? (y/n): " install_ffmpeg
 
-        MAIN_PACKAGES="wget curl tar unzip tmux jq nano"
+        echo ""
+        echo "[!] yt-dlp allows downloading video/audio from YouTube, Facebook, TikTok..."
+        read -p "[?] Do you want to install yt-dlp? (y/n): " install_ytdlp
+
+        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
+        [ "$install_ytdlp" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES yt-dlp"
 
         for pkg in $MAIN_PACKAGES; do
             pkg_install "$pkg"
@@ -320,6 +337,12 @@ EOF
             echo "FFMPEG_PATH=ffmpeg" >> "$BASE_DIR/.env"
         else
             echo "FFMPEG_PATH=disabled" >> "$BASE_DIR/.env"
+        fi
+
+        if command -v yt-dlp &> /dev/null; then
+            echo "YTDLP_PATH=yt-dlp" >> "$BASE_DIR/.env"
+        else
+            echo "YTDLP_PATH=disabled" >> "$BASE_DIR/.env"
         fi
 
         chmod 600 "$BASE_DIR/.env"

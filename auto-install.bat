@@ -87,6 +87,28 @@ if exist "ffmpeg.exe" (
     pause
 )
 
+echo [+] Dang kiem tra yt-dlp...
+where yt-dlp >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [v] yt-dlp da duoc cai dat tren he thong.
+    goto DOWNLOAD_APP
+)
+if exist "yt-dlp.exe" (
+    echo [v] Tim thay yt-dlp.exe trong thu muc hien tai.
+    goto DOWNLOAD_APP
+)
+
+set /p install_ytdlp="[?] Ban co muon cai dat yt-dlp (Tai video/audio tu URL) khong? (y/n): "
+if /i not "!install_ytdlp!"=="y" goto DOWNLOAD_APP
+
+echo [+] Dang tai yt-dlp.exe...
+powershell -Command "$progressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile 'yt-dlp.exe'"
+if exist "yt-dlp.exe" (
+    echo [v] Da tai xong yt-dlp.exe.
+) else (
+    echo [!] Tai yt-dlp.exe that bai.
+)
+
 :DOWNLOAD_APP
 echo [+] Dang lay thong tin phien ban moi nhat tu GitHub...
 for /f "tokens=*" %%a in ('powershell -Command "$r = Invoke-RestMethod -Uri 'https://api.github.com/repos/%REPO%/releases/latest'; $r.assets | Where-Object { $_.name -like '*windows_amd64.zip*' } | Select-Object -ExpandProperty browser_download_url"') do set "DL_URL=%%a"
@@ -116,6 +138,15 @@ if not exist ".env" (
     ) else (
         powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/%REPO%/main/env.example' -OutFile '.env'"
     )
+
+    :: Tu dong dien duong dan neu ton tai
+    if exist "ffmpeg.exe" (
+        powershell -Command "(Get-Content .env) -replace '^FFMPEG_PATH=.*', 'FFMPEG_PATH=ffmpeg' | Set-Content .env"
+    )
+    if exist "yt-dlp.exe" (
+        powershell -Command "(Get-Content .env) -replace '^#?YTDLP_PATH=.*', 'YTDLP_PATH=yt-dlp' | Set-Content .env"
+    )
+
     echo [!] Vui long chinh sua .env voi thong tin cua ban!
     pause
     notepad .env

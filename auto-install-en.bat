@@ -87,6 +87,28 @@ if exist "ffmpeg.exe" (
     pause
 )
 
+echo [+] Checking for yt-dlp...
+where yt-dlp >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [v] yt-dlp is already installed on the system.
+    goto DOWNLOAD_APP
+)
+if exist "yt-dlp.exe" (
+    echo [v] Found yt-dlp.exe in current directory.
+    goto DOWNLOAD_APP
+)
+
+set /p install_ytdlp="[?] Do you want to install yt-dlp (Download video/audio from URL)? (y/n): "
+if /i not "!install_ytdlp!"=="y" goto DOWNLOAD_APP
+
+echo [+] Downloading yt-dlp.exe...
+powershell -Command "$progressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile 'yt-dlp.exe'"
+if exist "yt-dlp.exe" (
+    echo [v] Downloaded yt-dlp.exe successfully.
+) else (
+    echo [!] Could not download yt-dlp.exe.
+)
+
 :DOWNLOAD_APP
 echo [+] Fetching latest version from GitHub...
 for /f "tokens=*" %%a in ('powershell -Command "$r = Invoke-RestMethod -Uri 'https://api.github.com/repos/%REPO%/releases/latest'; $r.assets | Where-Object { $_.name -like '*windows_amd64.zip*' } | Select-Object -ExpandProperty browser_download_url"') do set "DL_URL=%%a"
@@ -116,6 +138,15 @@ if not exist ".env" (
     ) else (
         powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/%REPO%/main/env.example' -OutFile '.env'"
     )
+
+    :: Automatically fill paths if they exist
+    if exist "ffmpeg.exe" (
+        powershell -Command "(Get-Content .env) -replace '^FFMPEG_PATH=.*', 'FFMPEG_PATH=ffmpeg' | Set-Content .env"
+    )
+    if exist "yt-dlp.exe" (
+        powershell -Command "(Get-Content .env) -replace '^#?YTDLP_PATH=.*', 'YTDLP_PATH=yt-dlp' | Set-Content .env"
+    )
+
     echo [!] Please edit .env with your credentials!
     pause
     notepad .env

@@ -166,6 +166,8 @@ func securityHeadersMiddleware() gin.HandlerFunc {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "SAMEORIGIN")
 		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Cross-Origin-Resource-Policy", "cross-origin")
+		c.Header("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
 		// Basic Content Security Policy
 		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data: *; connect-src 'self' https://api.github.com https://cloudflareinsights.com https://cdn.plyr.io; media-src 'self' blob: * https://cdn.plyr.io;")
 		c.Next()
@@ -1983,6 +1985,53 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", username))
 			os.Remove(cookieFile)
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.GET("/proxy/image", func(c *gin.Context) {
+			targetURL := c.Query("url")
+			if targetURL == "" {
+				c.AbortWithStatus(http.StatusBadRequest)
+				return
+			}
+			if !tgclient.IsValidURL(targetURL) {
+				c.AbortWithStatus(http.StatusBadRequest)
+				return
+			}
+
+			client := &http.Client{
+				Timeout: 10 * time.Second,
+			}
+
+			req, err := http.NewRequestWithContext(c.Request.Context(), "GET", targetURL, nil)
+			if err != nil {
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				c.AbortWithStatus(http.StatusBadGateway)
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				c.AbortWithStatus(resp.StatusCode)
+				return
+			}
+
+			contentType := resp.Header.Get("Content-Type")
+			if !strings.HasPrefix(contentType, "image/") {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+
+			c.Header("Content-Type", contentType)
+			c.Header("Cache-Control", "public, max-age=86400")
+			c.Header("Cross-Origin-Resource-Policy", "cross-origin")
+			io.Copy(c.Writer, resp.Body)
 		})
 
 		api.POST("/ytdlp/formats", func(c *gin.Context) {

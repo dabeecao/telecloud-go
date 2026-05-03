@@ -121,6 +121,9 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     BIN_DIR="$PREFIX/bin"
     PKG_MGR="pkg"
     echo "[+] Hệ điều hành: Termux (Android)"
+    
+    echo "[+] Đang cập nhập hệ thống Termux (pkg update & upgrade)..."
+    pkg update -y && pkg upgrade -y
 
     # Kiểm tra phiên bản Termux (Bản Play Store bị lỗi e_type)
     T_INFO=$(termux-info 2>/dev/null || echo "")
@@ -578,13 +581,28 @@ start_app() {
             [ -f /etc/systemd/system/telecloud.service ] && systemctl enable --now telecloud || true
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
-            echo "[+] Đang kiểm tra trạng thái..."
-            sleep 3
-            if systemctl is-active --quiet telecloud; then
-                echo "✅ Đã khởi động."
-            else
-                echo "❌ LỖI: Ứng dụng không thể khởi chạy. Vui lòng kiểm tra log (Mục 5)."
+            echo "[+] Đang kiểm tra trạng thái khởi động (tối đa 30s)..."
+            local timeout=30
+            local success=0
+            while [ $timeout -gt 0 ]; do
+                if journalctl -u telecloud.service -n 50 | grep -q "Starting TeleCloud on port"; then
+                    success=1; break
+                fi
+                if journalctl -u telecloud.service -n 50 | grep -q "TeleCloud shut down"; then
+                    success=2; break
+                fi
+                sleep 1
+                timeout=$((timeout - 1))
+            done
+
+            if [ $success -eq 1 ]; then
+                echo "✅ TeleCloud đã khởi động thành công!"
+            elif [ $success -eq 2 ]; then
+                echo "❌ LỖI: TeleCloud đã tự đóng (shut down). Vui lòng kiểm tra log (Mục 6)."
                 return 1
+            else
+                echo "⚠️  CẢNH BÁO: Quá thời gian chờ (30s) nhưng chưa xác nhận được trạng thái."
+                echo "Có thể ứng dụng vẫn đang khởi chạy hoặc có lỗi ngầm."
             fi
         else
             echo "[!] Hệ thống không hỗ trợ systemctl. Vui lòng chạy thủ công."
@@ -598,18 +616,35 @@ start_app() {
             [ "$confirm_tmux" != "y" ] && return
         fi
 
+        # Xóa log cũ để kiểm tra log mới
+        > "$BASE_DIR/app.log"
         if ! tmux has-session -t $SESSION 2>/dev/null; then
             tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
         fi
         [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
         
-        echo "[+] Đang kiểm tra trạng thái..."
-        sleep 3
-        if pgrep -f "\./telecloud" > /dev/null; then
-            echo "✅ Đã khởi động."
-        else
-            echo "❌ LỖI: Ứng dụng không thể khởi chạy. Vui lòng kiểm tra log (Mục 5)."
+        echo "[+] Đang kiểm tra trạng thái khởi động (tối đa 30s)..."
+        local timeout=30
+        local success=0
+        while [ $timeout -gt 0 ]; do
+            if grep -q "Starting TeleCloud on port" "$BASE_DIR/app.log" 2>/dev/null; then
+                success=1; break
+            fi
+            if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
+                success=2; break
+            fi
+            sleep 1
+            timeout=$((timeout - 1))
+        done
+
+        if [ $success -eq 1 ]; then
+            echo "✅ TeleCloud đã khởi động thành công!"
+        elif [ $success -eq 2 ]; then
+            echo "❌ LỖI: TeleCloud đã tự đóng (shut down). Vui lòng kiểm tra log (Mục 6)."
             return 1
+        else
+            echo "⚠️  CẢNH BÁO: Quá thời gian chờ (30s) nhưng chưa xác nhận được trạng thái."
+            echo "Có thể ứng dụng vẫn đang khởi chạy hoặc có lỗi ngầm."
         fi
     fi
 }

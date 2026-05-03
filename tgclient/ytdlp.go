@@ -68,13 +68,20 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 		args = append([]string{"--cookies", cookieFile}, args...)
 	}
 
+	var stdout, stderr strings.Builder
 	cmd := exec.Command(cfg.YTDLPPath, args...)
-	output, err := cmd.CombinedOutput()
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
 	if err != nil {
-		// Clean up common yt-dlp error prefixes to make them more user-friendly
-		errMsg := string(output)
+		// Clean up common yt-dlp error prefixes from stderr
+		errMsg := stderr.String()
 		if idx := strings.Index(errMsg, "ERROR:"); idx != -1 {
 			errMsg = strings.TrimSpace(errMsg[idx+6:])
+		}
+		if errMsg == "" {
+			errMsg = err.Error()
 		}
 		// Limit error message length
 		if len(errMsg) > 200 {
@@ -84,7 +91,7 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 	}
 
 	var info YTDLPInfo
-	if err := json.Unmarshal(output, &info); err != nil {
+	if err := json.Unmarshal([]byte(stdout.String()), &info); err != nil {
 		return nil, fmt.Errorf("json_unmarshal_error: %w", err)
 	}
 

@@ -1244,7 +1244,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			dbPath := mapPath(path, username, isAdmin)
 			
 			if isAdmin && isChildAccountPath(dbPath) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "Admin cannot create folders in child account directory"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "admin_forbidden_child_path"})
 				return
 			}
 
@@ -1252,7 +1252,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				var count int
 				database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", name)
 				if count > 0 {
-					c.JSON(http.StatusForbidden, gin.H{"error": "Folder name collides with a child account username"})
+					c.JSON(http.StatusForbidden, gin.H{"error": "folder_collides_child"})
 					return
 				}
 			}
@@ -1281,7 +1281,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			dbPath := mapPath(path, username, isAdmin)
 
 			if isAdmin && isChildAccountPath(dbPath) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "Admin cannot upload to child account directory"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "admin_forbidden_child_path"})
 				return
 			}
 
@@ -1289,7 +1289,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				var count int
 				database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", filename)
 				if count > 0 {
-					c.JSON(http.StatusForbidden, gin.H{"error": "Filename collides with a child account username"})
+					c.JSON(http.StatusForbidden, gin.H{"error": "filename_collides_child"})
 					return
 				}
 			}
@@ -1999,7 +1999,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			client := &http.Client{
-				Timeout: 10 * time.Second,
+				Timeout: 15 * time.Second,
 			}
 
 			req, err := http.NewRequestWithContext(c.Request.Context(), "GET", targetURL, nil)
@@ -2008,7 +2008,20 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 
-			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+			// Add headers to look more like a real browser request
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+			req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+			req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+			req.Header.Set("Cache-Control", "no-cache")
+			req.Header.Set("Pragma", "no-cache")
+			req.Header.Set("Sec-Fetch-Dest", "image")
+			req.Header.Set("Sec-Fetch-Mode", "no-cors")
+			req.Header.Set("Sec-Fetch-Site", "cross-site")
+
+			// Try to derive a sensible referer from the target URL
+			if u, err := url.Parse(targetURL); err == nil {
+				req.Header.Set("Referer", u.Scheme+"://"+u.Host+"/")
+			}
 
 			resp, err := client.Do(req)
 			if err != nil {
@@ -2023,9 +2036,17 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			contentType := resp.Header.Get("Content-Type")
-			if !strings.HasPrefix(contentType, "image/") {
-				c.AbortWithStatus(http.StatusForbidden)
-				return
+			// Relaxed check: Allow if it looks like an image or is a generic stream (often used as fallback)
+			if contentType != "" && !strings.HasPrefix(contentType, "image/") && contentType != "application/octet-stream" {
+				// We still proxy it if it's not explicitly an non-image type like html/json
+				if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/json") {
+					c.AbortWithStatus(http.StatusForbidden)
+					return
+				}
+			}
+
+			if contentType == "" {
+				contentType = "image/jpeg" // Fallback
 			}
 
 			c.Header("Content-Type", contentType)

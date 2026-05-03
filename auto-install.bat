@@ -370,9 +370,37 @@ if not exist "%BIN_NAME%" (
     pause
     goto MENU
 )
+
+:: Xoa log cu de kiem tra log moi
+type nul > app.log
+
 :: Gộp stdout và stderr vào app.log thông qua cmd wrapper
 powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c %BIN_NAME% >> app.log 2>&1' -WindowStyle Hidden"
 
+:: Kiem tra trang thai khoi dong
+echo [+] Dang kiem tra trang thai khoi dong (cho toi da 30s)...
+set /a timeout=30
+:CHECK_LOOP
+findstr /C:"Starting TeleCloud on port" app.log >nul
+if !errorlevel! equ 0 (
+    echo [v] TeleCloud da khoi dong thanh cong!
+    goto START_TUNNEL
+)
+findstr /C:"TeleCloud shut down" app.log >nul
+if !errorlevel! equ 0 (
+    echo [!] TeleCloud khoi dong that bai. Vui long kiem tra app.log de biet chi tiet.
+    pause
+    goto MENU
+)
+timeout /t 1 >nul
+set /a timeout-=1
+if !timeout! gtr 0 goto CHECK_LOOP
+
+echo [!] Da qua thoi gian cho (30s) nhung chua xac nhan duoc trang thai.
+echo [!] Co the ung dung van dang khoi chay hoac co loi.
+pause
+
+:START_TUNNEL
 if exist "domain.txt" (
     for /f "usebackq tokens=*" %%a in ("domain.txt") do set "MY_DOMAIN=%%a"
     if not "!MY_DOMAIN!"=="" (

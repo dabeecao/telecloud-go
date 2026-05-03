@@ -370,9 +370,37 @@ if not exist "%BIN_NAME%" (
     pause
     goto MENU
 )
+
+:: Clear old log for fresh check
+type nul > app.log
+
 :: Redirect stdout and stderr to app.log via cmd wrapper
 powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c %BIN_NAME% >> app.log 2>&1' -WindowStyle Hidden"
 
+:: Check startup status
+echo [+] Checking startup status (waiting up to 30s)...
+set /a timeout=30
+:CHECK_LOOP
+findstr /C:"Starting TeleCloud on port" app.log >nul
+if !errorlevel! equ 0 (
+    echo [v] TeleCloud started successfully!
+    goto START_TUNNEL
+)
+findstr /C:"TeleCloud shut down" app.log >nul
+if !errorlevel! equ 0 (
+    echo [!] TeleCloud failed to start. Please check app.log for details.
+    pause
+    goto MENU
+)
+timeout /t 1 >nul
+set /a timeout-=1
+if !timeout! gtr 0 goto CHECK_LOOP
+
+echo [!] Wait time exceeded (30s). Status unconfirmed.
+echo [!] The application might still be starting or encountered an error.
+pause
+
+:START_TUNNEL
 if exist "domain.txt" (
     for /f "usebackq tokens=*" %%a in ("domain.txt") do set "MY_DOMAIN=%%a"
     if not "!MY_DOMAIN!"=="" (

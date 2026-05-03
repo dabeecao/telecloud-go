@@ -3,6 +3,8 @@ package database
 import (
 	"fmt"
 	"log"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -245,4 +247,44 @@ func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeI
 		counter++
 	}
 	return finalName
+}
+
+func EnsureFoldersExist(dbPath string, owner string) error {
+	cleanPath := path.Clean(dbPath)
+	if cleanPath == "/" {
+		return nil
+	}
+
+	parts := strings.Split(cleanPath, "/")
+	currentPath := "/"
+
+	for i := 1; i < len(parts); i++ {
+		part := parts[i]
+		if part == "" {
+			continue
+		}
+
+		var id int
+		err := DB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1", currentPath, part)
+		if err != nil {
+			var count int
+			if currentPath == "/" {
+				DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", part)
+			}
+			
+			if count == 0 {
+				_, err = DB.Exec("INSERT OR IGNORE INTO files (filename, path, is_folder, owner) VALUES (?, ?, 1, ?)", part, currentPath, owner)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		if currentPath == "/" {
+			currentPath = "/" + part
+		} else {
+			currentPath = currentPath + "/" + part
+		}
+	}
+	return nil
 }

@@ -206,6 +206,8 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		fileSize = stat.Size()
 	}
 
+	database.EnsureFoldersExist(path, owner)
+
 	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, fileSize, 0)
 
 	// Wait for a slot in the upload queue
@@ -394,6 +396,8 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		UpdateTaskWithFile(taskID, "error", 0, "err_forbidden_url", "", owner, 0, 0)
 		return
 	}
+
+	database.EnsureFoldersExist(path, owner)
 
 	// 1. Wait for a slot in the remote upload queue (HTTP download limit)
 	select {
@@ -679,6 +683,8 @@ func isPrivateIP(urlStr string) bool {
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
 func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType string, cfg *config.Config, overwrite bool, owner string) (fileID int64, finalName string, err error) {
+	database.EnsureFoldersExist(path, owner)
+
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:

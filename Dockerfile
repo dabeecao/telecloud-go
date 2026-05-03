@@ -17,18 +17,7 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Download TailwindCSS binary based on BUILD architecture (to run on the host's native CPU during build)
-# BUILDPLATFORM is like "linux/amd64" or "linux/arm64" — we parse the arch part
-RUN BUILDARCH=$(echo "${BUILDPLATFORM}" | cut -d'/' -f2) && \
-    case "$BUILDARCH" in \
-    amd64) TAILWIND_ARCH="x64" ;; \
-    arm64) TAILWIND_ARCH="arm64" ;; \
-    *) TAILWIND_ARCH="x64" ;; \
-    esac && \
-    echo "Downloading TailwindCSS for build architecture: $TAILWIND_ARCH (from BUILDPLATFORM=${BUILDPLATFORM})" && \
-    curl -sSLfO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-${TAILWIND_ARCH}" \
-    && chmod +x "tailwindcss-linux-${TAILWIND_ARCH}" \
-    && mv -f "tailwindcss-linux-${TAILWIND_ARCH}" web/tailwindcss
+
 
 # Build frontend (Tailwind + download JS/CSS libs)
 RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh

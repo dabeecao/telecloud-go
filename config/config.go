@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 
@@ -53,6 +54,22 @@ func Load() *Config {
 	// MaxPartSize will be auto-detected in tgclient based on account status (Premium/Regular)
 	maxPartSizeMB := int64(1900) 
 
+	ffmpegPath := getEnv("FFMPEG_PATH", "ffmpeg")
+	if ffmpegPath != "disabled" && ffmpegPath != "disable" {
+		if _, err := exec.LookPath(ffmpegPath); err != nil {
+			log.Printf("WARNING: FFMPEG path '%s' not found or not executable. Disabling FFMPEG support.", ffmpegPath)
+			ffmpegPath = "disabled"
+		}
+	}
+
+	ytdlpPath := getEnv("YTDLP_PATH", "disabled")
+	if ytdlpPath != "disabled" && ytdlpPath != "disable" {
+		if _, err := exec.LookPath(ytdlpPath); err != nil {
+			log.Printf("WARNING: YT-DLP path '%s' not found or not executable. Disabling YT-DLP support.", ytdlpPath)
+			ytdlpPath = "disabled"
+		}
+	}
+
 	return &Config{
 		APIID:           apiID,
 		APIHash:         apiHash,
@@ -64,8 +81,8 @@ func Load() *Config {
 		TempDir:         getEnv("TEMP_DIR", filepath.Join(os.TempDir(), "telecloud_temp_chunks")),
 		ProxyURL:        getEnv("PROXY_URL", ""),
 		SessionFile:     getEnv("SESSION_FILE", "session.json"),
-		FFMPEGPath:      getEnv("FFMPEG_PATH", "ffmpeg"),
-		YTDLPPath:       getEnv("YTDLP_PATH", "disabled"),
+		FFMPEGPath:      ffmpegPath,
+		YTDLPPath:       ytdlpPath,
 		WebAuthnRPID:     getEnv("WEBAUTHN_RPID", "localhost"),
 		WebAuthnRPOrigin:   getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
 		MaxPartSize:      maxPartSizeMB * 1024 * 1024,

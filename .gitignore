@@ -53,3 +53,7 @@ static/js/prism.js
 node_modules/
 static/js/*.min.js
 static/css/*.min.css
+
+# Build test folder
+build/*
+

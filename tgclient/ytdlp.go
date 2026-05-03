@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime"
 	"os"
 	"os/exec"
@@ -87,6 +88,39 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 		return nil, fmt.Errorf("json_unmarshal_error: %w", err)
 	}
 
+	// Filter duplicate formats (keep only one per unique height/resolution)
+	if len(info.Formats) > 0 {
+		filtered := make([]YTDLPFormat, 0)
+		seenHeights := make(map[int]bool)
+
+		for i := len(info.Formats) - 1; i >= 0; i-- {
+			f := info.Formats[i]
+			vcodec := strings.ToLower(f.VCodec)
+			
+			isAudio := vcodec == "none" || f.Resolution == "audio only"
+			
+			if isAudio {
+				// For audio, use FormatID or combination of ext+filesize as key if needed,
+				// but usually audio formats are distinct enough. 
+				// Let's just keep them all for now or filter by ext if needed.
+				filtered = append(filtered, f)
+			} else if f.Height > 0 {
+				if !seenHeights[f.Height] {
+					filtered = append(filtered, f)
+					seenHeights[f.Height] = true
+				}
+			} else {
+				// Other formats (unknown height)
+				filtered = append(filtered, f)
+			}
+		}
+		// Reverse back to maintain original order (usually best quality last or first)
+		for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
+			filtered[i], filtered[j] = filtered[j], filtered[i]
+		}
+		info.Formats = filtered
+	}
+
 	return &info, nil
 }
 
@@ -137,8 +171,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		args = append(args, "--cookies", cookieFile)
 	}
 
-	args = append(args, url)
-
+	// Format selection flags must come BEFORE the URL
 	if formatID != "" {
 		switch downloadType {
 		case "video":
@@ -158,18 +191,27 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		}
 	}
 
+	// URL must be the last argument
+	args = append(args, url)
+
 	// Create a context with a 1-hour timeout for the ytdlp process
 	ytdlpCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
 	defer cancel()
 
 	cmd := exec.CommandContext(ytdlpCtx, cfg.YTDLPPath, args...)
-	
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		UpdateTaskWithFile(taskID, "error", 0, "pipe_error", "", owner, 0, 0)
 		return
 	}
-	cmd.Stderr = cmd.Stdout
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		UpdateTaskWithFile(taskID, "error", 0, "pipe_error", "", owner, 0, 0)
+		return
+	}
+	// Merge stdout and stderr so progress lines and error messages are all captured
+	combined := io.MultiReader(stdout, stderr)
 
 	if err := cmd.Start(); err != nil {
 		UpdateTaskWithFile(taskID, "error", 0, "start_error", "", owner, 0, 0)
@@ -180,7 +222,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	progressRegex := regexp.MustCompile(`\[download\]\s+(\d+\.\d+)%`)
 
 	lastPercent := -1
-	scanner := bufio.NewScanner(stdout)
+	scanner := bufio.NewScanner(combined)
 	for scanner.Scan() {
 		line := scanner.Text()
 		matches := progressRegex.FindStringSubmatch(line)

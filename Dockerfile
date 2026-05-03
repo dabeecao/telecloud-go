@@ -22,10 +22,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-
-
 # Build frontend (Tailwind + download JS/CSS libs)
-RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh
+RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh 1
 
 # Build Go binary for TARGET architecture
 ARG VERSION=dev

@@ -121,6 +121,9 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     BIN_DIR="$PREFIX/bin"
     PKG_MGR="pkg"
     echo "[+] Operating System: Termux (Android)"
+    
+    echo "[+] Updating Termux system (pkg update & upgrade)..."
+    pkg update -y && pkg upgrade -y
 
     # Check Termux version (Play Store versions are restricted and cause e_type errors)
     T_INFO=$(termux-info 2>/dev/null || echo "")
@@ -578,13 +581,28 @@ start_app() {
             [ -f /etc/systemd/system/telecloud.service ] && systemctl enable --now telecloud || true
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
-            echo "[+] Checking status..."
-            sleep 3
-            if systemctl is-active --quiet telecloud; then
-                echo "✅ Application started successfully."
-            else
-                echo "❌ ERROR: Application failed to start. Please check the logs (Option 5)."
+            echo "[+] Checking startup status (waiting up to 30s)..."
+            local timeout=30
+            local success=0
+            while [ $timeout -gt 0 ]; do
+                if journalctl -u telecloud.service -n 50 | grep -q "Starting TeleCloud on port"; then
+                    success=1; break
+                fi
+                if journalctl -u telecloud.service -n 50 | grep -q "TeleCloud shut down"; then
+                    success=2; break
+                fi
+                sleep 1
+                timeout=$((timeout - 1))
+            done
+
+            if [ $success -eq 1 ]; then
+                echo "✅ TeleCloud started successfully!"
+            elif [ $success -eq 2 ]; then
+                echo "❌ ERROR: TeleCloud has shut down. Please check the logs (Option 5)."
                 return 1
+            else
+                echo "⚠️  WARNING: Wait time exceeded (30s). Status unconfirmed."
+                echo "The application might still be starting or encountered an error."
             fi
         else
             echo "[!] Your system does not support systemctl. Please run manually."
@@ -598,18 +616,35 @@ start_app() {
             [ "$confirm_tmux" != "y" ] && return
         fi
 
+        # Clear old log for fresh check
+        > "$BASE_DIR/app.log"
         if ! tmux has-session -t $SESSION 2>/dev/null; then
             tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
         fi
         [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
         
-        echo "[+] Checking status..."
-        sleep 3
-        if pgrep -f "\./telecloud" > /dev/null; then
-            echo "✅ Application started successfully."
-        else
-            echo "❌ ERROR: Application failed to start. Please check the logs (Option 5)."
+        echo "[+] Checking startup status (waiting up to 30s)..."
+        local timeout=30
+        local success=0
+        while [ $timeout -gt 0 ]; do
+            if grep -q "Starting TeleCloud on port" "$BASE_DIR/app.log" 2>/dev/null; then
+                success=1; break
+            fi
+            if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
+                success=2; break
+            fi
+            sleep 1
+            timeout=$((timeout - 1))
+        done
+
+        if [ $success -eq 1 ]; then
+            echo "✅ TeleCloud started successfully!"
+        elif [ $success -eq 2 ]; then
+            echo "❌ ERROR: TeleCloud has shut down. Please check the logs (Option 6)."
             return 1
+        else
+            echo "⚠️  WARNING: Wait time exceeded (30s). Status unconfirmed."
+            echo "The application might still be starting or encountered an error."
         fi
     fi
 }

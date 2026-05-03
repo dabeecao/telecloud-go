@@ -2,7 +2,6 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"path"
 	"strings"
 	"time"
@@ -40,13 +39,13 @@ type User struct {
 
 var DB *sqlx.DB
 
-func InitDB(dbPath string) {
+func InitDB(dbPath string) error {
 	var err error
 	// Add PRAGMA settings to improve concurrency and prevent SQLITE_BUSY errors
 	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", dbPath)
 	DB, err = sqlx.Connect("sqlite", dsn)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		return fmt.Errorf("Failed to connect to database: %v", err)
 	}
 
 	// SQLite requires writes to be serialized
@@ -139,7 +138,7 @@ func InitDB(dbPath string) {
 	`
 	_, err = DB.Exec(schema)
 	if err != nil {
-		log.Fatalf("Failed to create schema: %v", err)
+		return fmt.Errorf("Failed to create schema: %v", err)
 	}
 
 	// Migration for existing DBs
@@ -158,6 +157,7 @@ func InitDB(dbPath string) {
 	
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
+	return nil
 }
 
 type FilePart struct {
@@ -265,7 +265,7 @@ func EnsureFoldersExist(dbPath string, owner string) error {
 		}
 
 		var id int
-		err := DB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1", currentPath, part)
+		err := DB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", currentPath, part, owner)
 		if err != nil {
 			var count int
 			if currentPath == "/" {

@@ -31,7 +31,9 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"runtime"
 	"time"
+	"bufio"
 
 	"github.com/google/uuid"
 
@@ -54,7 +56,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v3.1.0"
+	version = "v3.1.1"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -67,19 +69,31 @@ func main() {
 
 	if *versionFlag {
 		log.Printf("TeleCloud %s (commit: %s, date: %s)\n", version, commit, date)
+		waitExitOnWindows()
 		return
 	}
 
-	cfg := config.Load()
+	fmt.Printf("\n")
+	fmt.Printf("  ╔╦╗┌─┐┬  ┌─┐╔═╗┬  ┌─┐┬ ┬┌┬┐\n")
+	fmt.Printf("   ║ ├┤ │  ├┤ ║  │  │ ││ │ ││\n")
+	fmt.Printf("   ╩ └─┘┴─┘└─┘╚═╝┴─┘└─┘└─┘─┴┘\n")
+	fmt.Printf("   TeleCloud %s - Lead by @dabeecao\n\n", version)
+
+	cfg, err := config.Load()
+	if err != nil {
+		fatalf("%v", err)
+	}
 	cfg.Version = version
 
 	// Ensure the directory for the database exists
 	dbDir := filepath.Dir(cfg.DatabasePath)
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		log.Printf("Warning: Could not create database directory: %v\n", err)
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("Warning: Could not create database directory: %v", err))
 	}
 
-	database.InitDB(cfg.DatabasePath)
+	if err := database.InitDB(cfg.DatabasePath); err != nil {
+		fatalf("%v", err)
+	}
 
 	if *resetPassFlag {
 		token := uuid.New().String()
@@ -93,11 +107,12 @@ func main() {
 		log.Printf("http://<your-domain-or-ip>/reset-admin?token=%s\n", token)
 		log.Println("This link will expire in 15 minutes.")
 		log.Println("================================================================")
+		waitExitOnWindows()
 		return
 	}
 
 	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
-		log.Printf("Warning: Could not create TempDir: %v\n", err)
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("Warning: Could not create TempDir: %v", err))
 	} else {
 		// Startup cleanup: remove only old files in temp dir from previous sessions
 		// to allow resumable uploads after server restart.
@@ -133,16 +148,10 @@ func main() {
 	}
 	api.InitWebAuthn(rpid, origins)
 
-	fmt.Printf("\n")
-	fmt.Printf("  ╔╦╗┌─┐┬  ┌─┐╔═╗┬  ┌─┐┬ ┬┌┬┐\n")
-	fmt.Printf("   ║ ├┤ │  ├┤ ║  │  │ ││ │ ││\n")
-	fmt.Printf("   ╩ └─┘┴─┘└─┘╚═╝┴─┘└─┘└─┘─┴┘\n")
-	fmt.Printf("   TeleCloud %s - Lead by @dabeecao\n\n", version)
-
 	startCleanupTask(cfg)
 
 	if err := tgclient.InitClient(cfg, *authFlag); err != nil {
-		log.Fatalf("Telegram client init error: %v", err)
+		fatalf("Telegram client init error: %v", err)
 	}
 
 	// cancelCtx is used to signal the Telegram client to stop
@@ -159,7 +168,7 @@ func main() {
 	// Sub-folder 'web' from the embedded FS to keep paths clean
 	webFS, err := fs.Sub(contentFS, "web")
 	if err != nil {
-		log.Fatalf("Failed to create sub FS for web: %v", err)
+		fatalf("Failed to create sub FS for web: %v", err)
 	}
 
 	router := api.SetupRouter(cfg, webFS)
@@ -175,7 +184,7 @@ func main() {
 		tgErrCh <- tgclient.Run(appCtx, cfg, func(ctx context.Context) error {
 			printStartupBox(cfg)
 			if err := tgclient.VerifyLogGroup(ctx, cfg); err != nil {
-				log.Printf("Warning: Log Group verification failed: %v", err)
+				return fmt.Errorf("Log Group verification failed: %v", err)
 			}
 			log.Println("Starting TeleCloud on port " + cfg.Port + "...")
 
@@ -234,7 +243,29 @@ func main() {
 	}
 
 	log.Println("TeleCloud shut down successfully.")
+	waitExitOnWindows()
 	os.Exit(exitCode)
+}
+
+func waitExitOnWindows() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+
+	// Check if output is redirected (e.g. to a log file)
+	// If it's not a character device, we're likely in a script or background task.
+	if stats, _ := os.Stdout.Stat(); (stats.Mode() & os.ModeCharDevice) == 0 {
+		return
+	}
+
+	fmt.Println("\n[!] Press Enter to exit...")
+	bufio.NewReader(os.Stdin).ReadBytes('\n')
+}
+
+func fatalf(format string, v ...interface{}) {
+	log.Printf(format, v...)
+	waitExitOnWindows()
+	os.Exit(1)
 }
 
 func printStartupBox(cfg *config.Config) {
@@ -273,10 +304,17 @@ func printStartupBox(cfg *config.Config) {
 	fmt.Printf("  %-15s : %s (ID: %s)\n", "Passkeys", "READY", rpid)
 
 	// Proxy status
+	proxyStatus := "DISABLED"
 	if cfg.ProxyURL != "" {
-		fmt.Printf("  %-15s : %s\n", "Proxy", "ENABLED")
+		proxyStatus = "ENABLED"
 	}
+	fmt.Printf("  %-15s : %s\n", "Proxy", proxyStatus)
 	fmt.Printf("\n")
+
+	// Print delayed warnings
+	for _, w := range cfg.Warnings {
+		log.Println(w)
+	}
 }
 
 func startCleanupTask(cfg *config.Config) {

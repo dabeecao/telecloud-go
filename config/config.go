@@ -1,11 +1,13 @@
 package config
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -29,19 +31,21 @@ type Config struct {
 	MaxPartSize      int64
 	CookiesDir       string
 	IsPremium        bool
+	Warnings         []string
 }
 
-func Load() *Config {
+func Load() (*Config, error) {
+	var warnings []string
 	err := godotenv.Load()
 	if err != nil && !os.IsNotExist(err) {
-		log.Printf("Error loading .env file: %v", err)
+		warnings = append(warnings, "Error loading .env file: "+err.Error())
 	}
 
 	apiID, _ := strconv.Atoi(os.Getenv("API_ID"))
 	apiHash := os.Getenv("API_HASH")
 
 	if apiID == 0 || apiHash == "" {
-		log.Fatal("Error: API_ID and API_HASH must be set in .env. Please get them from https://my.telegram.org")
+		return nil, fmt.Errorf("Error: API_ID and API_HASH must be set in .env. Please get them from https://my.telegram.org")
 	}
 
 	uploadThreads, _ := strconv.Atoi(getEnv("TG_UPLOAD_THREADS", "2"))
@@ -56,16 +60,16 @@ func Load() *Config {
 
 	ffmpegPath := getEnv("FFMPEG_PATH", "ffmpeg")
 	if ffmpegPath != "disabled" && ffmpegPath != "disable" {
-		if _, err := exec.LookPath(ffmpegPath); err != nil {
-			log.Printf("WARNING: FFMPEG path '%s' not found or not executable. Disabling FFMPEG support.", ffmpegPath)
+		if !isExecutable(ffmpegPath) {
+			warnings = append(warnings, "WARNING: FFMPEG path '"+ffmpegPath+"' not found or not executable. Disabling FFMPEG support.")
 			ffmpegPath = "disabled"
 		}
 	}
 
 	ytdlpPath := getEnv("YTDLP_PATH", "disabled")
 	if ytdlpPath != "disabled" && ytdlpPath != "disable" {
-		if _, err := exec.LookPath(ytdlpPath); err != nil {
-			log.Printf("WARNING: YT-DLP path '%s' not found or not executable. Disabling YT-DLP support.", ytdlpPath)
+		if !isExecutable(ytdlpPath) {
+			warnings = append(warnings, "WARNING: YT-DLP path '"+ytdlpPath+"' not found or not executable. Disabling YT-DLP support.")
 			ytdlpPath = "disabled"
 		}
 	}
@@ -87,7 +91,8 @@ func Load() *Config {
 		WebAuthnRPOrigin:   getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
 		MaxPartSize:      maxPartSizeMB * 1024 * 1024,
 		CookiesDir:       getEnv("COOKIES_DIR", "data/cookies"),
-	}
+		Warnings:         warnings,
+	}, nil
 }
 
 func getEnv(key, fallback string) string {
@@ -95,4 +100,41 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func isExecutable(path string) bool {
+	// On Windows and macOS, the standard LookPath is safe and handles 
+	// platform-specific nuances (like .exe extensions) perfectly.
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		_, err := exec.LookPath(path)
+		return err == nil
+	}
+
+	// On Linux (including Android/Termux), we use manual PATH search
+	// to avoid the faccessat2 syscall which triggers SIGSYS on older/restricted kernels.
+	if strings.Contains(path, string(os.PathSeparator)) {
+		return checkFileExecutable(path)
+	}
+
+	pathEnv := os.Getenv("PATH")
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			dir = "."
+		}
+		fullPath := filepath.Join(dir, path)
+		if checkFileExecutable(fullPath) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func checkFileExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	// Check if it's a regular file and has any executable bit set (0111 is --x--x--x)
+	return !info.IsDir() && (info.Mode().Perm()&0111 != 0)
 }

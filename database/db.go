@@ -123,6 +123,13 @@ func InitDB(dbPath string) {
 		PRIMARY KEY (task_id, chunk_index)
 	);
 
+	CREATE TABLE IF NOT EXISTS user_settings (
+		username TEXT NOT NULL,
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		PRIMARY KEY (username, key)
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
@@ -145,6 +152,7 @@ func InitDB(dbPath string) {
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN name TEXT")
 	DB.Exec("ALTER TABLE files ADD COLUMN owner TEXT DEFAULT ''")
 	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename_owner ON files(path, filename, owner)")
+	DB.Exec("CREATE TABLE IF NOT EXISTS user_settings (username TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (username, key))")
 	
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
@@ -180,6 +188,20 @@ func SetSetting(key string, value string) error {
 
 func DeleteSetting(key string) error {
 	_, err := DB.Exec("DELETE FROM settings WHERE key = ?", key)
+	return err
+}
+
+func GetUserSetting(username string, key string) string {
+	var value string
+	err := DB.Get(&value, "SELECT value FROM user_settings WHERE username = ? AND key = ?", username, key)
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func SetUserSetting(username string, key string, value string) error {
+	_, err := DB.Exec("INSERT INTO user_settings (username, key, value) VALUES (?, ?, ?) ON CONFLICT(username, key) DO UPDATE SET value = excluded.value", username, key, value)
 	return err
 }
 

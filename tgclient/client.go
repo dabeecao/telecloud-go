@@ -153,21 +153,16 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 						break
 					}
 				}
+				cfg.IsPremium = isPremium
 				if isPremium {
 					cfg.MaxPartSize = 3900 * 1024 * 1024
 				} else {
 					cfg.MaxPartSize = 1900 * 1024 * 1024
 				}
-				log.Printf("Detected Telegram account status: Premium=%v. Automatically setting MaxPartSize to %d bytes", isPremium, cfg.MaxPartSize)
 			} else {
+				cfg.IsPremium = false
 				cfg.MaxPartSize = 1900 * 1024 * 1024 // Fallback
-				log.Printf("Could not detect Telegram account status: %v. Using default limits", err)
 			}
-		}
-
-		// Verify Log Group connectivity
-		if err := VerifyLogGroup(ctx, cfg); err != nil {
-			return fmt.Errorf("failed to verify Log Group: %w", err)
 		}
 
 		return cb(ctx)

@@ -22,9 +22,12 @@ type Config struct {
 	Version         string
 	SessionFile     string
 	FFMPEGPath      string
+	YTDLPPath       string
 	WebAuthnRPID     string
 	WebAuthnRPOrigin   string
 	MaxPartSize      int64
+	CookiesDir       string
+	IsPremium        bool
 }
 
 func Load() *Config {
@@ -62,9 +65,11 @@ func Load() *Config {
 		ProxyURL:        getEnv("PROXY_URL", ""),
 		SessionFile:     getEnv("SESSION_FILE", "session.json"),
 		FFMPEGPath:      getEnv("FFMPEG_PATH", "ffmpeg"),
+		YTDLPPath:       getEnv("YTDLP_PATH", "disabled"),
 		WebAuthnRPID:     getEnv("WEBAUTHN_RPID", "localhost"),
 		WebAuthnRPOrigin:   getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
 		MaxPartSize:      maxPartSizeMB * 1024 * 1024,
+		CookiesDir:       getEnv("COOKIES_DIR", "data/cookies"),
 	}
 }
 

@@ -49,12 +49,12 @@ type UploadStatus struct {
 	UploadedBytes int64  `json:"uploaded_bytes,omitempty"`
 }
 
-func UpdateTask(taskID string, status string, percent int, msg string) {
-	UpdateTaskWithFile(taskID, status, percent, msg, "", "", 0, 0)
+func UpdateTask(taskID string, status string, percent int, msg string, owner string) {
+	UpdateTaskWithFile(taskID, status, percent, msg, "", owner, 0, 0)
 }
 
-func UpdateTaskWithSize(taskID string, status string, percent int, msg string, size int64, uploaded int64) {
-	UpdateTaskWithFile(taskID, status, percent, msg, "", "", size, uploaded)
+func UpdateTaskWithSize(taskID string, status string, percent int, msg string, size int64, uploaded int64, owner string) {
+	UpdateTaskWithFile(taskID, status, percent, msg, "", owner, size, uploaded)
 }
 
 func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64, uploaded int64) {
@@ -128,10 +128,21 @@ func GetTask(taskID string) *UploadStatus {
 func CancelTask(taskID string, username string) bool {
 	taskMutex.Lock()
 
-	// Verify owner
-	if status, ok := UploadTasks[taskID]; !ok || status.Owner != username {
+	// Verify owner from memory
+	status, ok := UploadTasks[taskID]
+	if ok && status.Owner != username {
 		taskMutex.Unlock()
 		return false
+	}
+
+	// If not in memory, verify owner from database (for chunked uploads still in progress)
+	if !ok {
+		var dbOwner string
+		err := database.DB.Get(&dbOwner, "SELECT owner FROM upload_tasks WHERE id = ?", taskID)
+		if err == nil && dbOwner != username {
+			taskMutex.Unlock()
+			return false
+		}
 	}
 
 	if cancel, ok := TaskCancels[taskID]; ok {
@@ -140,8 +151,8 @@ func CancelTask(taskID string, username string) bool {
 	}
 	taskMutex.Unlock()
 
-	// Gọi UpdateTask trong goroutine riêng để tránh deadlock (UpdateTask cũng lock taskMutex)
-	go UpdateTask(taskID, "error", 0, "upload_cancelled_waiting")
+	// Call UpdateTask in a separate goroutine to avoid deadlock
+	go UpdateTask(taskID, "error", 0, "upload_cancelled_waiting", username)
 	return true
 }
 
@@ -149,13 +160,14 @@ type uploadProgress struct {
 	taskID       string
 	totalSize    int64
 	previousSize int64
+	owner        string
 }
 
 func (p uploadProgress) Chunk(ctx context.Context, state uploader.ProgressState) error {
 	if p.totalSize > 0 {
 		currentUploaded := p.previousSize + state.Uploaded
 		percent := int(float64(currentUploaded) / float64(p.totalSize) * 100)
-		UpdateTaskWithSize(p.taskID, "telegram", percent, "", p.totalSize, currentUploaded)
+		UpdateTaskWithSize(p.taskID, "telegram", percent, "", p.totalSize, currentUploaded, p.owner)
 	}
 	return nil
 }
@@ -240,7 +252,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	}
 
 	if dbErr != nil {
-		UpdateTask(taskID, "error", 0, "err_db_error: "+dbErr.Error())
+		UpdateTask(taskID, "error", 0, "err_db_error: "+dbErr.Error(), "")
 		return
 	}
 
@@ -263,7 +275,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		UpdateTask(taskID, "error", 0, "err_open_file: "+err.Error())
+		UpdateTask(taskID, "error", 0, "err_open_file: "+err.Error(), "")
 		return
 	}
 	defer f.Close()
@@ -284,16 +296,16 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, i+1)
 		}
 
-		UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("uploading_part_%d_of_%d", i+1, numParts))
+		UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("uploading_part_%d_of_%d", i+1, numParts), "")
 
 		up := uploader.NewUploader(api).
 			WithPartSize(uploader.MaximumPartSize).
-			WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start}).
+			WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start, owner: owner}).
 			WithThreads(cfg.UploadThreads)
 
 		msgID, err := uploadFilePart(ctx, api, up, sectionReader, partFilename, mimeType, uniqueFilename, cfg)
 		if err != nil {
-			UpdateTask(taskID, "error", 0, "upload_part_failed: "+err.Error())
+			UpdateTask(taskID, "error", 0, "upload_part_failed: "+err.Error(), "")
 			return
 		}
 		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
@@ -308,7 +320,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			fileID, msgID, i, partSize,
 		)
 		if err != nil {
-			UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error())
+			UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error(), "")
 			return
 		}
 	}
@@ -340,20 +352,20 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		}
 	}
 
-	// Signal done to user immediately, then generate thumbnail during cooldown
-	UpdateTaskWithSize(taskID, "done", 100, "", fileSize, fileSize)
+	// Generate thumbnail from temp file (still exists at this point) and update DB
+	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
+	if localThumb != nil {
+		database.DB.Exec("UPDATE files SET thumb_path = ? WHERE message_id = ? AND path = ? AND filename = ?", *localThumb, firstMsgID, path, uniqueFilename)
+	}
+
+	// Signal done to user after thumbnail is ready
+	UpdateTaskWithSize(taskID, "done", 100, "", fileSize, fileSize, owner)
 	success = true
 
 	// Cooldown before releasing the semaphore slot
 	select {
 	case <-time.After(1000 * time.Millisecond):
 	case <-ctx.Done():
-	}
-
-	// Generate thumbnail from temp file (still exists at this point) and update DB
-	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
-	if localThumb != nil {
-		database.DB.Exec("UPDATE files SET thumb_path = ? WHERE message_id = ? AND path = ? AND filename = ?", *localThumb, firstMsgID, path, uniqueFilename)
 	}
 }
 
@@ -379,7 +391,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 	// SSRF Protection
 	if isPrivateIP(url) {
-		UpdateTask(taskID, "error", 0, "err_forbidden_url")
+		UpdateTaskWithFile(taskID, "error", 0, "err_forbidden_url", "", owner, 0, 0)
 		return
 	}
 
@@ -388,7 +400,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	case remoteUploadSemaphore <- struct{}{}:
 		defer func() { <-remoteUploadSemaphore }()
 	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, 0, 0)
+		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", "", owner, 0, 0)
 		return
 	}
 
@@ -433,7 +445,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		UpdateTask(taskID, "error", 0, "request_creation_failed: "+err.Error())
+		UpdateTaskWithFile(taskID, "error", 0, "request_creation_failed: "+err.Error(), "", owner, 0, 0)
 		return
 	}
 
@@ -442,7 +454,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 	resp, err := client.Do(req)
 	if err != nil {
-		UpdateTask(taskID, "error", 0, "connection_failed: "+err.Error())
+		UpdateTaskWithFile(taskID, "error", 0, "connection_failed: "+err.Error(), "", owner, 0, 0)
 		return
 	}
 	defer resp.Body.Close()
@@ -456,7 +468,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		} else if resp.StatusCode >= 500 {
 			msg = "err_remote_server_error"
 		}
-		UpdateTask(taskID, "error", 0, msg)
+		UpdateTask(taskID, "error", 0, msg, "")
 		return
 	}
 
@@ -529,7 +541,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	}
 
 	if dbErr != nil {
-		UpdateTask(taskID, "error", 0, "err_db_error: "+dbErr.Error())
+		UpdateTask(taskID, "error", 0, "err_db_error: "+dbErr.Error(), "")
 		return
 	}
 
@@ -560,16 +572,16 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, partIndex+1)
 		}
 
-		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1))
+		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1), "")
 
 		up := uploader.NewUploader(api).
 			WithPartSize(uploader.MaximumPartSize).
-			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded}).
+			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
 			WithThreads(cfg.UploadThreads)
 
 		msgID, err := uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg)
 		if err != nil {
-			UpdateTask(taskID, "error", 0, "upload_part_failed: "+err.Error())
+			UpdateTask(taskID, "error", 0, "upload_part_failed: "+err.Error(), "")
 			return
 		}
 		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
@@ -587,7 +599,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 			fileID, msgID, partIndex, partSize,
 		)
 		if err != nil {
-			UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error())
+			UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error(), "")
 			return
 		}
 
@@ -628,7 +640,10 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		}
 	}
 
-	UpdateTask(taskID, "done", 100, "")
+	// Note: Remote uploads usually don't have a local file for thumbnail generation 
+	// unless we download it first. Since this is a streaming upload, we skip local thumb for now.
+	// But we signal done so the UI refreshes.
+	UpdateTask(taskID, "done", 100, "", "")
 	success = true
 }
 

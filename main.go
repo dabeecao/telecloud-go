@@ -47,13 +47,14 @@ import (
 //go:embed web/templates
 //go:embed web/static/css/*.min.css web/static/css/tailwind.css web/static/css/plyr.css web/static/css/prism.css
 //go:embed web/static/js/*.min.js web/static/js/plyr.polyfilled.js web/static/js/prism.js
+//go:embed web/static/themes/*.min.css
 //go:embed web/static/fonts web/static/webfonts
 //go:embed web/static/favicon.ico
 //go:embed web/static/locales/*.min.json
 var contentFS embed.FS
 
 var (
-	version = "v3.0.0"
+	version = "v3.1.0-beta1"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -132,6 +133,12 @@ func main() {
 	}
 	api.InitWebAuthn(rpid, origins)
 
+	fmt.Printf("\n")
+	fmt.Printf("  ╔╦╗┌─┐┬  ┌─┐╔═╗┬  ┌─┐┬ ┬┌┬┐\n")
+	fmt.Printf("   ║ ├┤ │  ├┤ ║  │  │ ││ │ ││\n")
+	fmt.Printf("   ╩ └─┘┴─┘└─┘╚═╝┴─┘└─┘└─┘─┴┘\n")
+	fmt.Printf("   TeleCloud %s - Lead by @dabeecao\n\n", version)
+
 	startCleanupTask(cfg)
 
 	if err := tgclient.InitClient(cfg, *authFlag); err != nil {
@@ -166,6 +173,10 @@ func main() {
 	tgErrCh := make(chan error, 1)
 	go func() {
 		tgErrCh <- tgclient.Run(appCtx, cfg, func(ctx context.Context) error {
+			printStartupBox(cfg)
+			if err := tgclient.VerifyLogGroup(ctx, cfg); err != nil {
+				log.Printf("Warning: Log Group verification failed: %v", err)
+			}
 			log.Println("Starting TeleCloud on port " + cfg.Port + "...")
 
 			// Start HTTP server in its own goroutine so Telegram keeps running alongside
@@ -224,6 +235,48 @@ func main() {
 
 	log.Println("TeleCloud shut down successfully.")
 	os.Exit(exitCode)
+}
+
+func printStartupBox(cfg *config.Config) {
+	fmt.Println("  [System Configuration]")
+	fmt.Printf("  %-15s : %s\n", "Port", cfg.Port)
+	fmt.Printf("  %-15s : %s\n", "Database", cfg.DatabasePath)
+	fmt.Printf("  %-15s : %s\n", "Upload Threads", fmt.Sprintf("%d", cfg.UploadThreads))
+	fmt.Printf("  %-15s : %s (Premium: %v)\n", "Max Part Size", utils.FormatBytes(cfg.MaxPartSize), cfg.IsPremium)
+
+	fmt.Println("\n  [Features Status]")
+
+	// FFmpeg status
+	ffmpegEnabled := cfg.FFMPEGPath != "disabled" && cfg.FFMPEGPath != "disable"
+	ffmpegStatus := "DISABLED"
+	if ffmpegEnabled {
+		ffmpegStatus = "ENABLED (" + cfg.FFMPEGPath + ")"
+	}
+	fmt.Printf("  %-15s : %s\n", "FFmpeg", ffmpegStatus)
+
+	// yt-dlp status
+	ytdlpEnabled := cfg.YTDLPPath != "disabled" && cfg.YTDLPPath != "disable"
+	if !ffmpegEnabled {
+		ytdlpEnabled = false
+	}
+	ytdlpStatus := "DISABLED"
+	if ytdlpEnabled {
+		ytdlpStatus = "ENABLED (" + cfg.YTDLPPath + ")"
+	}
+	fmt.Printf("  %-15s : %s\n", "yt-dlp", ytdlpStatus)
+
+	// WebAuthn status
+	rpid := database.GetSetting("webauthn_rpid")
+	if rpid == "" {
+		rpid = cfg.WebAuthnRPID
+	}
+	fmt.Printf("  %-15s : %s (ID: %s)\n", "Passkeys", "READY", rpid)
+
+	// Proxy status
+	if cfg.ProxyURL != "" {
+		fmt.Printf("  %-15s : %s\n", "Proxy", "ENABLED")
+	}
+	fmt.Printf("\n")
 }
 
 func startCleanupTask(cfg *config.Config) {

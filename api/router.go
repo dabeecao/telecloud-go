@@ -167,7 +167,7 @@ func securityHeadersMiddleware() gin.HandlerFunc {
 		c.Header("X-Frame-Options", "SAMEORIGIN")
 		c.Header("X-XSS-Protection", "1; mode=block")
 		// Basic Content Security Policy
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api.github.com https://cloudflareinsights.com https://cdn.plyr.io; media-src 'self' blob: https://cdn.plyr.io;")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; img-src 'self' data: *; connect-src 'self' https://api.github.com https://cloudflareinsights.com https://cdn.plyr.io; media-src 'self' blob: * https://cdn.plyr.io;")
 		c.Next()
 	}
 }
@@ -446,6 +446,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			"is_admin":               isAdmin,
 			"username":               sessionUsername,
 			"storage_used":           userStorageUsed,
+			"theme":                  database.GetUserSetting(sessionUsername, "theme"),
 		})
 	})
 
@@ -795,6 +796,25 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			database.SetSetting("upload_api_key", "")
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.GET("/settings/user", func(c *gin.Context) {
+			username := c.GetString("username")
+			theme := database.GetUserSetting(username, "theme")
+			c.JSON(http.StatusOK, gin.H{
+				"theme": theme,
+			})
+		})
+
+		api.POST("/settings/user/theme", func(c *gin.Context) {
+			username := c.GetString("username")
+			theme := c.PostForm("theme")
+			err := database.SetUserSetting(username, "theme", theme)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save theme"})
+				return
+			}
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 
@@ -1200,7 +1220,18 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					}
 				}
 			}
-			c.JSON(http.StatusOK, gin.H{"files": files})
+			var storageUsed int64
+			if isAdmin {
+				database.DB.Get(&storageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0")
+			} else {
+				prefix := "/" + username
+				database.DB.Get(&storageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"files":        files,
+				"storage_used": storageUsed,
+			})
 		})
 
 		api.POST("/folders", func(c *gin.Context) {
@@ -1358,7 +1389,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			state.Unlock()
 
 			if isDone {
-				tgclient.UpdateTask(taskID, "uploading_to_server", 100, "")
+				tgclient.UpdateTask(taskID, "uploading_to_server", 100, "", username)
 				
 				mimeType := header.Header.Get("Content-Type")
 				if mimeType == "" {
@@ -1375,7 +1406,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			serverPercent := int((float64(actualReceived) / float64(totalChunks)) * 100)
-			tgclient.UpdateTask(taskID, "uploading_to_server", serverPercent, "")
+			tgclient.UpdateTask(taskID, "uploading_to_server", serverPercent, "", username)
 
 			c.JSON(http.StatusOK, gin.H{"status": "chunk_received", "chunk": chunkIndex})
 		})
@@ -1887,6 +1918,124 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.Header("Content-Type", mime)
 			}
 			tgclient.ServeTelegramFile(c.Request, c.Writer, item, cfg)
+		})
+
+		api.GET("/ytdlp/status", func(c *gin.Context) {
+			ytdlpEnabled := cfg.YTDLPPath != "disabled" && cfg.YTDLPPath != "disable"
+			ffmpegEnabled := cfg.FFMPEGPath != "disabled" && cfg.FFMPEGPath != "disable"
+			enabled := ytdlpEnabled && ffmpegEnabled
+			c.JSON(http.StatusOK, gin.H{"enabled": enabled})
+		})
+
+		api.GET("/ytdlp/cookies/status", func(c *gin.Context) {
+			username := c.GetString("username")
+			cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", username))
+			_, err := os.Stat(cookieFile)
+			c.JSON(http.StatusOK, gin.H{"has_cookie": err == nil})
+		})
+
+		api.POST("/ytdlp/cookies", func(c *gin.Context) {
+			file, err := c.FormFile("cookie_file")
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "file_required"})
+				return
+			}
+
+			// Validation: max size 2MB
+			if file.Size > 2*1024*1024 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "file_too_large"})
+				return
+			}
+
+			src, err := file.Open()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "open_failed"})
+				return
+			}
+			defer src.Close()
+
+			// Read first 100 bytes to check header
+			head := make([]byte, 100)
+			n, _ := src.Read(head)
+			headStr := string(head[:n])
+			
+			isNetscape := strings.Contains(headStr, "# Netscape HTTP Cookie File") || strings.Contains(headStr, "# HTTP Cookie File")
+			isJSON := strings.HasPrefix(strings.TrimSpace(headStr), "[")
+			
+			if !isNetscape && !isJSON {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_cookie_format"})
+				return
+			}
+
+			username := c.GetString("username")
+			os.MkdirAll(cfg.CookiesDir, 0755)
+			cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", username))
+
+			if err := c.SaveUploadedFile(file, cookieFile); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "save_failed"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.DELETE("/ytdlp/cookies", func(c *gin.Context) {
+			username := c.GetString("username")
+			cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", username))
+			os.Remove(cookieFile)
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/ytdlp/formats", func(c *gin.Context) {
+			url := c.PostForm("url")
+			if url == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "url_required"})
+				return
+			}
+			if !tgclient.IsValidURL(url) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url_format"})
+				return
+			}
+			username := c.GetString("username")
+			info, err := tgclient.GetYTDLPFormats(url, cfg, username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, info)
+		})
+
+		api.POST("/ytdlp/download", func(c *gin.Context) {
+			url := c.PostForm("url")
+			formatID := c.PostForm("format_id")
+			downloadType := c.PostForm("download_type")
+			path := c.PostForm("path")
+			
+			if url == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "url_required"})
+				return
+			}
+			if !tgclient.IsValidURL(url) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url_format"})
+				return
+			}
+			
+			if path == "" {
+				path = "/"
+			}
+			
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+			dbPath := mapPath(path, username, isAdmin)
+			
+			if isAdmin && isChildAccountPath(dbPath) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "admin_forbidden_child_path"})
+				return
+			}
+			
+			taskID := fmt.Sprintf("ytdlp_%d", time.Now().UnixNano())
+			go tgclient.ProcessYTDLPUpload(context.Background(), url, formatID, dbPath, taskID, downloadType, cfg, username)
+			
+			c.JSON(http.StatusOK, gin.H{"status": "started", "task_id": taskID})
 		})
 	}
 

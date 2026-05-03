@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	_ "image/gif"
 	"image/jpeg"
@@ -15,6 +16,19 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/image/draw"
 )
+
+func FormatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
 
 var ThumbsDir string
 

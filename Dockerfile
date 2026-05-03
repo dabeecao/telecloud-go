@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Install curl and Node.js 20+ for frontend (tailwindcss oxide requires node >= 20)
 RUN apt-get update && apt-get install -y curl && \
-    curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 

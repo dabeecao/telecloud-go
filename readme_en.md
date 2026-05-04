@@ -3,7 +3,7 @@
 <div align="center">
 
 [🇻🇳 Tiếng Việt](./readme.md) | 🇺🇸 English
-
+**[📢 Beta Test Group](https://t.me/+p-d0qfGRbX4wNzJl)**
 </div>
 
 **TeleCloud** is a project that allows you to use Telegram’s nearly unlimited storage capacity to store and manage files.

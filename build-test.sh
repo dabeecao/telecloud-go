@@ -4,10 +4,8 @@ set -e
 
 APP_NAME="telecloud"
 
-# Lấy version từ main.go (compatible macOS + Linux)
 VERSION=$(sed -n 's/.*version *= *"\([^"]*\)".*/\1/p' main.go)
 
-# fallback nếu lỗi
 if [ -z "$VERSION" ]; then
   VERSION="dev"
 fi
@@ -23,23 +21,25 @@ echo "===> Building & Compressing..."
 for GOOS in linux darwin windows; do
   for GOARCH in amd64 arm64; do
 
-    OUTPUT_NAME="${APP_NAME}-${VERSION}-${GOOS}-${GOARCH}"
+    BIN_NAME="$APP_NAME"
 
     if [ "$GOOS" = "windows" ]; then
-      OUTPUT_NAME="${OUTPUT_NAME}.exe"
+      BIN_NAME="${BIN_NAME}.exe"
     fi
 
-    echo "Building $OUTPUT_NAME..."
+    ZIP_NAME="${APP_NAME}-${VERSION}-${GOOS}-${GOARCH}.zip"
+
+    echo "Building $ZIP_NAME..."
 
     CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
     go build -ldflags="-s -w -X main.version=$VERSION" \
-    -o build/$OUTPUT_NAME
+    -o build/$BIN_NAME
 
-    echo "Zipping $OUTPUT_NAME..."
+    echo "Zipping $ZIP_NAME..."
 
     cd build
-    zip -q "${OUTPUT_NAME}.zip" "$OUTPUT_NAME"
-    rm "$OUTPUT_NAME"
+    zip -q "$ZIP_NAME" "$BIN_NAME"
+    rm "$BIN_NAME"
     cd ..
 
   done

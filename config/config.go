@@ -60,17 +60,23 @@ func Load() (*Config, error) {
 
 	ffmpegPath := getEnv("FFMPEG_PATH", "ffmpeg")
 	if ffmpegPath != "disabled" && ffmpegPath != "disable" {
-		if !isExecutable(ffmpegPath) {
+		resolvedPath, ok := findExecutable(ffmpegPath)
+		if !ok {
 			warnings = append(warnings, "WARNING: FFMPEG path '"+ffmpegPath+"' not found or not executable. Disabling FFMPEG support.")
 			ffmpegPath = "disabled"
+		} else {
+			ffmpegPath = resolvedPath
 		}
 	}
 
 	ytdlpPath := getEnv("YTDLP_PATH", "disabled")
 	if ytdlpPath != "disabled" && ytdlpPath != "disable" {
-		if !isExecutable(ytdlpPath) {
+		resolvedPath, ok := findExecutable(ytdlpPath)
+		if !ok {
 			warnings = append(warnings, "WARNING: YT-DLP path '"+ytdlpPath+"' not found or not executable. Disabling YT-DLP support.")
 			ytdlpPath = "disabled"
+		} else {
+			ytdlpPath = resolvedPath
 		}
 	}
 
@@ -102,18 +108,26 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func isExecutable(path string) bool {
-	// On Windows and macOS, the standard LookPath is safe and handles 
+// findExecutable locates the binary and returns its absolute path and true if found.
+func findExecutable(path string) (string, bool) {
+	// On Windows and macOS, the standard LookPath is safe and handles
 	// platform-specific nuances (like .exe extensions) perfectly.
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		_, err := exec.LookPath(path)
-		return err == nil
+		absPath, err := exec.LookPath(path)
+		if err != nil {
+			return "", false
+		}
+		return absPath, true
 	}
 
 	// On Linux (including Android/Termux), we use manual PATH search
 	// to avoid the faccessat2 syscall which triggers SIGSYS on older/restricted kernels.
 	if strings.Contains(path, string(os.PathSeparator)) {
-		return checkFileExecutable(path)
+		if checkFileExecutable(path) {
+			abs, _ := filepath.Abs(path)
+			return abs, true
+		}
+		return "", false
 	}
 
 	pathEnv := os.Getenv("PATH")
@@ -123,11 +137,12 @@ func isExecutable(path string) bool {
 		}
 		fullPath := filepath.Join(dir, path)
 		if checkFileExecutable(fullPath) {
-			return true
+			abs, _ := filepath.Abs(fullPath)
+			return abs, true
 		}
 	}
 
-	return false
+	return "", false
 }
 
 func checkFileExecutable(path string) bool {

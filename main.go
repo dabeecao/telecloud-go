@@ -20,6 +20,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"embed"
 	"flag"
@@ -29,15 +30,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
-	"runtime"
 	"time"
-	"bufio"
 
 	"github.com/google/uuid"
 
-	"path/filepath"
 	"telecloud/api"
 	"telecloud/config"
 	"telecloud/database"
@@ -56,12 +56,15 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v3.1.1"
+	version = "v3.1.2"
 	commit  = "none"
 	date    = "unknown"
 )
 
 func main() {
+	// Fix environment variables for Termux/Android to ensure FFmpeg/YT-DLP work correctly
+	fixTermuxEnvironment()
+
 	authFlag := flag.Bool("auth", false, "Run the terminal authentication flow for a Userbot session")
 	versionFlag := flag.Bool("version", false, "Show version information")
 	resetPassFlag := flag.Bool("resetpass", false, "Reset admin username and password")
@@ -344,4 +347,52 @@ func startCleanupTask(cfg *config.Config) {
 			})
 		}
 	}()
+}
+
+func fixTermuxEnvironment() {
+	// Only proceed if we are on Android or TERMUX_VERSION is set
+	if runtime.GOOS != "android" && os.Getenv("TERMUX_VERSION") == "" {
+		return
+	}
+
+	prefix := os.Getenv("PREFIX")
+	if prefix == "" && runtime.GOOS == "android" {
+		prefix = "/data/data/com.termux/files/usr"
+	}
+
+	if prefix != "" {
+		binDir := filepath.Join(prefix, "bin")
+		currentPath := os.Getenv("PATH")
+		if !strings.Contains(currentPath, binDir) {
+			os.Setenv("PATH", binDir+string(os.PathListSeparator)+currentPath)
+		}
+
+		libDir := filepath.Join(prefix, "lib")
+		currentLD := os.Getenv("LD_LIBRARY_PATH")
+		if !strings.Contains(currentLD, libDir) {
+			newLD := libDir
+			if currentLD != "" {
+				newLD = libDir + string(os.PathListSeparator) + currentLD
+			}
+			os.Setenv("LD_LIBRARY_PATH", newLD)
+		}
+
+		if os.Getenv("TMPDIR") == "" {
+			tmpDir := filepath.Join(prefix, "tmp")
+			os.MkdirAll(tmpDir, 0755)
+			os.Setenv("TMPDIR", tmpDir)
+		}
+
+		preload := filepath.Join(prefix, "lib", "libtermux-exec.so")
+		if _, err := os.Stat(preload); err == nil {
+			currentPreload := os.Getenv("LD_PRELOAD")
+			if !strings.Contains(currentPreload, "libtermux-exec.so") {
+				if currentPreload != "" {
+					os.Setenv("LD_PRELOAD", preload+" "+currentPreload)
+				} else {
+					os.Setenv("LD_PRELOAD", preload)
+				}
+			}
+		}
+	}
 }

@@ -59,6 +59,7 @@ func CreateLocalThumbnail(sourcePath, mimeType, ffmpegPath string) *string {
 			"-vframes", "1",
 			"-vf", "scale=320:-1", thumbPath,
 		)
+		cmd.Env = os.Environ()
 		if err := cmd.Run(); err == nil {
 			if _, err := os.Stat(thumbPath); err == nil {
 				return &thumbPath
@@ -73,6 +74,7 @@ func CreateLocalThumbnail(sourcePath, mimeType, ffmpegPath string) *string {
 			"-an", "-vframes", "1",
 			"-vf", "scale=320:-1", thumbPath,
 		)
+		cmd.Env = os.Environ()
 		if err := cmd.Run(); err == nil {
 			if _, err := os.Stat(thumbPath); err == nil {
 				return &thumbPath

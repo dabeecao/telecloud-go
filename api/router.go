@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"telecloud/database"
 	"telecloud/tgclient"
 	"telecloud/utils"
+	"telecloud/s3"
 	"telecloud/webdav"
 	"telecloud/ws"
 	"time"
@@ -146,6 +148,10 @@ func verifyItemAccess(c *gin.Context, path string) bool {
 }
 
 func isChildAccountPath(dbPath string) bool {
+	return isChildAccountPathQuery(database.DB, dbPath)
+}
+
+func isChildAccountPathQuery(q database.Queryer, dbPath string) bool {
 	cleanPath := path.Clean(dbPath)
 	if cleanPath == "/" {
 		return false
@@ -154,7 +160,7 @@ func isChildAccountPath(dbPath string) bool {
 	rootFolder := parts[0]
 
 	var exists int
-	database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
+	q.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
 	return exists > 0
 }
 
@@ -266,8 +272,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	}
 
 
-	// WebDAV Route (handler will check if enabled internally)
+	// WebDAV Route
 	h := gin.WrapH(webdav.NewHandler(cfg))
+	
+	// S3 Route
+	s3h := gin.WrapH(s3.NewHandler(cfg))
+	
 	methods := []string{
 		"GET", "POST", "PUT", "PATCH", "HEAD", "OPTIONS", "DELETE", "CONNECT", "TRACE",
 		"PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK",
@@ -275,6 +285,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	for _, method := range methods {
 		r.Handle(method, "/webdav", h)
 		r.Handle(method, "/webdav/*path", h)
+		r.Handle(method, "/s3", s3h)
+		r.Handle(method, "/s3/*path", s3h)
 	}
 
 	r.GET("/setup", func(c *gin.Context) {
@@ -435,10 +447,37 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			database.DB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
 		}
 
+		// S3 for the current session user
+		var s3Enabled bool
+		var s3AccessKey string
+		var s3SecretKey string
+
+		if isAdmin {
+			s3Enabled = database.GetSetting("s3_enabled") == "true"
+			s3AccessKey = database.GetSetting("s3_access_key")
+			s3SecretKey = database.GetSetting("s3_secret_key")
+		} else {
+			var childS3 struct {
+				Enabled   int     `db:"s3_enabled"`
+				AccessKey *string `db:"s3_access_key"`
+				SecretKey *string `db:"s3_secret_key"`
+			}
+			err := database.DB.Get(&childS3, "SELECT s3_enabled, s3_access_key, s3_secret_key FROM child_accounts WHERE username = ?", sessionUsername)
+			if err == nil {
+				s3Enabled = childS3.Enabled == 1 && database.GetSetting("s3_enabled") == "true"
+				if childS3.AccessKey != nil { s3AccessKey = *childS3.AccessKey }
+				if childS3.SecretKey != nil { s3SecretKey = *childS3.SecretKey }
+			}
+		}
+
 		c.HTML(http.StatusOK, "index.html", gin.H{
 			"webdav_enabled":         webdavEnabled,
 			"global_webdav_enabled":  globalWebdavEnabled,
 			"webdav_user":            webdavUser,
+			"s3_enabled":             s3Enabled,
+			"global_s3_enabled":      database.GetSetting("s3_enabled") == "true",
+			"s3_access_key":          s3AccessKey,
+			"s3_secret_key":          s3SecretKey,
 			"upload_api_enabled":     uploadAPIEnabled,
 			"global_api_enabled":     globalUploadAPIEnabled,
 			"upload_api_key":         uploadAPIKey,
@@ -798,6 +837,64 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				return
 			}
 			database.SetSetting("upload_api_key", "")
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/s3", func(c *gin.Context) {
+			if !c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+			enabled := c.PostForm("enabled")
+			if enabled == "true" {
+				database.SetSetting("s3_enabled", "true")
+			} else {
+				database.SetSetting("s3_enabled", "false")
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/s3/credentials", func(c *gin.Context) {
+			accessKey := c.PostForm("access_key")
+			secretKey := c.PostForm("secret_key")
+			
+			if c.GetBool("is_admin") {
+				database.SetSetting("s3_access_key", accessKey)
+				database.SetSetting("s3_secret_key", secretKey)
+			} else {
+				username := c.GetString("username")
+				_, err := database.DB.Exec("UPDATE child_accounts SET s3_access_key = ?, s3_secret_key = ? WHERE username = ?", accessKey, secretKey, username)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+
+		api.POST("/settings/child-s3", func(c *gin.Context) {
+			if c.GetBool("is_admin") {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Admins should use global S3 toggle"})
+				return
+			}
+			username := c.GetString("username")
+			enabled := c.PostForm("enabled") == "true"
+			
+			// Check if global S3 is enabled
+			if enabled && database.GetSetting("s3_enabled") != "true" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "ADMIN_DISABLED"})
+				return
+			}
+
+			val := 0
+			if enabled {
+				val = 1
+			}
+			_, err := database.DB.Exec("UPDATE child_accounts SET s3_enabled = ? WHERE username = ?", val, username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 
@@ -1540,7 +1637,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 					continue
 				}
 
-				if isAdmin && isChildAccountPath(item.Path) {
+				if isAdmin && isChildAccountPathQuery(tx, item.Path) {
 					continue
 				}
 
@@ -1806,7 +1903,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			isAdmin := c.GetBool("is_admin")
-			if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
+			if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPathQuery(tx, item.Path)) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
@@ -1843,6 +1940,14 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
+			}
+
+			// Update MIME type based on new extension
+			if !item.IsFolder {
+				newMime := mime.TypeByExtension(filepath.Ext(uniqueName))
+				if newMime != "" {
+					tx.Exec("UPDATE files SET mime_type = ? WHERE id = ?", newMime, id)
+				}
 			}
 
 			if err := tx.Commit(); err != nil {

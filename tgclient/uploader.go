@@ -7,6 +7,7 @@ import (
 
 	"crypto/tls"
 	"io"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -164,11 +165,12 @@ type uploadProgress struct {
 }
 
 func (p uploadProgress) Chunk(ctx context.Context, state uploader.ProgressState) error {
+	currentUploaded := p.previousSize + state.Uploaded
+	percent := 0
 	if p.totalSize > 0 {
-		currentUploaded := p.previousSize + state.Uploaded
-		percent := int(float64(currentUploaded) / float64(p.totalSize) * 100)
-		UpdateTaskWithSize(p.taskID, "telegram", percent, "", p.totalSize, currentUploaded, p.owner)
+		percent = int(float64(currentUploaded) / float64(p.totalSize) * 100)
 	}
+	UpdateTaskWithSize(p.taskID, "telegram", percent, "", p.totalSize, currentUploaded, p.owner)
 	return nil
 }
 
@@ -270,6 +272,11 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	}()
 
 	// Prepare for upload
+	up := uploader.NewUploader(api).
+		WithPartSize(uploader.MaximumPartSize).
+		WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: 0, owner: owner}).
+		WithThreads(cfg.UploadThreads)
+
 	numParts := int((fileSize + cfg.MaxPartSize - 1) / cfg.MaxPartSize)
 	if numParts == 0 {
 		numParts = 1
@@ -300,14 +307,28 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 		UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("uploading_part_%d_of_%d", i+1, numParts), "")
 
-		up := uploader.NewUploader(api).
-			WithPartSize(uploader.MaximumPartSize).
-			WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start, owner: owner}).
-			WithThreads(cfg.UploadThreads)
+		// Update progress state for current part
+		up = up.WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start, owner: owner})
 
-		msgID, err := uploadFilePart(ctx, api, up, sectionReader, partFilename, mimeType, uniqueFilename, cfg)
-		if err != nil {
-			UpdateTask(taskID, "error", 0, "upload_part_failed: "+err.Error(), "")
+		var msgID int
+		var uploadErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			if attempt > 1 {
+				UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("retrying_part_%d_attempt_%d", i+1, attempt), "")
+				time.Sleep(5 * time.Second)
+			}
+			msgID, uploadErr = uploadFilePart(ctx, api, up, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			if uploadErr == nil {
+				break
+			}
+			log.Printf("[Upload] Task %s part %d attempt %d failed: %v", taskID, i+1, attempt, uploadErr)
+			
+			// Reset section reader for retry
+			_, _ = sectionReader.Seek(0, io.SeekStart)
+		}
+
+		if uploadErr != nil {
+			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
 			return
 		}
 		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
@@ -499,6 +520,15 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		mimeType = "application/octet-stream"
 	}
 
+	// Guess extension if missing
+	if filepath.Ext(filename) == "" && mimeType != "application/octet-stream" {
+		exts, _ := mime.ExtensionsByType(mimeType)
+		if len(exts) > 0 {
+			// exts[0] includes the dot, e.g., ".jpg"
+			filename += exts[0]
+		}
+	}
+
 	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, size, 0)
 
 	// Wait for a slot in the upload queue
@@ -563,6 +593,11 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	// Allow unlimited file size for remote uploads since we split it
 	bodyReader := resp.Body
 	
+	up := uploader.NewUploader(api).
+		WithPartSize(uploader.MaximumPartSize).
+		WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: 0, owner: owner}).
+		WithThreads(cfg.UploadThreads)
+
 	partIndex := 0
 	totalUploaded := int64(0)
 	var firstMsgID int
@@ -570,6 +605,16 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	for {
 		// Use a counting reader to know the exact size of this part
 		pr := &utils.CountingReader{R: io.LimitReader(bodyReader, cfg.MaxPartSize)}
+		
+		// For remote streaming, we might not know the exact part size if it's the last part and size is unknown
+		expectedPartSize := int64(0)
+		if size > 0 {
+			expectedPartSize = cfg.MaxPartSize
+			remaining := size - totalUploaded
+			if remaining < expectedPartSize {
+				expectedPartSize = remaining
+			}
+		}
 
 		partFilename := uniqueFilename
 		if size > cfg.MaxPartSize || size == -1 {
@@ -578,14 +623,16 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1), "")
 
-		up := uploader.NewUploader(api).
-			WithPartSize(uploader.MaximumPartSize).
-			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
-			WithThreads(cfg.UploadThreads)
+		up = up.WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner})
 
-		msgID, err := uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg)
-		if err != nil {
-			UpdateTask(taskID, "error", 0, "upload_part_failed: "+err.Error(), "")
+		var msgID int
+		var uploadErr error
+		// Note: For remote streaming uploads, we can't easily retry the same part 
+		// because the bodyReader is consumed. We would need to restart the whole download.
+		// For now, we try once. If it's a critical error, we fail.
+		msgID, uploadErr = uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg, expectedPartSize)
+		if uploadErr != nil {
+			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
 			return
 		}
 		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
@@ -755,6 +802,10 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	}
 	defer f.Close()
 
+	up := uploader.NewUploader(api).
+		WithPartSize(uploader.MaximumPartSize).
+		WithThreads(cfg.UploadThreads)
+
 	var firstMsgID int
 	for i := 0; i < numParts; i++ {
 		start := int64(i) * cfg.MaxPartSize
@@ -771,13 +822,22 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, i+1)
 		}
 
-		up := uploader.NewUploader(api).
-			WithPartSize(uploader.MaximumPartSize).
-			WithThreads(cfg.UploadThreads)
+		var msgID int
+		var uploadErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			if attempt > 1 {
+				time.Sleep(5 * time.Second)
+			}
+			msgID, uploadErr = uploadFilePart(ctx, api, up, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			if uploadErr == nil {
+				break
+			}
+			log.Printf("[UploadSync] Part %d attempt %d failed: %v", i+1, attempt, uploadErr)
+			_, _ = sectionReader.Seek(0, io.SeekStart)
+		}
 
-		msgID, err := uploadFilePart(ctx, api, up, sectionReader, partFilename, mimeType, uniqueFilename, cfg)
-		if err != nil {
-			return 0, "", fmt.Errorf("upload part %d: %w", i+1, err)
+		if uploadErr != nil {
+			return 0, "", fmt.Errorf("upload part %d (3 attempts): %w", i+1, uploadErr)
 		}
 		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
 
@@ -866,8 +926,9 @@ func GetActiveTasks(username string) map[string]*UploadStatus {
 	return tasks
 }
 
-func uploadFilePart(ctx context.Context, api *tg.Client, up *uploader.Uploader, r io.Reader, filename, mimeType, caption string, cfg *config.Config) (int, error) {
-	file, err := up.FromReader(ctx, filename, r)
+func uploadFilePart(ctx context.Context, api *tg.Client, up *uploader.Uploader, r io.Reader, filename, mimeType, caption string, cfg *config.Config, size int64) (int, error) {
+	u := uploader.NewUpload(filename, r, size)
+	file, err := up.Upload(ctx, u)
 	if err != nil {
 		return 0, err
 	}

@@ -72,6 +72,7 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 	cmd := exec.Command(cfg.YTDLPPath, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.Env = os.Environ()
 
 	err := cmd.Run()
 	if err != nil {
@@ -206,6 +207,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	defer cancel()
 
 	cmd := exec.CommandContext(ytdlpCtx, cfg.YTDLPPath, args...)
+	cmd.Env = os.Environ()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

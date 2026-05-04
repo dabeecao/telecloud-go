@@ -155,6 +155,11 @@ func InitDB(dbPath string) error {
 	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename_owner ON files(path, filename, owner)")
 	DB.Exec("CREATE TABLE IF NOT EXISTS user_settings (username TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (username, key))")
 	
+	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_access_key TEXT")
+	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_secret_key TEXT")
+	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_enabled INTEGER DEFAULT 1")
+	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_child_accounts_s3_key ON child_accounts(s3_access_key)")
+	
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
 	return nil

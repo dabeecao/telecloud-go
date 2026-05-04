@@ -4,9 +4,9 @@ labels: [Bug]
 body:
 
   - type: input
-    id: tele-cloud-version
+    id: telecloud-version
     attributes:
-      label: Phiên bản telecloud | Which version telecloud are you using
+      label: Phiên bản TeleCloud | Which version of TeleCloud are you using
       placeholder: |
         Ví dụ: "v3.1.1"
         Example: "v3.1.1"
@@ -14,9 +14,9 @@ body:
       required: true
 
   - type: input
-    id: tele-cloud-os
+    id: telecloud-os
     attributes:
-      label: Hệ điều hành đang dùng để chạy telecloud | Which os running telecloud
+      label: Hệ điều hành | Which OS is running TeleCloud
       placeholder: |
         Ví dụ: "Linux"
         Example: "Termux"
@@ -24,9 +24,9 @@ body:
       required: true
 
   - type: textarea
-    id: tele-cloud-env
+    id: telecloud-env
     attributes:
-      label: Cấu hình môi trường | Which .env is TeleCloud running in
+      label: Cấu hình môi trường | Environment Configuration (.env)
       placeholder: |
         Example:
         LOG_GROUP_ID=me

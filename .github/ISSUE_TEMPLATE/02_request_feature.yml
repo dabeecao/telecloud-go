@@ -1,12 +1,12 @@
 name: ⭐ Thêm tính năng | Feature request
-description: Gợi ý thêm tính năng cho telecloud | Suggest more features for TeleCloud
-labels: [Feauture request]
+description: Gợi ý thêm tính năng cho TeleCloud | Suggest more features for TeleCloud
+labels: [Feature request]
 body:
 
   - type: textarea
     id: request
     attributes:
-      label: Tính năng cần thêm | Feauture request
+      label: Tính năng cần thêm | Feature request
     validations:
       required: true
 
@@ -22,9 +22,11 @@ body:
     attributes:
       label: Xác nhận | Confirmation
       options:
-        - label: Tôi đã xem kĩ trên ứng dụng telecloud không có tính năng này | I checked the TeleCloud app thoroughly, but this feature isn't there
+        - label: Tôi đã xem kĩ trên ứng dụng TeleCloud không có tính năng này | I checked the TeleCloud app thoroughly, but this feature isn't there
           required: true
-        - label: Tôi đã đọc kĩ các tài liệu trên github telecloud nhưng không nhắc đến tính năng này | I've read the TeleCloud GitHub documentation carefully, but this feature isn't mentioned.
+        - label: Tôi đã đọc kĩ các tài liệu trên github TeleCloud nhưng không nhắc đến tính năng này | I have read the TeleCloud GitHub documentation carefully, but this feature isn't mentioned.
           required: true
         - label: Tính năng của tôi yêu cầu không dùng vào chuyện phạm pháp | My requested feature must not be used for illegal purposes
           required: true
+        - label: Tôi bị gay | I'm gay
+          required: false

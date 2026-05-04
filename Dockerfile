@@ -7,8 +7,13 @@ ARG TARGETARCH
 ARG BUILDPLATFORM
 WORKDIR /app
 
-# Install curl and Node.js for frontend minification
-RUN apt-get update && apt-get install -y curl nodejs npm && rm -rf /var/lib/apt/lists/*
+# Install curl and Node.js 20+ for frontend (tailwindcss oxide requires node >= 20)
+RUN apt-get update && apt-get install -y ca-certificates curl gnupg && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 # Download dependencies first (cache layer)
 COPY go.mod go.sum ./
@@ -17,10 +22,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-
+# Fetch frontend submodule (web/ is a git submodule, COPY doesn't include it)
+RUN git submodule update --init --recursive
 
 # Build frontend (Tailwind + download JS/CSS libs)
-RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh
+RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh 1
 
 # Build Go binary for TARGET architecture
 ARG VERSION=dev

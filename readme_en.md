@@ -582,13 +582,6 @@ Thanks to all contributors for their great tools.
 
 ---
 
-## 🎁 Support
-
-If you find this project useful and want to support me and future projects, visit:
-[https://dabeecao.org#donate](https://dabeecao.org#donate)
-
----
-
 ## 📜 License
 
 This project is licensed under the

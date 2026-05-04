@@ -4,6 +4,9 @@
 
 🇻🇳 Tiếng Việt | [🇺🇸 English](./readme_en.md)
 
+**[📢 Nhóm Beta Test](https://t.me/+p-d0qfGRbX4wNzJl)**
+*Tham gia để test tính năng mới và báo cáo lỗi*
+
 </div>
 
 **TeleCloud** là một dự án cho phép sử dụng chính dung lượng lưu trữ gần như vô tận của Telegram để lưu trữ và quản lý tệp.

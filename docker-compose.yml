@@ -19,8 +19,8 @@ services:
       - SESSION_FILE=/app/data/session.json
       # Optional: Paths to FFmpeg and yt-dlp. These are built into the Docker image,
       # but you can override them here if you want to use external binaries.
-      # - FFMPEG_PATH=/usr/bin/ffmpeg
-      # - YTDLP_PATH=/usr/local/bin/yt-dlp
+      - FFMPEG_PATH=/usr/bin/ffmpeg
+      - YTDLP_PATH=/usr/local/bin/yt-dlp
     volumes:
       # Persist database, thumbnails, temp files, and Telegram session
       - ./data:/app/data

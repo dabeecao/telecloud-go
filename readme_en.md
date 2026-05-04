@@ -318,26 +318,31 @@ mv env.example .env
 
 3. Authenticate (first time only):
 ```bash
-docker run --rm -it \
-  -v "$(pwd)/data:/app/data" \
-  --env-file .env \
-  ghcr.io/dabeecao/telecloud-go -auth
+mkdir -p data
+sudo chmod 777 data
+sudo docker run --rm -it \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    ghcr.io/dabeecao/telecloud-go -auth
 ```
 
 4. Run:
 ```bash
-docker run -d \
-  --name telecloud \
-  --restart unless-stopped \
-  -p 8091:8091 \
-  -v "$(pwd)/data:/app/data" \
-  --env-file .env \
-  -e DATABASE_PATH=/app/data/database.db \
-  -e THUMBS_DIR=/app/data/thumbs \
-  -e TEMP_DIR=/app/data/temp \
-  -e SESSION_FILE=/app/data/session.json \
-  --user 65532:65532 \
-  ghcr.io/dabeecao/telecloud-go
+sudo docker run -d \
+    --name telecloud \
+    --restart unless-stopped \
+    -p 8091:8091 \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e THUMBS_DIR=/app/data/thumbs \
+    -e TEMP_DIR=/app/data/temp \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    ghcr.io/dabeecao/telecloud-go
 ```
 
 Access the web interface at: `http://localhost:8091`
@@ -380,7 +385,7 @@ PORT=8091
 #### 3. Authenticate your Telegram account (First time only)
 
 ```bash
-docker compose run --rm -it telecloud -auth
+sudo docker compose run --rm -it telecloud -auth
 ```
 
 Enter your phone number, OTP, and 2FA password (if any). The `session.json` file will be saved in `./data/`.
@@ -388,7 +393,7 @@ Enter your phone number, OTP, and 2FA password (if any). The `session.json` file
 #### 4. Start the server
 
 ```bash
-docker compose up -d
+sudo docker compose up -d
 ```
 
 Access the web interface at: `http://localhost:8091`
@@ -399,17 +404,17 @@ Access the web interface at: `http://localhost:8091`
 
 ```bash
 # View logs
-docker compose logs -f
+sudo docker compose logs -f
 
 # Stop the application
-docker compose stop
+sudo docker compose stop
 
 # Update to a new version
-docker compose pull
-docker compose up -d
+sudo docker compose pull
+sudo docker compose up -d
 
 # Remove the container (data in ./data/ is preserved)
-docker compose down
+sudo docker compose down
 ```
 
 > 📁 All persistent data (database, thumbnails, temp files) is stored in the `./data/` directory on your host machine.
@@ -437,7 +442,7 @@ cd telecloud-go
 
 2. Build the Docker image from source:
 ```bash
-docker build -t telecloud:local .
+sudo docker build -t telecloud:local .
 ```
 
 3. Configure `.env`:
@@ -448,17 +453,31 @@ cp env.example .env
 
 4. Authenticate (first time only):
 ```bash
-docker run --rm -it -v "$(pwd)/data:/app/data" --env-file .env telecloud:local -auth
+mkdir -p data
+sudo chmod 777 data
+sudo docker run --rm -it \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    telecloud:local -auth
 ```
 
 5. Run your locally built image:
 ```bash
-docker run -d \
-  --name telecloud \
-  -p 8091:8091 \
-  -v "$(pwd)/data:/app/data" \
-  --env-file .env \
-  telecloud:local
+sudo docker run -d \
+    --name telecloud \
+    --restart unless-stopped \
+    -p 8091:8091 \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e THUMBS_DIR=/app/data/thumbs \
+    -e TEMP_DIR=/app/data/temp \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    telecloud:local
 ```
 
 Access the web interface at: `http://localhost:8091`
@@ -469,7 +488,7 @@ Access the web interface at: `http://localhost:8091`
 
 ### Method 2: Build Manually (Native)
 
-1. Install **Golang (1.21+)**: [https://golang.org/dl/](https://golang.org/dl/)
+1. Install **Golang (1.24+)**: [https://golang.org/dl/](https://golang.org/dl/)
 2. Clone the project (Must use `--recursive` to fetch frontend code):
 ```bash
 git clone --recursive https://github.com/dabeecao/telecloud-go.git

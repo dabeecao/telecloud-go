@@ -294,26 +294,31 @@ mv env.example .env
 
 3. Xác thực tài khoản (chỉ thực hiện lần đầu):
 ```bash
-docker run --rm -it \
-  -v "$(pwd)/data:/app/data" \
-  --env-file .env \
-  ghcr.io/dabeecao/telecloud-go -auth
+mkdir -p data
+sudo chmod 777 data
+sudo docker run --rm -it \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    ghcr.io/dabeecao/telecloud-go -auth
 ```
 
 4. Khởi động:
 ```bash
-docker run -d \
-  --name telecloud \
-  --restart unless-stopped \
-  -p 8091:8091 \
-  -v "$(pwd)/data:/app/data" \
-  --env-file .env \
-  -e DATABASE_PATH=/app/data/database.db \
-  -e THUMBS_DIR=/app/data/thumbs \
-  -e TEMP_DIR=/app/data/temp \
-  -e SESSION_FILE=/app/data/session.json \
-  --user 65532:65532 \
-  ghcr.io/dabeecao/telecloud-go
+sudo docker run -d \
+    --name telecloud \
+    --restart unless-stopped \
+    -p 8091:8091 \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e THUMBS_DIR=/app/data/thumbs \
+    -e TEMP_DIR=/app/data/temp \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    ghcr.io/dabeecao/telecloud-go
 ```
 
 Truy cập giao diện web tại: `http://localhost:8091`
@@ -358,7 +363,7 @@ PORT=8091
 #### 3. Xác thực tài khoản Telegram (Chỉ thực hiện lần đầu)
 
 ```bash
-docker compose run --rm -it telecloud -auth
+sudo docker compose run --rm -it telecloud -auth
 ```
 
 Nhập số điện thoại, mã OTP và mật khẩu 2FA (nếu có). Sau khi thành công, file `session.json` sẽ được lưu vào `./data/`.
@@ -366,7 +371,7 @@ Nhập số điện thoại, mã OTP và mật khẩu 2FA (nếu có). Sau khi t
 #### 4. Khởi động
 
 ```bash
-docker compose up -d
+sudo docker compose up -d
 ```
 
 Truy cập giao diện web tại: `http://localhost:8091`
@@ -377,17 +382,17 @@ Truy cập giao diện web tại: `http://localhost:8091`
 
 ```bash
 # Xem log
-docker compose logs -f
+sudo docker compose logs -f
 
 # Dừng ứng dụng
-docker compose stop
+sudo docker compose stop
 
 # Cập nhật lên phiên bản mới
-docker compose pull
-docker compose up -d
+sudo docker compose pull
+sudo docker compose up -d
 
 # Xóa container (dữ liệu trong ./data/ vẫn được giữ nguyên)
-docker compose down
+sudo docker compose down
 ```
 
 > 📁 Toàn bộ dữ liệu (database, ảnh thumbnail, file tạm) được lưu trong thư mục `./data/` trên máy chủ của bạn.
@@ -417,7 +422,7 @@ cd telecloud-go
 
 2. Build Docker image từ nguồn:
 ```bash
-docker build -t telecloud:local .
+sudo docker build -t telecloud:local .
 ```
 
 3. Cấu hình `.env`:
@@ -428,17 +433,31 @@ cp env.example .env
 
 4. Xác thực tài khoản (chỉ thực hiện lần đầu):
 ```bash
-docker run --rm -it -v "$(pwd)/data:/app/data" --env-file .env telecloud:local -auth
+mkdir -p data
+sudo chmod 777 data
+sudo docker run --rm -it \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    telecloud:local -auth
 ```
 
 5. Chạy image vừa build:
 ```bash
-docker run -d \
-  --name telecloud \
-  -p 8091:8091 \
-  -v "$(pwd)/data:/app/data" \
-  --env-file .env \
-  telecloud:local
+sudo docker run -d \
+    --name telecloud \
+    --restart unless-stopped \
+    -p 8091:8091 \
+    -v "$(pwd)/data:/app/data" \
+    --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e THUMBS_DIR=/app/data/thumbs \
+    -e TEMP_DIR=/app/data/temp \
+    -e SESSION_FILE=/app/data/session.json \
+    --user 65532:65532 \
+    telecloud:local
 ```
 
 Truy cập giao diện web tại: `http://localhost:8091`
@@ -449,7 +468,7 @@ Truy cập giao diện web tại: `http://localhost:8091`
 
 ### Phương pháp 2: Build thủ công (Native)
 
-1.  Cài đặt **Golang (1.21+)** tại https://golang.org/dl/
+1.  Cài đặt **Golang (1.24+)** tại https://golang.org/dl/
 
 2.  Clone dự án (Bắt buộc dùng `--recursive` để lấy code frontend):
     ```bash

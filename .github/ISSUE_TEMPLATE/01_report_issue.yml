@@ -1,0 +1,49 @@
+name: 🐞 Báo lỗi | Bug report
+description: Báo lỗi ứng dụng | Bug report
+labels: [Bug]
+body:
+
+  - type: input
+    id: tele-cloud-version
+    attributes:
+      label: Phiên bản telecloud | Which version telecloud are you using
+      placeholder: |
+        Ví dụ: "v3.1.1"
+        Example: "v3.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: tele-cloud-os
+    attributes:
+      label: Hệ điều hành đang dùng để chạy telecloud | Which os running telecloud
+      placeholder: |
+        Ví dụ: "Linux"
+        Example: "Termux"
+    validations:
+      required: true
+
+  - type: textarea
+    id: tele-cloud-env
+    attributes:
+      label: Cấu hình môi trường | Which .env is TeleCloud running in
+      placeholder: |
+        Example:
+        LOG_GROUP_ID=me
+        PORT=8091
+        #TG_UPLOAD_THREADS=2
+        #DATABASE_PATH=database.db
+        #THUMBS_DIR=static/thumbs
+        #TEMP_DIR=./temp
+        #PROXY_URL= # e.g. socks5://127.0.0.1:1080 or http://127.0.0.1:8080
+        FFMPEG_PATH=ffmpeg
+        #YTDLP_PATH=yt-dlp
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce-steps
+    attributes:
+      label: Mô tả chi tiết cách tái hiện lại lỗi | Provide an example of the issue
+    validations:
+      required: true

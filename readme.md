@@ -552,12 +552,6 @@ Xin cảm ơn các đội ngũ phát triển đã cung cấp những công cụ 
 
 ---
 
-## 🎁 Ủng hộ
-
-Nếu bạn thấy dự án hữu ích và muốn ủng hộ tôi cũng như các dự án sau của tôi, bạn có thể [truy cập vào đây](https://dabeecao.org#donate) và tặng tôi một tách trà.
-
----
-
 ## 📜 Giấy phép
 
 Dự án này được phát hành dưới giấy phép [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html).

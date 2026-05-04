@@ -286,12 +286,73 @@ You can view detailed documentation and `curl` examples directly in the **Settin
 
 This is the recommended deployment method for servers. It makes it easy to manage, update, and run TeleCloud without worrying about the host OS environment.
 
-### Requirements
+### 🎬 FFmpeg and yt-dlp Built-in
+
+The Docker image uses Alpine Linux and **includes FFmpeg and yt-dlp built-in**.
+You **do not** need to install or mount any external binaries. Thumbnail generation and URL media downloads work out of the box!
+
+---
+
+### Method 1: Single Container (Quick Start)
+
+The fastest way to get running with just Docker — no Compose needed.
+
+#### Requirements
+- [Docker](https://docs.docker.com/engine/install/) installed
+
+#### Steps
+
+1. Pull the image:
+```bash
+docker pull ghcr.io/dabeecao/telecloud-go
+```
+
+2. Configure `.env`:
+```bash
+mkdir telecloud && cd telecloud
+curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/env.example
+mv env.example .env
+# Edit .env and fill in API_ID, API_HASH, LOG_GROUP_ID
+```
+
+3. Authenticate (first time only):
+```bash
+docker run --rm -it \
+  -v "$(pwd)/data:/app/data" \
+  --env-file .env \
+  ghcr.io/dabeecao/telecloud-go -auth
+```
+
+4. Run:
+```bash
+docker run -d \
+  --name telecloud \
+  --restart unless-stopped \
+  -p 8091:8091 \
+  -v "$(pwd)/data:/app/data" \
+  --env-file .env \
+  -e DATABASE_PATH=/app/data/database.db \
+  -e THUMBS_DIR=/app/data/thumbs \
+  -e TEMP_DIR=/app/data/temp \
+  -e SESSION_FILE=/app/data/session.json \
+  --user 65532:65532 \
+  ghcr.io/dabeecao/telecloud-go
+```
+
+Access the web interface at: `http://localhost:8091`
+
+**On first visit**, the system will prompt you to create an admin account and password.
+
+> 📁 All persistent data is stored in the `./data/` directory on your host machine.
+
+---
+
+### Method 2: Docker Compose (Recommended)
+
+#### Requirements
 - [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed
 
-### 1. Download configuration files
-
-You only need to download the `docker-compose.yml` and the `.env` example:
+#### 1. Download configuration files
 
 ```bash
 mkdir telecloud && cd telecloud
@@ -302,11 +363,7 @@ mv env.example .env
 
 *(Or clone the full project if you prefer: `git clone https://github.com/dabeecao/telecloud-go.git`)*
 
-### 2. Configure environment
-
-```bash
-cp env.example .env
-```
+#### 2. Configure environment
 
 Open `.env` and fill in the required fields:
 
@@ -319,18 +376,15 @@ PORT=8091
 
 > The `DATABASE_PATH`, `THUMBS_DIR`, and `TEMP_DIR` variables are automatically overridden by docker-compose to point inside the `./data/` volume — you **do not need** to set them when using Docker.
 
-### 3. Authenticate your Telegram account (First time only)
-
-You need to log in to generate the session file (`session.json`):
+#### 3. Authenticate your Telegram account (First time only)
 
 ```bash
-# Run the interactive auth flow (Docker will automatically pull the image)
 docker compose run --rm -it telecloud -auth
 ```
 
 Enter your phone number, OTP, and 2FA password (if any). The `session.json` file will be saved in `./data/`.
 
-### 4. Start the server
+#### 4. Start the server
 
 ```bash
 docker compose up -d
@@ -340,7 +394,7 @@ Access the web interface at: `http://localhost:8091`
 
 **On first visit**, the system will prompt you to create an admin account and password.
 
-### Useful commands
+#### Useful commands
 
 ```bash
 # View logs
@@ -359,15 +413,60 @@ docker compose down
 
 > 📁 All persistent data (database, thumbnails, temp files) is stored in the `./data/` directory on your host machine.
 
-### 🎬 FFmpeg and yt-dlp Built-in
-
-The Docker image now uses Alpine Linux as its base and **includes FFmpeg and yt-dlp built-in**. 
-You **do not** need to install or mount any external binaries. Thumbnail generation and URL media downloads will work automatically out of the box!
-
 
 ---
 
 ## 🛠️ Build from Source (For Developers)
+
+### Method 1: Build with Docker (Recommended)
+
+The easiest way to build from source — no need to install Go, Node.js, or Tailwind CLI locally. Docker handles the entire build pipeline.
+
+#### Requirements
+- [Docker](https://docs.docker.com/engine/install/) installed
+
+#### Steps
+
+1. Clone the project:
+```bash
+git clone --recursive https://github.com/dabeecao/telecloud-go.git
+cd telecloud-go
+```
+*If you already cloned without `--recursive`, run: `git submodule update --init --recursive`*
+
+2. Build the Docker image from source:
+```bash
+docker build -t telecloud:local .
+```
+
+3. Configure `.env`:
+```bash
+cp env.example .env
+# Edit .env and fill in API_ID, API_HASH, LOG_GROUP_ID
+```
+
+4. Authenticate (first time only):
+```bash
+docker run --rm -it -v "$(pwd)/data:/app/data" --env-file .env telecloud:local -auth
+```
+
+5. Run your locally built image:
+```bash
+docker run -d \
+  --name telecloud \
+  -p 8091:8091 \
+  -v "$(pwd)/data:/app/data" \
+  --env-file .env \
+  telecloud:local
+```
+
+Access the web interface at: `http://localhost:8091`
+
+> You can also use `docker-compose.yml` — just change the `image:` line to `image: telecloud:local` (or add `build: .`) instead of pulling from the registry.
+
+---
+
+### Method 2: Build Manually (Native)
 
 1. Install **Golang (1.21+)**: [https://golang.org/dl/](https://golang.org/dl/)
 2. Clone the project (Must use `--recursive` to fetch frontend code):

@@ -5,6 +5,7 @@
 🇻🇳 Tiếng Việt | [🇺🇸 English](./readme_en.md)
 
 **[📢 Nhóm Beta Test](https://t.me/+p-d0qfGRbX4wNzJl)**
+*Tham gia để test tính năng mới và báo cáo lỗi*
 
 </div>
 

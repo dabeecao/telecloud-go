@@ -16,36 +16,38 @@ func NewHandler(cfg *config.Config) http.Handler {
 			return
 		}
 
-		// Pre-authentication to identify the user
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			authHeader = r.URL.Query().Get("X-Amz-Algorithm")
-		}
-
+		// Pre-authentication to identify the user.
+		// Two auth methods:
+		// 1. Authorization header (normal SDK requests)
+		// 2. Query parameters (presigned URLs — no Authorization header)
 		var accessKey string
+
+		authHeader := r.Header.Get("Authorization")
 		if authHeader != "" {
+			// Method 1: Authorization header
 			if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256") {
+				// SigV4 header: "AWS4-HMAC-SHA256 Credential=KEY/date/region/s3/aws4_request, ..."
 				parts := strings.Split(authHeader, " ")
 				for _, part := range parts {
 					if strings.HasPrefix(part, "Credential=") {
 						cred := strings.TrimPrefix(part, "Credential=")
+						cred = strings.TrimSuffix(cred, ",")
 						accessKey = strings.Split(cred, "/")[0]
 						break
 					}
 				}
 			} else if strings.HasPrefix(authHeader, "AWS ") {
+				// SigV2 header: "AWS AccessKey:Signature"
 				parts := strings.Split(authHeader, " ")
 				if len(parts) > 1 {
 					accessKey = strings.Split(parts[1], ":")[0]
 				}
-			} else {
-				accessKey = r.URL.Query().Get("X-Amz-Algorithm")
-				if accessKey != "" {
-					cred := r.URL.Query().Get("X-Amz-Credential")
-					if cred != "" {
-						accessKey = strings.Split(cred, "/")[0]
-					}
-				}
+			}
+		} else if r.URL.Query().Get("X-Amz-Algorithm") != "" {
+			// Method 2: Presigned URL query parameters (no Authorization header)
+			cred := r.URL.Query().Get("X-Amz-Credential")
+			if cred != "" {
+				accessKey = strings.Split(cred, "/")[0]
 			}
 		}
 

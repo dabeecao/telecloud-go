@@ -226,7 +226,7 @@ func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeI
 
 	for counter <= 1000 {
 		var id int
-		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND owner = ? AND id != ? LIMIT 1", path, finalName, owner, excludeID)
+		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND id != ? LIMIT 1", path, finalName, excludeID)
 		if err != nil { // Not found or error
 			break
 		}

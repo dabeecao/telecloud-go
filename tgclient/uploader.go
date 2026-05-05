@@ -36,9 +36,18 @@ var (
 	taskMutex   sync.Mutex
 
 	// Limit concurrent uploads to Telegram to prevent floodwait
-	uploadSemaphore       = make(chan struct{}, 3)
-	remoteUploadSemaphore = make(chan struct{}, 3)
+	uploadSemaphore       chan struct{}
+	remoteUploadSemaphore chan struct{}
 )
+
+func InitUploader(cfg *config.Config) {
+	count := 3
+	if botCount := GetBotCount(); botCount > 0 {
+		count = 3 * (botCount + 1)
+	}
+	uploadSemaphore = make(chan struct{}, count)
+	remoteUploadSemaphore = make(chan struct{}, count)
+}
 
 type UploadStatus struct {
 	Status        string `json:"status"`
@@ -236,7 +245,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 	}
 
-	api := Client.API()
+	api := GetAPI()
 
 	// Create the main file record first so we have an ID for parts
 	var fileID int64
@@ -555,7 +564,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
 	}
 
-	api := Client.API()
+	api := GetAPI()
 
 	// Create main record first
 	var fileID int64
@@ -759,7 +768,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		fileSize = fileInfo.Size()
 	}
 
-	api := Client.API()
+	api := GetAPI()
 
 	// Create main record
 	var dbErr error

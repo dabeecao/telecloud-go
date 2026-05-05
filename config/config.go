@@ -31,6 +31,7 @@ type Config struct {
 	MaxPartSize      int64
 	CookiesDir       string
 	IsPremium        bool
+	BotTokens        []string
 	Warnings         []string
 }
 
@@ -97,6 +98,7 @@ func Load() (*Config, error) {
 		WebAuthnRPOrigin:   getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
 		MaxPartSize:      maxPartSizeMB * 1024 * 1024,
 		CookiesDir:       getEnv("COOKIES_DIR", "data/cookies"),
+		BotTokens:        strings.Split(os.Getenv("BOT_TOKENS"), ","),
 		Warnings:         warnings,
 	}, nil
 }

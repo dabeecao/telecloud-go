@@ -157,14 +157,21 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
 elif [ "$(uname -s)" == "Darwin" ]; then
     OS_TYPE="macos"
     BASE_DIR="$HOME/telecloud-go"
-    BIN_DIR="/usr/local/bin"
+    
+    # Prefer /opt/homebrew/bin for Apple Silicon, fallback /usr/local/bin
+    if [ -d "/opt/homebrew/bin" ]; then
+        BIN_DIR="/opt/homebrew/bin"
+    else
+        BIN_DIR="/usr/local/bin"
+    fi
+
     if ! command -v brew &>/dev/null; then
         echo "[!] Homebrew is not installed. Please install it first:"
         echo "    /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
         exit 1
     fi
     PKG_MGR="brew"
-    echo "[+] Operating System: macOS $(sw_vers -productVersion) (Package manager: brew)"
+    echo "[+] Operating System: macOS $(sw_vers -productVersion) (Arch: $(uname -m), BIN_DIR: $BIN_DIR)"
 else
     OS_TYPE="linux"
     BASE_DIR="/opt/telecloud-go"
@@ -236,7 +243,7 @@ install_dependencies() {
             fi
         fi
     else
-        # Termux
+        # Termux / macOS
         echo ""
         echo "[!] Note: FFmpeg is only used to generate video/audio thumbnails."
         echo "[!] On Exynos chips or weak devices, FFmpeg may cause errors or system hangs."
@@ -467,9 +474,20 @@ EOF
 # 7. CREATE MANAGEMENT MENU
 # =============================
 create_menu() {
+    # Check write permissions for BIN_DIR
+    local SUDO_CMD=""
+    if [ ! -w "$BIN_DIR" ] && [ "$OS_TYPE" != "termux" ]; then
+        echo "[!] Sudo privileges required to install 'telecloud' command to $BIN_DIR"
+        SUDO_CMD="sudo"
+    fi
+
     # Backup old menu if it exists
-    [ -f "$BIN_DIR/telecloud" ] && cp "$BIN_DIR/telecloud" "$BIN_DIR/telecloud.bak" 2>/dev/null
-    cat > "$BIN_DIR/telecloud" <<'EOF'
+    if [ -f "$BIN_DIR/telecloud" ]; then
+        $SUDO_CMD cp "$BIN_DIR/telecloud" "$BIN_DIR/telecloud.bak" 2>/dev/null || true
+    fi
+
+    echo "[+] Creating management menu at $BIN_DIR/telecloud..."
+    $SUDO_CMD bash -c "cat > '$BIN_DIR/telecloud'" <<'EOF'
 #!/bin/bash
 set -e
 
@@ -1068,7 +1086,7 @@ while true; do
     esac
 done
 EOF
-    chmod +x "$BIN_DIR/telecloud"
+    $SUDO_CMD chmod +x "$BIN_DIR/telecloud"
 }
 
 # =============================
@@ -1125,4 +1143,11 @@ if [ ! -f "$BASE_DIR/telecloud" ]; then
     exit 0
 fi
 
+# Re-create menu if missing but binary exists
+if [ ! -f "$BIN_DIR/telecloud" ]; then
+    echo "[!] Binary detected but 'telecloud' command is missing."
+    create_menu
+fi
+
+# Execute menu
 "$BIN_DIR/telecloud"

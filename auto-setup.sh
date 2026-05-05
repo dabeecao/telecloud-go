@@ -156,14 +156,21 @@ if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
 elif [ "$(uname -s)" == "Darwin" ]; then
     OS_TYPE="macos"
     BASE_DIR="$HOME/telecloud-go"
-    BIN_DIR="/usr/local/bin"
+    
+    # Ưu tiên /opt/homebrew/bin cho Apple Silicon, fallback /usr/local/bin
+    if [ -d "/opt/homebrew/bin" ]; then
+        BIN_DIR="/opt/homebrew/bin"
+    else
+        BIN_DIR="/usr/local/bin"
+    fi
+
     if ! command -v brew &>/dev/null; then
         echo "[!] Homebrew chưa được cài đặt. Vui lòng cài trước:"
         echo "    /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
         exit 1
     fi
     PKG_MGR="brew"
-    echo "[+] Hệ điều hành: macOS $(sw_vers -productVersion) (Package manager: brew)"
+    echo "[+] Hệ điều hành: macOS $(sw_vers -productVersion) (Kiến trúc: $(uname -m), BIN_DIR: $BIN_DIR)"
 else
     OS_TYPE="linux"
     BASE_DIR="/opt/telecloud-go"
@@ -235,7 +242,7 @@ install_dependencies() {
             fi
         fi
     else
-        # Termux
+        # Termux / macOS
         echo ""
         echo "[!] Lưu ý: FFmpeg chỉ dùng để tạo ảnh thu nhỏ (thumbnail) cho video/audio."
         echo "[!] Trên các dòng chip Exynos hoặc thiết bị yếu, FFmpeg có thể gây lỗi hoặc treo máy."
@@ -467,9 +474,20 @@ EOF
 # 7. TẠO MENU QUẢN LÝ
 # =============================
 create_menu() {
+    # Kiểm tra quyền ghi vào BIN_DIR
+    local SUDO_CMD=""
+    if [ ! -w "$BIN_DIR" ] && [ "$OS_TYPE" != "termux" ]; then
+        echo "[!] Cần quyền root để cài đặt lệnh 'telecloud' vào $BIN_DIR"
+        SUDO_CMD="sudo"
+    fi
+
     # Sao lưu menu cũ nếu có
-    [ -f "$BIN_DIR/telecloud" ] && cp "$BIN_DIR/telecloud" "$BIN_DIR/telecloud.bak" 2>/dev/null
-    cat > "$BIN_DIR/telecloud" <<'EOF'
+    if [ -f "$BIN_DIR/telecloud" ]; then
+        $SUDO_CMD cp "$BIN_DIR/telecloud" "$BIN_DIR/telecloud.bak" 2>/dev/null || true
+    fi
+
+    echo "[+] Đang tạo menu quản lý tại $BIN_DIR/telecloud..."
+    $SUDO_CMD bash -c "cat > '$BIN_DIR/telecloud'" <<'EOF'
 #!/bin/bash
 set -e
 
@@ -1067,7 +1085,7 @@ while true; do
     esac
 done
 EOF
-    chmod +x "$BIN_DIR/telecloud"
+    $SUDO_CMD chmod +x "$BIN_DIR/telecloud"
 }
 
 # =============================
@@ -1124,4 +1142,11 @@ if [ ! -f "$BASE_DIR/telecloud" ]; then
     exit 0
 fi
 
+# Nếu đã có binary nhưng chưa có menu script thì tạo lại menu
+if [ ! -f "$BIN_DIR/telecloud" ]; then
+    echo "[!] Phát hiện binary nhưng chưa có lệnh 'telecloud' trong hệ thống."
+    create_menu
+fi
+
+# Thực thi menu
 "$BIN_DIR/telecloud"

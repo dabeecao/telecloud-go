@@ -44,6 +44,7 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 🎥 **Tải đa phương tiện**: Hỗ trợ tải Video, Nhạc từ các nền tảng (YouTube, TikTok, Facebook...) bằng **yt-dlp** ngay trong giao diện.
 * ⚡ **Tải trong nền**: Hỗ trợ tải tệp từ URL trong nền, không cần treo trình duyệt, có thông báo tiến trình real-time.
 * 👥 **Quản lý đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
+* 🤖 **Multi-Bot (Bot Pool)**: Hỗ trợ sử dụng nhiều Bot phụ để tăng tốc độ tải lên/tải xuống và tránh bị giới hạn (FloodWait) từ Telegram.
 * 🔐 **Passkey**: Hỗ trợ đăng nhập bảo mật bằng vân tay, khuôn mặt hoặc khóa bảo mật (WebAuthn).
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ tiếng Việt và tiếng Anh ở giao diện sử dụng
 
@@ -129,6 +130,8 @@ Nội dung chính trong tệp `.env`:
 *   `LOG_GROUP_ID`: ID nhóm/kênh lưu file hoặc điền `me` để lưu vào Saved Messages.
 *   `PORT`: Cổng muốn chạy ứng dụng.
 *   `TG_UPLOAD_THREADS`: (Tùy chọn) Số luồng upload đồng thời cho mỗi file part. Mặc định là `2`. Có thể tăng lên `4` nếu mạng mạnh.
+*   `BOT_TOKENS`: (Tùy chọn) Danh sách các token của Bot phụ, phân cách bằng dấu phẩy (VD: `token1,token2`). Các bot này sẽ giúp chia sẻ tải trọng với tài khoản chính, tăng tốc độ download/upload đáng kể.
+    *   **Lưu ý**: Các bot phải được thêm vào nhóm/kênh lưu trữ (`LOG_GROUP_ID`) và được cấp quyền gửi tin nhắn. Nếu `LOG_GROUP_ID=me` (Saved Messages), tính năng Multi-bot sẽ tự động bị tắt vì bot không có quyền truy cập tin nhắn riêng tư của người dùng.
 *   `DATABASE_PATH`: (Tùy chọn) Đường dẫn tới file database (mặc định: `database.db`).
 *   `THUMBS_DIR`: (Tùy chọn) Đường dẫn tới thư mục chứa ảnh thumbnail (mặc định: `./static/thumbs`).
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).

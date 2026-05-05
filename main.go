@@ -56,7 +56,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v3.1.2"
+	version = "v3.2.0-beta1"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -156,6 +156,7 @@ func main() {
 	if err := tgclient.InitClient(cfg, *authFlag); err != nil {
 		fatalf("Telegram client init error: %v", err)
 	}
+	tgclient.InitUploader(cfg)
 
 	// cancelCtx is used to signal the Telegram client to stop
 	appCtx, cancelApp := context.WithCancel(context.Background())
@@ -185,10 +186,10 @@ func main() {
 	tgErrCh := make(chan error, 1)
 	go func() {
 		tgErrCh <- tgclient.Run(appCtx, cfg, func(ctx context.Context) error {
-			printStartupBox(cfg)
 			if err := tgclient.VerifyLogGroup(ctx, cfg); err != nil {
 				return fmt.Errorf("Log Group verification failed: %v", err)
 			}
+			printStartupBox(cfg)
 			log.Println("Starting TeleCloud on port " + cfg.Port + "...")
 
 			// Start HTTP server in its own goroutine so Telegram keeps running alongside
@@ -276,6 +277,7 @@ func printStartupBox(cfg *config.Config) {
 	fmt.Printf("  %-15s : %s\n", "Port", cfg.Port)
 	fmt.Printf("  %-15s : %s\n", "Database", cfg.DatabasePath)
 	fmt.Printf("  %-15s : %s\n", "Upload Threads", fmt.Sprintf("%d", cfg.UploadThreads))
+	fmt.Printf("  %-15s : %d\n", "Active Bots", tgclient.GetBotCount())
 	fmt.Printf("  %-15s : %s (Premium: %v)\n", "Max Part Size", utils.FormatBytes(cfg.MaxPartSize), cfg.IsPremium)
 
 	fmt.Println("\n  [Features Status]")

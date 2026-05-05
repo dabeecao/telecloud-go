@@ -177,13 +177,13 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 	if ok && time.Now().Before(cached.expiresAt) {
 		return &tgFileReader{
 			ctx:  ctx,
-			api:  Client.API(),
+			api:  GetAPI(),
 			loc:  cached.loc,
 			size: size,
 		}, nil
 	}
 
-	api := Client.API()
+	api := GetAPI()
 	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
 	if err != nil {
 		return nil, err

@@ -44,6 +44,7 @@ This project has been **completely rewritten in Golang** from the original proje
 * 🎥 **Media Downloader**: Supports downloading Videos and Music from various platforms (YouTube, TikTok, Facebook...) using **yt-dlp** directly in the UI.
 * ⚡ **Background Download**: Supports background URL downloads with real-time progress notifications, no browser session required.
 * 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
+* 🤖 **Multi-Bot (Bot Pool)**: Supports using secondary bots to increase upload/download throughput and avoid Telegram rate limits (FloodWait).
 * 🔐 **Passkey**: Supports secure login using biometrics (TouchID/FaceID) or security keys (WebAuthn).
 * 🌐 **Multi-language**: Supports Vietnamese and English UI
 
@@ -137,6 +138,8 @@ Main fields in `.env`:
 * `LOG_GROUP_ID`: ID of the group/channel storing files or use `me` for Saved Messages
 * `PORT`: Port to run the application
 * `TG_UPLOAD_THREADS`: (Optional) Number of concurrent upload threads per file part. Default is `2`. Increase to `4` for maximum speed.
+* `BOT_TOKENS`: (Optional) A comma-separated list of secondary Bot tokens (e.g. `token1,token2`). These bots will help share the workload with your main account, significantly increasing download/upload performance.
+  * **Note**: Bots must be added to the storage group/channel (`LOG_GROUP_ID`) and granted permission to send messages. If `LOG_GROUP_ID=me` (Saved Messages), the Multi-bot feature will be automatically disabled because bots do not have access to the user's private messages.
 * `DATABASE_PATH`: (Optional) Path to the database file (default: `database.db`)
 * `THUMBS_DIR`: (Optional) Directory for storing thumbnails (default: `./static/thumbs`)
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process.

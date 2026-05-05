@@ -46,7 +46,8 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 👥 **Quản lý đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
 * 🤖 **Multi-Bot (Bot Pool)**: Hỗ trợ sử dụng nhiều Bot phụ để tăng tốc độ tải lên/tải xuống và tránh bị giới hạn (FloodWait) từ Telegram.
 * 🔐 **Passkey**: Hỗ trợ đăng nhập bảo mật bằng vân tay, khuôn mặt hoặc khóa bảo mật (WebAuthn).
-* 🌐 **Đa ngôn ngữ**: Hỗ trợ tiếng Việt và tiếng Anh ở giao diện sử dụng
+* 🗄️ **Hỗ trợ MySQL**: Ngoài SQLite, TeleCloud hiện đã hỗ trợ **MySQL** để lưu trữ cơ sở dữ liệu cho các hệ thống lớn và yêu cầu tính ổn định cao.
+* 🌐 **Đa ngôn ngữ**: Hỗ trợ nhiều ngôn ngữ (Tiếng Việt, Tiếng Anh, Tiếng Trung, Tiếng Nhật, Tiếng Nga, Tiếng Ả Rập, Tiếng Hindi và Tiếng Khmer).
 
 ---
 
@@ -132,7 +133,9 @@ Nội dung chính trong tệp `.env`:
 *   `TG_UPLOAD_THREADS`: (Tùy chọn) Số luồng upload đồng thời cho mỗi file part. Mặc định là `2`. Có thể tăng lên `4` nếu mạng mạnh.
 *   `BOT_TOKENS`: (Tùy chọn) Danh sách các token của Bot phụ, phân cách bằng dấu phẩy (VD: `token1,token2`). Các bot này sẽ giúp chia sẻ tải trọng với tài khoản chính, tăng tốc độ download/upload đáng kể.
     *   **Lưu ý**: Các bot phải được thêm vào nhóm/kênh lưu trữ (`LOG_GROUP_ID`) và được cấp quyền gửi tin nhắn. Nếu `LOG_GROUP_ID=me` (Saved Messages), tính năng Multi-bot sẽ tự động bị tắt vì bot không có quyền truy cập tin nhắn riêng tư của người dùng.
-*   `DATABASE_PATH`: (Tùy chọn) Đường dẫn tới file database (mặc định: `database.db`).
+*   `DATABASE_DRIVER`: (Tùy chọn) Loại cơ sở dữ liệu (`sqlite` hoặc `mysql`). Mặc định là `sqlite`.
+*   `DATABASE_PATH`: (Tùy chọn) Đường dẫn tới file database nếu dùng SQLite (mặc định: `database.db`).
+*   `DATABASE_DSN`: (Bắt buộc nếu dùng MySQL) Chuỗi kết nối MySQL (VD: `user:pass@tcp(127.0.0.1:3306)/telecloud?parseTime=true&charset=utf8mb4`).
 *   `THUMBS_DIR`: (Tùy chọn) Đường dẫn tới thư mục chứa ảnh thumbnail (mặc định: `./static/thumbs`).
 *   `TEMP_DIR`: (Tùy chọn) Đường dẫn thư mục tạm dùng để chứa các mảnh file (chunks) trong quá trình tải lên (mặc định: `./temp`).
 *   `PROXY_URL`: (Tùy chọn) Proxy để kết nối MTProto, hỗ trợ HTTP và SOCKS5 (VD: `socks5://127.0.0.1:1080`).

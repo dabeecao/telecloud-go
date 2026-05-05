@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
@@ -22,7 +23,7 @@ type File struct {
 	ThumbPath  *string   `db:"thumb_path" json:"thumb_path"`
 	Owner      string    `db:"owner" json:"owner"`
 	CreatedAt  time.Time `db:"created_at" json:"created_at"`
-	
+
 	// Virtual fields
 	DirectToken string `db:"-" json:"direct_token,omitempty"`
 	HasThumb    bool   `db:"-" json:"has_thumb"`
@@ -38,20 +39,68 @@ type User struct {
 }
 
 var DB *sqlx.DB
+var driverName = "sqlite"
 
-func InitDB(dbPath string) error {
+func InitDB(driver, dbPath, dbDSN string) error {
 	var err error
-	// Add PRAGMA settings to improve concurrency and prevent SQLITE_BUSY errors
-	dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", dbPath)
-	DB, err = sqlx.Connect("sqlite", dsn)
-	if err != nil {
-		return fmt.Errorf("Failed to connect to database: %v", err)
+	driverName = strings.ToLower(strings.TrimSpace(driver))
+	if driverName == "" {
+		driverName = "sqlite"
 	}
 
-	// SQLite requires writes to be serialized
-	DB.SetMaxOpenConns(1)
+	var schema string
+	switch driverName {
+	case "sqlite":
+		// Add PRAGMA settings to improve concurrency and prevent SQLITE_BUSY errors.
+		dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", dbPath)
+		DB, err = sqlx.Connect("sqlite", dsn)
+		schema = sqliteSchema
+	case "mysql":
+		if dbDSN == "" {
+			return fmt.Errorf("DATABASE_DSN must be set when DATABASE_DRIVER=mysql")
+		}
+		DB, err = sqlx.Connect("mysql", normalizeMySQLDSN(dbDSN))
+		schema = mysqlSchema
+	default:
+		return fmt.Errorf("unsupported DATABASE_DRIVER %q (supported: sqlite, mysql)", driver)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s database: %v", driverName, err)
+	}
 
-	schema := `
+	if driverName == "sqlite" {
+		// SQLite requires writes to be serialized.
+		DB.SetMaxOpenConns(1)
+	}
+
+	if err := execSchema(schema); err != nil {
+		return fmt.Errorf("failed to create schema: %v", err)
+	}
+
+	if driverName == "mysql" {
+		if err := migrateMySQL(); err != nil {
+			return err
+		}
+	} else {
+		if err := migrateSQLite(); err != nil {
+			return err
+		}
+		// Ensure old unique index is gone before backfill (it might exist from previous versions)
+		DB.Exec("DROP INDEX IF EXISTS idx_files_path_filename_owner")
+		if err := backfillOwners(); err != nil {
+			return err
+		}
+		// Deduplicate files to avoid "UNIQUE constraint failed" when creating the index
+		DB.Exec("DELETE FROM files WHERE id NOT IN (SELECT MIN(id) FROM files GROUP BY path, filename, owner)")
+		// Create unique index for SQLite after backfill
+		if _, err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename_owner ON files (path, filename, owner)"); err != nil {
+			return fmt.Errorf("failed to create unique index: %v", err)
+		}
+	}
+	return nil
+}
+
+const sqliteSchema = `
 	CREATE TABLE IF NOT EXISTS files (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		message_id INTEGER,
@@ -136,11 +185,94 @@ func InitDB(dbPath string) error {
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
 	CREATE INDEX IF NOT EXISTS idx_file_parts_file_id ON file_parts(file_id);
 	`
-	_, err = DB.Exec(schema)
-	if err != nil {
-		return fmt.Errorf("Failed to create schema: %v", err)
-	}
 
+const mysqlSchema = `
+	CREATE TABLE IF NOT EXISTS files (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		message_id BIGINT,
+		filename VARCHAR(191) NOT NULL,
+		path VARCHAR(384) DEFAULT '/',
+		size BIGINT DEFAULT 0,
+		mime_type VARCHAR(255),
+		share_token VARCHAR(191) UNIQUE,
+		is_folder TINYINT(1) DEFAULT 0,
+		thumb_path VARCHAR(1024),
+		owner VARCHAR(191) DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS settings (
+		` + "`key`" + ` VARCHAR(191) PRIMARY KEY,
+		value TEXT NOT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS sessions (
+		token VARCHAR(191) PRIMARY KEY,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		username VARCHAR(191) DEFAULT ''
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS child_accounts (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		username VARCHAR(191) UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		api_key VARCHAR(191) UNIQUE,
+		webdav_enabled TINYINT(1) DEFAULT 1,
+		api_enabled TINYINT(1) DEFAULT 1,
+		force_password_change TINYINT(1) DEFAULT 0,
+		s3_access_key VARCHAR(191) UNIQUE,
+		s3_secret_key TEXT,
+		s3_enabled TINYINT(1) DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS passkeys (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		username VARCHAR(191) NOT NULL,
+		credential_id VARBINARY(255) UNIQUE NOT NULL,
+		public_key BLOB NOT NULL,
+		attestation_type VARCHAR(255),
+		aaguid VARBINARY(16),
+		sign_count BIGINT DEFAULT 0,
+		transports TEXT,
+		backup_eligible TINYINT(1) DEFAULT 0,
+		backup_state TINYINT(1) DEFAULT 0,
+		name VARCHAR(255),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS file_parts (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		file_id BIGINT NOT NULL,
+		message_id BIGINT NOT NULL,
+		part_index BIGINT NOT NULL,
+		size BIGINT NOT NULL,
+		FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS upload_tasks (
+		id VARCHAR(191) PRIMARY KEY,
+		filename VARCHAR(191) NOT NULL,
+		owner VARCHAR(191) NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS upload_chunks (
+		task_id VARCHAR(191) NOT NULL,
+		chunk_index BIGINT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (task_id, chunk_index)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+	CREATE TABLE IF NOT EXISTS user_settings (
+		username VARCHAR(191) NOT NULL,
+		` + "`key`" + ` VARCHAR(191) NOT NULL,
+		value TEXT NOT NULL,
+		PRIMARY KEY (username, ` + "`key`" + `)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`
+
+func migrateSQLite() error {
 	// Migration for existing DBs
 	DB.Exec("ALTER TABLE sessions ADD COLUMN username TEXT DEFAULT ''")
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN api_key TEXT")
@@ -152,17 +284,209 @@ func InitDB(dbPath string) error {
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN backup_state BOOLEAN DEFAULT 0")
 	DB.Exec("ALTER TABLE passkeys ADD COLUMN name TEXT")
 	DB.Exec("ALTER TABLE files ADD COLUMN owner TEXT DEFAULT ''")
-	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename_owner ON files(path, filename, owner)")
 	DB.Exec("CREATE TABLE IF NOT EXISTS user_settings (username TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (username, key))")
-	
+
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_access_key TEXT")
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_secret_key TEXT")
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_enabled INTEGER DEFAULT 1")
 	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_child_accounts_s3_key ON child_accounts(s3_access_key)")
-	
+
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
 	return nil
+}
+
+func execSchema(schema string) error {
+	for _, statement := range strings.Split(schema, ";") {
+		statement = strings.TrimSpace(statement)
+		if statement == "" {
+			continue
+		}
+		if _, err := DB.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateMySQL() error {
+	if err := alterTableMySQL("sessions", "ADD COLUMN username VARCHAR(191) DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("child_accounts", "ADD COLUMN api_key VARCHAR(191)"); err != nil {
+		return err
+	}
+	if err := createIndexMySQL("idx_child_accounts_api_key", "child_accounts", "api_key", true); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("child_accounts", "ADD COLUMN webdav_enabled TINYINT(1) DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("child_accounts", "ADD COLUMN api_enabled TINYINT(1) DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("child_accounts", "ADD COLUMN force_password_change TINYINT(1) DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("passkeys", "ADD COLUMN backup_eligible TINYINT(1) DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("passkeys", "ADD COLUMN backup_state TINYINT(1) DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("passkeys", "ADD COLUMN name VARCHAR(255)"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("files", "ADD COLUMN owner VARCHAR(191) DEFAULT ''"); err != nil {
+		return err
+	}
+
+	// Drop index if exists to avoid collisions during backfill (handling potential dirty state)
+	if IsMySQL() {
+		DB.Exec("DROP INDEX idx_files_path_filename_owner ON files")
+	}
+
+	// Backfill owners BEFORE creating the unique index to avoid collisions with empty values
+	if err := backfillOwners(); err != nil {
+		return err
+	}
+
+	if err := createIndexMySQL("idx_files_path", "files", "path", false); err != nil {
+		return err
+	}
+	if err := createIndexMySQL("idx_files_message_id", "files", "message_id", false); err != nil {
+		return err
+	}
+	if err := createIndexMySQL("idx_passkeys_username", "passkeys", "username", false); err != nil {
+		return err
+	}
+	if err := createIndexMySQL("idx_file_parts_file_id", "file_parts", "file_id", false); err != nil {
+		return err
+	}
+	// Deduplicate files for MySQL
+	DB.Exec("DELETE FROM files WHERE id NOT IN (SELECT * FROM (SELECT MIN(id) FROM files GROUP BY path, filename, owner) AS t)")
+	if err := createIndexMySQL("idx_files_path_filename_owner", "files", "path, filename, owner", true); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("child_accounts", "ADD COLUMN s3_access_key VARCHAR(191)"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("child_accounts", "ADD COLUMN s3_secret_key TEXT"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("child_accounts", "ADD COLUMN s3_enabled TINYINT(1) DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := createIndexMySQL("idx_child_accounts_s3_key", "child_accounts", "s3_access_key", true); err != nil {
+		return err
+	}
+
+	// Create user_settings if not exists (already in schema but for migration)
+	if _, err := DB.Exec("CREATE TABLE IF NOT EXISTS user_settings (username VARCHAR(191) NOT NULL, `key` VARCHAR(191) NOT NULL, value TEXT NOT NULL, PRIMARY KEY (username, `key`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func normalizeMySQLDSN(dsn string) string {
+	if strings.Contains(dsn, "?") {
+		if !strings.Contains(dsn, "parseTime=") {
+			dsn += "&parseTime=true"
+		}
+		if !strings.Contains(dsn, "charset=") {
+			dsn += "&charset=utf8mb4"
+		}
+		return dsn
+	}
+	return dsn + "?parseTime=true&charset=utf8mb4"
+}
+
+func createIndexMySQL(name, table, columns string, unique bool) error {
+	var count int
+	err := DB.Get(&count, "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", table, name)
+	if err != nil || count > 0 {
+		return err
+	}
+	uniqueSQL := ""
+	if unique {
+		uniqueSQL = "UNIQUE "
+	}
+	_, err = DB.Exec(fmt.Sprintf("CREATE %sINDEX %s ON %s (%s)", uniqueSQL, name, table, columns))
+	return err
+}
+
+func columnExistsMySQL(table, column string) bool {
+	var count int
+	err := DB.Get(&count, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?", table, column)
+	return err == nil && count > 0
+}
+
+func alterTableMySQL(table, action string) error {
+	// Simple heuristic to extract column name from "ADD COLUMN name TYPE"
+	parts := strings.Fields(action)
+	if len(parts) >= 3 && strings.ToUpper(parts[0]) == "ADD" && strings.ToUpper(parts[1]) == "COLUMN" {
+		col := parts[2]
+		if columnExistsMySQL(table, col) {
+			return nil
+		}
+	}
+	_, err := DB.Exec(fmt.Sprintf("ALTER TABLE %s %s", table, action))
+	return err
+}
+
+func backfillOwners() error {
+	var usernames []string
+	err := DB.Select(&usernames, "SELECT username FROM child_accounts")
+	if err != nil {
+		// Table might not exist yet if fresh install, ignore
+		return nil
+	}
+
+	updateCmd := "UPDATE"
+	if IsMySQL() {
+		updateCmd = "UPDATE IGNORE"
+	} else {
+		updateCmd = "UPDATE OR IGNORE"
+	}
+
+	for _, u := range usernames {
+		prefix := "/" + u
+		if _, err := DB.Exec(fmt.Sprintf("%s files SET owner = ? WHERE (path = ? OR path LIKE ?) AND (owner IS NULL OR owner = '')", updateCmd), u, prefix, prefix+"/%"); err != nil {
+			return fmt.Errorf("failed to backfill owner for user %s path: %v", u, err)
+		}
+		if _, err := DB.Exec(fmt.Sprintf("%s files SET owner = ? WHERE path = '/' AND filename = ? AND is_folder = 1 AND (owner IS NULL OR owner = '')", updateCmd), u, u); err != nil {
+			return fmt.Errorf("failed to backfill owner for user %s root folder: %v", u, err)
+		}
+	}
+
+	// Set remaining empty owners to Admin
+	adminUser := GetSetting("admin_username")
+	if adminUser != "" {
+		if _, err := DB.Exec(fmt.Sprintf("%s files SET owner = ? WHERE (owner IS NULL OR owner = '')", updateCmd), adminUser); err != nil {
+			return fmt.Errorf("failed to backfill owner for admin: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func IsMySQL() bool {
+	return driverName == "mysql"
+}
+
+func InsertIgnoreSQL(table, columns, values string) string {
+	if IsMySQL() {
+		return fmt.Sprintf("INSERT IGNORE INTO %s (%s) VALUES (%s)", table, columns, values)
+	}
+	return fmt.Sprintf("INSERT OR IGNORE INTO %s (%s) VALUES (%s)", table, columns, values)
+}
+
+func ConcatPathSQL() string {
+	if IsMySQL() {
+		return "CONCAT(?, SUBSTR(path, ?))"
+	}
+	return "? || SUBSTR(path, ?)"
 }
 
 type FilePart struct {
@@ -181,7 +505,11 @@ func GetFileParts(fileID int) ([]FilePart, error) {
 
 func GetSetting(key string) string {
 	var value string
-	err := DB.Get(&value, "SELECT value FROM settings WHERE key = ?", key)
+	query := "SELECT value FROM settings WHERE `key` = ?"
+	if !IsMySQL() {
+		query = "SELECT value FROM settings WHERE key = ?"
+	}
+	err := DB.Get(&value, query, key)
 	if err != nil {
 		return ""
 	}
@@ -189,18 +517,30 @@ func GetSetting(key string) string {
 }
 
 func SetSetting(key string, value string) error {
-	_, err := DB.Exec("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value)
+	query := "INSERT INTO settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)"
+	if !IsMySQL() {
+		query = "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+	}
+	_, err := DB.Exec(query, key, value)
 	return err
 }
 
 func DeleteSetting(key string) error {
-	_, err := DB.Exec("DELETE FROM settings WHERE key = ?", key)
+	query := "DELETE FROM settings WHERE `key` = ?"
+	if !IsMySQL() {
+		query = "DELETE FROM settings WHERE key = ?"
+	}
+	_, err := DB.Exec(query, key)
 	return err
 }
 
 func GetUserSetting(username string, key string) string {
 	var value string
-	err := DB.Get(&value, "SELECT value FROM user_settings WHERE username = ? AND key = ?", username, key)
+	query := "SELECT value FROM user_settings WHERE username = ? AND `key` = ?"
+	if !IsMySQL() {
+		query = "SELECT value FROM user_settings WHERE username = ? AND key = ?"
+	}
+	err := DB.Get(&value, query, username, key)
 	if err != nil {
 		return ""
 	}
@@ -208,7 +548,11 @@ func GetUserSetting(username string, key string) string {
 }
 
 func SetUserSetting(username string, key string, value string) error {
-	_, err := DB.Exec("INSERT INTO user_settings (username, key, value) VALUES (?, ?, ?) ON CONFLICT(username, key) DO UPDATE SET value = excluded.value", username, key, value)
+	query := "INSERT INTO user_settings (username, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)"
+	if !IsMySQL() {
+		query = "INSERT INTO user_settings (username, key, value) VALUES (?, ?, ?) ON CONFLICT(username, key) DO UPDATE SET value = excluded.value"
+	}
+	_, err := DB.Exec(query, username, key, value)
 	return err
 }
 
@@ -226,7 +570,7 @@ func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeI
 
 	for counter <= 1000 {
 		var id int
-		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND id != ? LIMIT 1", path, finalName, excludeID)
+		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND owner = ? AND id != ? LIMIT 1", path, finalName, owner, excludeID)
 		if err != nil { // Not found or error
 			break
 		}
@@ -276,9 +620,9 @@ func EnsureFoldersExist(dbPath string, owner string) error {
 			if currentPath == "/" {
 				DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", part)
 			}
-			
+
 			if count == 0 {
-				_, err = DB.Exec("INSERT OR IGNORE INTO files (filename, path, is_folder, owner) VALUES (?, ?, 1, ?)", part, currentPath, owner)
+				_, err = DB.Exec(InsertIgnoreSQL("files", "filename, path, is_folder, owner", "?, ?, 1, ?"), part, currentPath, owner)
 				if err != nil {
 					return err
 				}

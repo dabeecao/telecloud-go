@@ -72,7 +72,7 @@ func (f *telecloudFile) Readdir(count int) ([]os.FileInfo, error) {
 		searchPath := f.path
 
 		var files []database.File
-		err := database.DB.Select(&files, "SELECT * FROM files WHERE path = ? ORDER BY is_folder DESC, filename ASC", searchPath)
+		err := database.DB.Select(&files, "SELECT * FROM files WHERE path = ? AND owner = ? ORDER BY is_folder DESC, filename ASC", searchPath, f.username)
 		if err != nil {
 			return nil, err
 		}

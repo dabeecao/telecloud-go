@@ -111,12 +111,12 @@ func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode)
 	}
 
 	dir, base := splitPath(dbName)
-	
+
 	// Check if parent directory exists
 	if dir != "/" {
 		var parent database.File
 		pDir, pBase := splitPath(dir)
-		err := database.DB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1", pDir, pBase)
+		err := database.DB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", pDir, pBase, username)
 		if err != nil {
 			return os.ErrNotExist // maps to 409 Conflict in webdav
 		}
@@ -129,7 +129,7 @@ func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode)
 func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	username, isAdmin := getUserInfo(ctx)
 	dbName := mapPath(name, username, isAdmin)
-	
+
 	// Admin isolation check
 	if isAdmin && isChildAccountPath(dbName) {
 		return nil, os.ErrPermission
@@ -138,7 +138,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", dir, base)
+	err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username)
 
 	// Writing a new file
 	if err != nil && (flag&os.O_CREATE) != 0 {
@@ -175,7 +175,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 		}, nil
 	}
 
-	if (flag & os.O_WRONLY) != 0 || (flag & os.O_RDWR) != 0 {
+	if (flag&os.O_WRONLY) != 0 || (flag&os.O_RDWR) != 0 {
 		// Existing file being overwritten
 		return newFileWriter(ctx, fs.cfg, dir, base, true, username), nil
 	}
@@ -215,7 +215,7 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", dir, base); err != nil {
+	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username); err != nil {
 		return os.ErrNotExist
 	}
 
@@ -225,7 +225,7 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 			oldPrefix = "/" + item.Filename
 		}
 		var children []database.File
-		database.DB.Select(&children, "SELECT * FROM files WHERE (path = ? OR path LIKE ?)", oldPrefix, oldPrefix+"/%")
+		database.DB.Select(&children, "SELECT * FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", username)
 
 		var msgIDsToDelete []int
 		for _, child := range children {
@@ -262,7 +262,7 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 			}
 		}
 
-		database.DB.Exec("DELETE FROM files WHERE path = ? OR path LIKE ?", oldPrefix, oldPrefix+"/%")
+		database.DB.Exec("DELETE FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", username)
 		database.DB.Exec("DELETE FROM files WHERE id = ?", item.ID)
 
 		if len(msgIDsToDelete) > 0 {
@@ -270,7 +270,7 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 		}
 	} else {
 		var msgIDsToDelete []int
-		
+
 		// Collect parts
 		var partMsgIDs []int
 		database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", item.ID)
@@ -331,12 +331,12 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 	defer tx.Rollback()
 
 	var item database.File
-	if err := tx.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", oldDir, oldBase); err != nil {
+	if err := tx.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", oldDir, oldBase, username); err != nil {
 		return os.ErrNotExist
 	}
 
 	uniqueName := database.GetUniqueFilename(tx, newDir, newBase, item.IsFolder, item.ID, username)
-	
+
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
@@ -352,7 +352,7 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 		if newDir == "/" {
 			newPrefix = "/" + uniqueName
 		}
-		_, err = tx.Exec("UPDATE files SET path = ? || SUBSTR(path, ?) WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+		_, err = tx.Exec("UPDATE files SET path = "+database.ConcatPathSQL()+" WHERE (path = ? OR path LIKE ?) AND owner = ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%", username)
 		if err != nil {
 			return err
 		}
@@ -386,7 +386,7 @@ func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, erro
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ?", dir, base); err != nil {
+	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username); err != nil {
 		return nil, os.ErrNotExist
 	}
 
@@ -405,7 +405,7 @@ func (fs *telecloudFS) GetThumbnailPath(ctx context.Context, name string) (strin
 	dir, base := splitPath(dbName)
 
 	var thumbPath *string
-	err := database.DB.Get(&thumbPath, "SELECT thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", dir, base)
+	err := database.DB.Get(&thumbPath, "SELECT thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dir, base, username)
 	if err != nil {
 		return "", err
 	}

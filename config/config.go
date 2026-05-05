@@ -13,21 +13,23 @@ import (
 )
 
 type Config struct {
-	APIID           int
-	APIHash         string
-	UploadThreads   int
-	DatabasePath    string
-	ThumbsDir       string
-	LogGroupID      string
-	Port            string
-	TempDir         string
-	ProxyURL        string
-	Version         string
-	SessionFile     string
-	FFMPEGPath      string
-	YTDLPPath       string
+	APIID            int
+	APIHash          string
+	UploadThreads    int
+	DatabaseDriver   string
+	DatabasePath     string
+	DatabaseDSN      string
+	ThumbsDir        string
+	LogGroupID       string
+	Port             string
+	TempDir          string
+	ProxyURL         string
+	Version          string
+	SessionFile      string
+	FFMPEGPath       string
+	YTDLPPath        string
 	WebAuthnRPID     string
-	WebAuthnRPOrigin   string
+	WebAuthnRPOrigin string
 	MaxPartSize      int64
 	CookiesDir       string
 	IsPremium        bool
@@ -57,7 +59,7 @@ func Load() (*Config, error) {
 	logGroupID := os.Getenv("LOG_GROUP_ID")
 
 	// MaxPartSize will be auto-detected in tgclient based on account status (Premium/Regular)
-	maxPartSizeMB := int64(1900) 
+	maxPartSizeMB := int64(1900)
 
 	ffmpegPath := getEnv("FFMPEG_PATH", "ffmpeg")
 	if ffmpegPath != "disabled" && ffmpegPath != "disable" {
@@ -82,20 +84,22 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		APIID:           apiID,
-		APIHash:         apiHash,
-		UploadThreads:   uploadThreads,
-		DatabasePath:    getEnv("DATABASE_PATH", "database.db"),
-		ThumbsDir:       getEnv("THUMBS_DIR", "static/thumbs"),
-		LogGroupID:      logGroupID,
-		Port:            getEnv("PORT", "8091"),
-		TempDir:         getEnv("TEMP_DIR", filepath.Join(os.TempDir(), "telecloud_temp_chunks")),
-		ProxyURL:        getEnv("PROXY_URL", ""),
-		SessionFile:     getEnv("SESSION_FILE", "session.json"),
-		FFMPEGPath:      ffmpegPath,
-		YTDLPPath:       ytdlpPath,
+		APIID:            apiID,
+		APIHash:          apiHash,
+		UploadThreads:    uploadThreads,
+		DatabaseDriver:   strings.ToLower(getEnv("DATABASE_DRIVER", "sqlite")),
+		DatabasePath:     getEnv("DATABASE_PATH", "database.db"),
+		DatabaseDSN:      getEnv("DATABASE_DSN", ""),
+		ThumbsDir:        getEnv("THUMBS_DIR", "static/thumbs"),
+		LogGroupID:       logGroupID,
+		Port:             getEnv("PORT", "8091"),
+		TempDir:          getEnv("TEMP_DIR", filepath.Join(os.TempDir(), "telecloud_temp_chunks")),
+		ProxyURL:         getEnv("PROXY_URL", ""),
+		SessionFile:      getEnv("SESSION_FILE", "session.json"),
+		FFMPEGPath:       ffmpegPath,
+		YTDLPPath:        ytdlpPath,
 		WebAuthnRPID:     getEnv("WEBAUTHN_RPID", "localhost"),
-		WebAuthnRPOrigin:   getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
+		WebAuthnRPOrigin: getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
 		MaxPartSize:      maxPartSizeMB * 1024 * 1024,
 		CookiesDir:       getEnv("COOKIES_DIR", "data/cookies"),
 		BotTokens:        strings.Split(os.Getenv("BOT_TOKENS"), ","),

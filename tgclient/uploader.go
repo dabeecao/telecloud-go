@@ -237,7 +237,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
+		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename
@@ -387,7 +387,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	// Generate thumbnail from temp file (still exists at this point) and update DB
 	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
 	if localThumb != nil {
-		database.DB.Exec("UPDATE files SET thumb_path = ? WHERE message_id = ? AND path = ? AND filename = ?", *localThumb, firstMsgID, path, uniqueFilename)
+		database.DB.Exec("UPDATE files SET thumb_path = ? WHERE message_id = ? AND path = ? AND filename = ? AND owner = ?", *localThumb, firstMsgID, path, uniqueFilename, owner)
 	}
 
 	// Signal done to user after thumbnail is ready
@@ -556,7 +556,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
+		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename
@@ -754,7 +754,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0", path, filename).Scan(&existingID, &existingMsgID, &existingThumb)
+		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename

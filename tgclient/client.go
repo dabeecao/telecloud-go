@@ -183,6 +183,7 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 	for i := range BotPool {
 		wg.Add(1)
 		ready := make(chan struct{})
+		log.Printf("Initializing Bot #%d session...", i+1)
 		go func(idx int, r chan struct{}) {
 			defer wg.Done()
 			b := &BotPool[idx]
@@ -220,6 +221,7 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 	}
 
 	wg.Add(1)
+	log.Println("Initializing main Telegram session...")
 	go func() {
 		defer wg.Done()
 		err := Client.Run(ctx, func(ctx context.Context) error {
@@ -280,6 +282,8 @@ func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {
 	if cfg.LogGroupID == "" {
 		return fmt.Errorf("LOG_GROUP_ID is not set in .env")
 	}
+
+	log.Println("Verifying Log Group connectivity and bot pool status...")
 
 	mainApi := Client.API()
 	peer, err := resolveLogGroup(ctx, mainApi, cfg.LogGroupID)

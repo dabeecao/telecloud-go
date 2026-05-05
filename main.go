@@ -56,7 +56,7 @@ import (
 var contentFS embed.FS
 
 var (
-	version = "v3.2.0-beta1"
+	version = "v3.2.0-beta2"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -81,6 +81,7 @@ func main() {
 	fmt.Printf("   ║ ├┤ │  ├┤ ║  │  │ ││ │ ││\n")
 	fmt.Printf("   ╩ └─┘┴─┘└─┘╚═╝┴─┘└─┘└─┘─┴┘\n")
 	fmt.Printf("   TeleCloud %s - Lead by @dabeecao\n\n", version)
+	log.Println("TeleCloud is starting, please wait...")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -88,13 +89,15 @@ func main() {
 	}
 	cfg.Version = version
 
-	// Ensure the directory for the database exists
-	dbDir := filepath.Dir(cfg.DatabasePath)
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("Warning: Could not create database directory: %v", err))
+	if cfg.DatabaseDriver == "sqlite" || cfg.DatabaseDriver == "" {
+		// Ensure the directory for the SQLite database exists.
+		dbDir := filepath.Dir(cfg.DatabasePath)
+		if err := os.MkdirAll(dbDir, 0755); err != nil {
+			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("Warning: Could not create database directory: %v", err))
+		}
 	}
 
-	if err := database.InitDB(cfg.DatabasePath); err != nil {
+	if err := database.InitDB(cfg.DatabaseDriver, cfg.DatabasePath, cfg.DatabaseDSN); err != nil {
 		fatalf("%v", err)
 	}
 
@@ -275,7 +278,24 @@ func fatalf(format string, v ...interface{}) {
 func printStartupBox(cfg *config.Config) {
 	fmt.Println("  [System Configuration]")
 	fmt.Printf("  %-15s : %s\n", "Port", cfg.Port)
-	fmt.Printf("  %-15s : %s\n", "Database", cfg.DatabasePath)
+	dbDisplay := cfg.DatabasePath
+	if cfg.DatabaseDriver == "mysql" {
+		dsn := cfg.DatabaseDSN
+		if strings.Contains(dsn, ":") && strings.Contains(dsn, "@") {
+			parts := strings.SplitN(dsn, "@", 2)
+			if len(parts) == 2 {
+				userPass := parts[0]
+				if strings.Contains(userPass, ":") {
+					up := strings.SplitN(userPass, ":", 2)
+					dsn = up[0] + ":****@" + parts[1]
+				}
+			}
+		}
+		dbDisplay = "MySQL (" + dsn + ")"
+	} else {
+		dbDisplay = "SQLite (" + cfg.DatabasePath + ")"
+	}
+	fmt.Printf("  %-15s : %s\n", "Database", dbDisplay)
 	fmt.Printf("  %-15s : %s\n", "Upload Threads", fmt.Sprintf("%d", cfg.UploadThreads))
 	fmt.Printf("  %-15s : %d\n", "Active Bots", tgclient.GetBotCount())
 	fmt.Printf("  %-15s : %s (Premium: %v)\n", "Max Part Size", utils.FormatBytes(cfg.MaxPartSize), cfg.IsPremium)

@@ -37,7 +37,7 @@ func isChildAccountPath(dbPath string) bool {
 	if dbPath == "/" || dbPath == "." {
 		return false
 	}
-	
+
 	parts := strings.Split(strings.TrimPrefix(dbPath, "/"), "/")
 	rootFolder := parts[0]
 
@@ -50,7 +50,7 @@ func isChildAccountPath(dbPath string) bool {
 func (b *TelecloudBackend) mapPath(s3Key string) (dbDir string, dbBase string) {
 	cleanPath := path.Clean("/" + s3Key)
 	var fullPath string
-	
+
 	if b.isAdmin {
 		fullPath = cleanPath
 	} else {
@@ -60,7 +60,7 @@ func (b *TelecloudBackend) mapPath(s3Key string) (dbDir string, dbBase string) {
 			fullPath = "/" + b.username + cleanPath
 		}
 	}
-	
+
 	if fullPath == "/" {
 		return "/", ""
 	}
@@ -118,7 +118,7 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 	}
 
 	objects := gofakes3.NewObjectList()
-	
+
 	dbPrefix := "/" + b.username + "/"
 	if b.isAdmin {
 		dbPrefix = "/"
@@ -127,7 +127,7 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 	count := 0
 	for _, f := range files {
 		fullPath := path.Join(f.Path, f.Filename)
-		
+
 		// Strict Admin isolation
 		if b.isAdmin && isChildAccountPath(fullPath) {
 			continue
@@ -184,7 +184,7 @@ func (b *TelecloudBackend) GetObject(bucketName, objectName string, rangeRequest
 		query = "SELECT * FROM files WHERE path = ? AND filename = ?"
 		args = []interface{}{dbPath, filename}
 	}
-	
+
 	err := database.DB.Get(&file, query, args...)
 	if err != nil {
 		return nil, gofakes3.KeyNotFound(objectName)
@@ -273,7 +273,7 @@ func (b *TelecloudBackend) DeleteObject(bucketName, objectName string) (gofakes3
 			}
 		}
 	} else {
-		// If it's a folder, we might want to prevent deleting non-empty folders via S3 DeleteObject 
+		// If it's a folder, we might want to prevent deleting non-empty folders via S3 DeleteObject
 		// but S3 actually allows deleting "folder objects" separately.
 	}
 
@@ -317,7 +317,7 @@ func (b *TelecloudBackend) PutObject(bucketName, key string, meta map[string]str
 		parentPath := path.Dir(fullPath)
 		folderName := path.Base(fullPath)
 		_, err = database.DB.Exec(
-			"INSERT OR IGNORE INTO files (filename, path, is_folder, owner) VALUES (?, ?, 1, ?)",
+			database.InsertIgnoreSQL("files", "filename, path, is_folder, owner", "?, ?, 1, ?"),
 			folderName, parentPath, b.username,
 		)
 		return gofakes3.PutObjectResult{}, err
@@ -348,7 +348,6 @@ func (b *TelecloudBackend) PutObject(bucketName, key string, meta map[string]str
 
 	return gofakes3.PutObjectResult{}, nil
 }
-
 
 func (b *TelecloudBackend) CopyObject(srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string) (gofakes3.CopyObjectResult, error) {
 	if srcBucket != "telecloud" || dstBucket != "telecloud" {
@@ -382,17 +381,35 @@ func (b *TelecloudBackend) CopyObject(srcBucket, srcKey, dstBucket, dstKey strin
 	// Ensure destination directory exists
 	database.EnsureFoldersExist(dstDbPath, b.username)
 
-	// Perform the move/rename in database
-	_, err = database.DB.Exec(
-		"UPDATE files SET path = ?, filename = ? WHERE id = ?",
-		dstDbPath, dstFilename, file.ID,
+	tx, err := database.DB.Beginx()
+	if err != nil {
+		return gofakes3.CopyObjectResult{}, err
+	}
+	defer tx.Rollback()
+
+	// Perform the copy in database
+	res, err := tx.Exec(
+		"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		file.MessageID, dstFilename, dstDbPath, file.Size, file.MimeType, file.IsFolder, file.ThumbPath, b.username,
 	)
 	if err != nil {
 		return gofakes3.CopyObjectResult{}, err
 	}
 
+	newFileID, _ := res.LastInsertId()
+	if !file.IsFolder {
+		_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newFileID, file.ID)
+		if err != nil {
+			return gofakes3.CopyObjectResult{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return gofakes3.CopyObjectResult{}, err
+	}
+
 	return gofakes3.CopyObjectResult{
-		ETag:         fmt.Sprintf("\"%x\"", file.ID),
+		ETag:         fmt.Sprintf("\"%x\"", newFileID),
 		LastModified: gofakes3.NewContentTime(time.Now()),
 	}, nil
 }

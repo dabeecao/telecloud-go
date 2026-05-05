@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -123,8 +125,25 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, file database.Fil
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 
-	// Serve inline so browsers play it directly instead of downloading
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, file.Filename))
+	// Set Content-Type if not already set
+	if w.Header().Get("Content-Type") == "" && file.MimeType != nil {
+		mime := *file.MimeType
+		// Special handling for MKV to ensure browser compatibility
+		if strings.HasSuffix(strings.ToLower(file.Filename), ".mkv") {
+			mime = "video/webm"
+		}
+		w.Header().Set("Content-Type", mime)
+	}
+
+	// Set Content-Disposition only if not already set (e.g., by router for attachment)
+	if w.Header().Get("Content-Disposition") == "" {
+		// Use proper RFC 6266 encoding for filename to support non-ASCII characters and quotes
+		// filename*=UTF-8''... is the standard for modern browsers
+		encodedName := url.PathEscape(file.Filename)
+		// We still provide the quoted filename for legacy browsers
+		safeName := strings.ReplaceAll(file.Filename, `"`, `\"`)
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"; filename*=UTF-8''%s`, safeName, encodedName))
+	}
 
 	http.ServeContent(w, c, file.Filename, time.Time{}, reader)
 	return nil

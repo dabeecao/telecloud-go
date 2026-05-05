@@ -275,11 +275,42 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 
 	var downloadedFile string
 	prefix := "ytdlp_" + taskID + "_"
+	
+	// Better selection: skip intermediate files like .part, .ytdl or .fXXX extensions
+	var candidates []string
 	for _, f := range files {
-		if !f.IsDir() && strings.HasPrefix(f.Name(), prefix) {
-			downloadedFile = filepath.Join(cfg.TempDir, f.Name())
+		if f.IsDir() || !strings.HasPrefix(f.Name(), prefix) {
+			continue
+		}
+		
+		name := f.Name()
+		// Skip temporary/partial files
+		if strings.HasSuffix(name, ".part") || strings.HasSuffix(name, ".ytdl") || strings.HasSuffix(name, ".temp") {
+			continue
+		}
+		
+		// Check for intermediate format extensions like .f248.webm or .f140.m4a
+		isIntermediate := false
+		parts := strings.Split(name, ".")
+		for _, p := range parts {
+			if strings.HasPrefix(p, "f") && len(p) > 1 {
+				if _, err := strconv.Atoi(p[1:]); err == nil {
+					isIntermediate = true
+					break
+				}
+			}
+		}
+		
+		if !isIntermediate {
+			downloadedFile = filepath.Join(cfg.TempDir, name)
 			break
 		}
+		candidates = append(candidates, filepath.Join(cfg.TempDir, name))
+	}
+
+	// Fallback to first candidate if no "clean" file found
+	if downloadedFile == "" && len(candidates) > 0 {
+		downloadedFile = candidates[0]
 	}
 
 	if downloadedFile == "" {

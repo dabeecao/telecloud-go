@@ -1,7 +1,7 @@
 // Copyright (C) 2026 @dabeecao
 //
 // This file is part of TeleCloud project, lead developer: @dabeecao
-// For support, please visit the TTJB support group: https://t.me/thuthuatjb_sp
+// For support, please visit the group: https://t.me/+p-d0qfGRbX4wNzJl
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by

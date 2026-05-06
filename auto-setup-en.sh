@@ -295,6 +295,20 @@ install_dependencies() {
             else
                 echo "[!] Warning: Could not confirm yt-dlp installation."
             fi
+
+            # Install Node.js (required by yt-dlp for JS runtime when downloading YouTube on VPS)
+            if ! command -v node &>/dev/null; then
+                echo ""
+                echo "[+] Installing Node.js (required by yt-dlp for YouTube JS processing)..."
+                pkg_install "nodejs" "node"
+                if command -v node &>/dev/null; then
+                    echo "[✓] Node.js installed ($(node --version 2>/dev/null))."
+                else
+                    echo "[!] Warning: Could not install Node.js. YouTube downloads may fail on some VPS."
+                fi
+            else
+                echo "[✓] Node.js already installed ($(node --version 2>/dev/null))."
+            fi
         fi
 
         # Only install Cloudflared if using Cloudflare Tunnel
@@ -334,6 +348,23 @@ install_dependencies() {
         for pkg in $MAIN_PACKAGES; do
             pkg_install "$pkg"
         done
+
+        if [ "$install_ytdlp" == "y" ]; then
+            if ! command -v node &>/dev/null; then
+                echo ""
+                echo "[+] Installing Node.js (required by yt-dlp for YouTube JS processing)..."
+                if [ "$OS_TYPE" == "macos" ]; then
+                    pkg_install "node" "node"
+                else
+                    pkg_install "nodejs" "node"
+                fi
+                if command -v node &>/dev/null; then
+                    echo "[✓] Node.js installed ($(node --version 2>/dev/null))."
+                else
+                    echo "[!] Warning: Could not install Node.js."
+                fi
+            fi
+        fi
     fi
 }
 

@@ -294,6 +294,20 @@ install_dependencies() {
             else
                 echo "[!] Cảnh báo: Không xác nhận được yt-dlp sau khi cài đặt."
             fi
+
+            # Cài Node.js (cần thiết cho yt-dlp để xử lý JS runtime khi tải YouTube trên VPS)
+            if ! command -v node &>/dev/null; then
+                echo ""
+                echo "[+] Đang cài đặt Node.js (cần thiết cho yt-dlp xử lý YouTube)..."
+                pkg_install "nodejs" "node"
+                if command -v node &>/dev/null; then
+                    echo "[✓] Node.js đã được cài đặt ($(node --version 2>/dev/null))."
+                else
+                    echo "[!] Cảnh báo: Không cài được Node.js. Tải YouTube có thể bị lỗi trên một số VPS."
+                fi
+            else
+                echo "[✓] Node.js đã có sẵn ($(node --version 2>/dev/null))."
+            fi
         fi
 
         # Chỉ cài Cloudflared nếu dùng Cloudflare Tunnel
@@ -333,6 +347,23 @@ install_dependencies() {
         for pkg in $MAIN_PACKAGES; do
             pkg_install "$pkg"
         done
+
+        if [ "$install_ytdlp" == "y" ]; then
+            if ! command -v node &>/dev/null; then
+                echo ""
+                echo "[+] Đang cài đặt Node.js (cần thiết cho yt-dlp xử lý YouTube)..."
+                if [ "$OS_TYPE" == "macos" ]; then
+                    pkg_install "node" "node"
+                else
+                    pkg_install "nodejs" "node"
+                fi
+                if command -v node &>/dev/null; then
+                    echo "[✓] Node.js đã được cài đặt ($(node --version 2>/dev/null))."
+                else
+                    echo "[!] Cảnh báo: Không cài được Node.js."
+                fi
+            fi
+        fi
     fi
 }
 

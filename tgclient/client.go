@@ -18,6 +18,7 @@ import (
 	"golang.org/x/term"
 
 	"telecloud/config"
+	"telecloud/database"
 
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
@@ -46,12 +47,19 @@ func GetAPI() *tg.Client {
 	botPoolMu.RLock()
 	defer botPoolMu.RUnlock()
 
-	total := uint32(len(BotPool) + 1)
+	var activeIndices []int
+	for i := range BotPool {
+		if !BotPool[i].Deleted {
+			activeIndices = append(activeIndices, i)
+		}
+	}
+
+	total := uint32(len(activeIndices) + 1)
 	idx := atomic.AddUint32(&botCounter, 1) % total
 	if idx == 0 {
 		return Client.API()
 	}
-	return BotPool[idx-1].Client.API()
+	return BotPool[activeIndices[idx-1]].Client.API()
 }
 
 func GetBotCount() int {
@@ -98,12 +106,60 @@ func (termAuth) Code(ctx context.Context, sentCode *tg.AuthSentCode) (string, er
 	return strings.TrimSpace(code), nil
 }
 
+type DBSessionStorage struct {
+	SessionID string
+}
+
+func (s *DBSessionStorage) LoadSession(ctx context.Context) ([]byte, error) {
+	data, err := database.GetTGSession(s.SessionID)
+	if err != nil {
+		return nil, session.ErrNotFound
+	}
+	return data, nil
+}
+
+func (s *DBSessionStorage) StoreSession(ctx context.Context, data []byte) error {
+	return database.SetTGSession(s.SessionID, data)
+}
+
+type HybridSessionStorage struct {
+	SessionID string
+	FilePath  string
+}
+
+func (s *HybridSessionStorage) LoadSession(ctx context.Context) ([]byte, error) {
+	// 1. Try DB first
+	data, err := database.GetTGSession(s.SessionID)
+	if err == nil && len(data) > 0 {
+		return data, nil
+	}
+
+	// 2. Fallback to file
+	fileStorage := &session.FileStorage{Path: s.FilePath}
+	data, err = fileStorage.LoadSession(ctx)
+	if err == nil {
+		// Update DB with file session
+		_ = database.SetTGSession(s.SessionID, data)
+		return data, nil
+	}
+
+	return nil, session.ErrNotFound
+}
+
+func (s *HybridSessionStorage) StoreSession(ctx context.Context, data []byte) error {
+	// Store in both
+	_ = database.SetTGSession(s.SessionID, data)
+	fileStorage := &session.FileStorage{Path: s.FilePath}
+	return fileStorage.StoreSession(ctx, data)
+}
+
 func InitClient(cfg *config.Config, runAuthFlow bool) error {
 	sessionDir := cfg.SessionFile
 
 	options := telegram.Options{
-		SessionStorage: &session.FileStorage{
-			Path: sessionDir,
+		SessionStorage: &HybridSessionStorage{
+			SessionID: "main",
+			FilePath:  sessionDir,
 		},
 		Device: telegram.DeviceConfig{
 			DeviceModel:   "TeleCloud Server",
@@ -140,7 +196,7 @@ func InitClient(cfg *config.Config, runAuthFlow bool) error {
 	// Initialize bots if provided
 	isPrivateMe := cfg.LogGroupID == "me" || cfg.LogGroupID == "self"
 	if isPrivateMe && len(cfg.BotTokens) > 0 {
-		log.Println("ℹ️ Multi-bot disabled: Bots cannot access your private 'Saved Messages' (LOG_GROUP_ID=me).")
+		log.Println("Info: Multi-bot disabled - Bots cannot access your private 'Saved Messages' (LOG_GROUP_ID=me).")
 	}
 
 	for _, token := range cfg.BotTokens {
@@ -150,7 +206,7 @@ func InitClient(cfg *config.Config, runAuthFlow bool) error {
 		}
 		// Create bot-specific options to avoid session file conflicts
 		botOptions := options
-		botOptions.SessionStorage = nil // Bots use tokens and don't need persistent session files
+		botOptions.SessionStorage = &DBSessionStorage{SessionID: token}
 		botClient := telegram.NewClient(cfg.APIID, cfg.APIHash, botOptions)
 		BotPool = append(BotPool, BotInstance{Client: botClient, Token: token})
 	}
@@ -203,7 +259,7 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 				default:
 					close(r)
 				}
-				log.Printf("⚠️ Bot #%d encountered an error and will be disabled: %v", idx+1, err)
+				log.Printf("Warning: Bot #%d encountered an error and will be disabled: %v", idx+1, err)
 				b.Deleted = true
 				// We DO NOT send this error to errCh because we want the app to keep running
 			}
@@ -214,9 +270,13 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 		case <-ready:
 			// Bot is ready, continue
 		case <-time.After(15 * time.Second):
-			log.Printf("⚠️ Bot #%d: authorization timed out", i+1)
+			log.Printf("Warning: Bot #%d authorization timed out", i+1)
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+
+		if i < len(BotPool)-1 {
+			time.Sleep(500 * time.Millisecond)
 		}
 	}
 
@@ -299,26 +359,41 @@ func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {
 
 	// Verify all bots in the pool
 	botPoolMu.Lock()
-	var activeBots []BotInstance
-	for i, bot := range BotPool {
-		if bot.Deleted {
-			continue
-		}
-		api := bot.Client.API()
-		// Try to resolve group for this bot
-		botPeer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
-		if err != nil {
-			log.Printf("⚠️ Bot #%d: resolution failed: %v. Removing from pool.", i+1, err)
-			continue
-		}
+	var wgBots sync.WaitGroup
+	activeBotsChan := make(chan BotInstance, len(BotPool))
 
-		// Try to send a message
-		botSender := message.NewSender(api)
-		_, err = botSender.To(botPeer).Text(ctx, fmt.Sprintf("🤖 Bot #%d (%s) is online and reporting for duty!", i+1, bot.Token[:8]+"..."))
-		if err != nil {
-			log.Printf("⚠️ Bot #%d: connectivity check failed: %v. Removing from pool.", i+1, err)
+	for i := range BotPool {
+		if BotPool[i].Deleted {
 			continue
 		}
+		wgBots.Add(1)
+		go func(idx int) {
+			defer wgBots.Done()
+			bot := BotPool[idx]
+			api := bot.Client.API()
+			// Try to resolve group for this bot
+			botPeer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
+			if err != nil {
+				log.Printf("Warning: Bot #%d: resolution failed: %v. Removing from pool.", idx+1, err)
+				return
+			}
+
+			// Try to send a message
+			botSender := message.NewSender(api)
+			_, err = botSender.To(botPeer).Text(ctx, fmt.Sprintf("🤖 Bot #%d (%s) is online and reporting for duty!", idx+1, bot.Token[:8]+"..."))
+			if err != nil {
+				log.Printf("Warning: Bot #%d: connectivity check failed: %v. Removing from pool.", idx+1, err)
+				return
+			}
+			activeBotsChan <- bot
+		}(i)
+	}
+
+	wgBots.Wait()
+	close(activeBotsChan)
+
+	var activeBots []BotInstance
+	for bot := range activeBotsChan {
 		activeBots = append(activeBots, bot)
 	}
 	BotPool = activeBots

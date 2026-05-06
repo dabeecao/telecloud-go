@@ -80,7 +80,7 @@ func main() {
 	fmt.Printf("  ╔╦╗┌─┐┬  ┌─┐╔═╗┬  ┌─┐┬ ┬┌┬┐\n")
 	fmt.Printf("   ║ ├┤ │  ├┤ ║  │  │ ││ │ ││\n")
 	fmt.Printf("   ╩ └─┘┴─┘└─┘╚═╝┴─┘└─┘└─┘─┴┘\n")
-	fmt.Printf("   TeleCloud %s - Lead by @dabeecao\n\n", version)
+	fmt.Printf("  TeleCloud %s - Powered by @dabeecao\n\n", version)
 	log.Println("TeleCloud is starting, please wait...")
 
 	cfg, err := config.Load()
@@ -276,8 +276,7 @@ func fatalf(format string, v ...interface{}) {
 }
 
 func printStartupBox(cfg *config.Config) {
-	fmt.Println("  [System Configuration]")
-	fmt.Printf("  %-15s : %s\n", "Port", cfg.Port)
+	// Prepare data
 	dbDisplay := cfg.DatabasePath
 	if cfg.DatabaseDriver == "mysql" {
 		dsn := cfg.DatabaseDSN
@@ -295,51 +294,55 @@ func printStartupBox(cfg *config.Config) {
 	} else {
 		dbDisplay = "SQLite (" + cfg.DatabasePath + ")"
 	}
-	fmt.Printf("  %-15s : %s\n", "Database", dbDisplay)
-	fmt.Printf("  %-15s : %s\n", "Upload Threads", fmt.Sprintf("%d", cfg.UploadThreads))
-	fmt.Printf("  %-15s : %d\n", "Active Bots", tgclient.GetBotCount())
-	fmt.Printf("  %-15s : %s (Premium: %v)\n", "Max Part Size", utils.FormatBytes(cfg.MaxPartSize), cfg.IsPremium)
 
-	fmt.Println("\n  [Features Status]")
-
-	// FFmpeg status
 	ffmpegEnabled := cfg.FFMPEGPath != "disabled" && cfg.FFMPEGPath != "disable"
-	ffmpegStatus := "DISABLED"
+	ffmpegStatus := "Disabled"
 	if ffmpegEnabled {
-		ffmpegStatus = "ENABLED (" + cfg.FFMPEGPath + ")"
+		ffmpegStatus = "Enabled"
 	}
-	fmt.Printf("  %-15s : %s\n", "FFmpeg", ffmpegStatus)
 
-	// yt-dlp status
 	ytdlpEnabled := cfg.YTDLPPath != "disabled" && cfg.YTDLPPath != "disable"
 	if !ffmpegEnabled {
 		ytdlpEnabled = false
 	}
-	ytdlpStatus := "DISABLED"
+	ytdlpStatus := "Disabled"
 	if ytdlpEnabled {
-		ytdlpStatus = "ENABLED (" + cfg.YTDLPPath + ")"
+		ytdlpStatus = "Enabled"
 	}
-	fmt.Printf("  %-15s : %s\n", "yt-dlp", ytdlpStatus)
 
-	// WebAuthn status
-	rpid := database.GetSetting("webauthn_rpid")
-	if rpid == "" {
-		rpid = cfg.WebAuthnRPID
-	}
-	fmt.Printf("  %-15s : %s (ID: %s)\n", "Passkeys", "READY", rpid)
-
-	// Proxy status
-	proxyStatus := "DISABLED"
+	proxyStatus := "Disabled"
 	if cfg.ProxyURL != "" {
-		proxyStatus = "ENABLED"
+		proxyStatus = "Enabled"
 	}
-	fmt.Printf("  %-15s : %s\n", "Proxy", proxyStatus)
-	fmt.Printf("\n")
+
+	// Print table
+	fmt.Println("  ┌──────────────────────────────────────────────────────────────────┐")
+	fmt.Println("  │                      SYSTEM CONFIGURATION                        │")
+	fmt.Println("  ├────────────────────────────┬─────────────────────────────────────┤")
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Service Port", cfg.Port)
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Database", truncateString(dbDisplay, 35))
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Upload Threads", fmt.Sprintf("%d", cfg.UploadThreads))
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Active Bot Pool", fmt.Sprintf("%d bots", tgclient.GetBotCount()))
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Max Part Size", utils.FormatBytes(cfg.MaxPartSize))
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Premium Status", fmt.Sprintf("%v", cfg.IsPremium))
+	fmt.Println("  ├────────────────────────────┼─────────────────────────────────────┤")
+	fmt.Printf("  │ %-26s │ %-35s │\n", "FFmpeg Support", ffmpegStatus)
+	fmt.Printf("  │ %-26s │ %-35s │\n", "YouTube-DLP Support", ytdlpStatus)
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Proxy Connection", proxyStatus)
+	fmt.Println("  └────────────────────────────┴─────────────────────────────────────┘")
+	fmt.Println()
 
 	// Print delayed warnings
 	for _, w := range cfg.Warnings {
-		log.Println(w)
+		log.Println("Warning: " + w)
 	}
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 func startCleanupTask(cfg *config.Config) {

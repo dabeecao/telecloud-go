@@ -126,6 +126,12 @@ const sqliteSchema = `
 		username TEXT DEFAULT ''
 	);
 
+	CREATE TABLE IF NOT EXISTS tg_sessions (
+		session_id TEXT PRIMARY KEY,
+		data BLOB NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS child_accounts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		username TEXT UNIQUE NOT NULL,
@@ -212,6 +218,12 @@ const mysqlSchema = `
 		username VARCHAR(191) DEFAULT ''
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+	CREATE TABLE IF NOT EXISTS tg_sessions (
+		session_id VARCHAR(191) PRIMARY KEY,
+		data LONGBLOB NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 	CREATE TABLE IF NOT EXISTS child_accounts (
 		id BIGINT PRIMARY KEY AUTO_INCREMENT,
 		username VARCHAR(191) UNIQUE NOT NULL,
@@ -291,6 +303,7 @@ func migrateSQLite() error {
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_enabled INTEGER DEFAULT 1")
 	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_child_accounts_s3_key ON child_accounts(s3_access_key)")
 
+	DB.Exec("CREATE TABLE IF NOT EXISTS tg_sessions (session_id TEXT PRIMARY KEY, data BLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
 	return nil
@@ -378,6 +391,10 @@ func migrateMySQL() error {
 		return err
 	}
 	if err := createIndexMySQL("idx_child_accounts_s3_key", "child_accounts", "s3_access_key", true); err != nil {
+		return err
+	}
+
+	if _, err := DB.Exec("CREATE TABLE IF NOT EXISTS tg_sessions (session_id VARCHAR(191) PRIMARY KEY, data LONGBLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); err != nil {
 		return err
 	}
 
@@ -522,6 +539,21 @@ func SetSetting(key string, value string) error {
 		query = "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
 	}
 	_, err := DB.Exec(query, key, value)
+	return err
+}
+
+func GetTGSession(sessionID string) ([]byte, error) {
+	var data []byte
+	err := DB.Get(&data, "SELECT data FROM tg_sessions WHERE session_id = ?", sessionID)
+	return data, err
+}
+
+func SetTGSession(sessionID string, data []byte) error {
+	query := "INSERT INTO tg_sessions (session_id, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = VALUES(updated_at)"
+	if !IsMySQL() {
+		query = "INSERT INTO tg_sessions (session_id, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(session_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at"
+	}
+	_, err := DB.Exec(query, sessionID, data)
 	return err
 }
 

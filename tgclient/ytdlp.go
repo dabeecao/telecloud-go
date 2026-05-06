@@ -61,6 +61,11 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 	}
 
 	args := []string{"-J", "--no-playlist", url}
+
+	// Add Node.js runtime for YouTube compatibility (fixes JS execution issues on some VPS)
+	if nodePath, err := exec.LookPath("node"); err == nil {
+		args = append([]string{"--js-runtimes", "node:" + nodePath, "--remote-components", "ejs:github"}, args...)
+	}
 	
 	// Check for user cookie file
 	cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", owner))
@@ -166,6 +171,11 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		"--newline",
 		"--no-playlist",
 		"-o", tempPathPattern,
+	}
+
+	// Add Node.js runtime for YouTube compatibility (fixes JS execution issues on some VPS)
+	if nodePath, err := exec.LookPath("node"); err == nil {
+		args = append(args, "--js-runtimes", "node:"+nodePath, "--remote-components", "ejs:github")
 	}
 
 	// Audio conversion logic

@@ -214,13 +214,86 @@ install_dependencies() {
 
         echo ""
         echo "[!] yt-dlp allows downloading video/audio from YouTube, Facebook, TikTok..."
-        read -p "[?] Do you want to install yt-dlp? (y/n): " install_ytdlp
+
+        # Check currently installed yt-dlp version (if any)
+        if command -v yt-dlp &>/dev/null; then
+            YTDLP_CURRENT=$(yt-dlp --version 2>/dev/null || echo "unknown")
+            echo "[✓] yt-dlp is already installed (version: $YTDLP_CURRENT)."
+            read -p "[?] Do you want to reinstall / update yt-dlp? (y/n): " install_ytdlp
+        else
+            echo "[!] yt-dlp is not installed."
+            read -p "[?] Do you want to install yt-dlp? (y/n): " install_ytdlp
+        fi
+
         if [ "$install_ytdlp" == "y" ]; then
-            pkg_install "python3" "python3"
-            if ! pkg_install "yt-dlp"; then
+            YTDLP_INSTALLED=0
+
+            if [ "$PKG_MGR" == "apt" ]; then
+                # Fetch latest version from GitHub
+                YTDLP_LATEST=$(curl -fsSL --connect-timeout 5 \
+                    "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest" 2>/dev/null \
+                    | grep '"tag_name"' | head -n1 | cut -d'"' -f4)
+                YTDLP_LATEST=${YTDLP_LATEST:-unknown}
+
+                # Check version available in default apt repo (before adding PPA)
+                apt-get update -qq 2>/dev/null || true
+                YTDLP_APT=$(apt-cache policy yt-dlp 2>/dev/null \
+                    | grep "Candidate:" | awk '{print $2}')
+                YTDLP_APT=${YTDLP_APT:-none}
+
+                echo "[+] Latest yt-dlp version (GitHub): $YTDLP_LATEST"
+                echo "[+] yt-dlp version available in default apt: $YTDLP_APT"
+
+                # If default apt already has the latest version, install directly without PPA
+                if [ "$YTDLP_APT" != "none" ] && [ "$YTDLP_APT" = "$YTDLP_LATEST" ]; then
+                    echo "[✓] Default apt already has the latest version, no PPA needed."
+                    apt install -y yt-dlp && YTDLP_INSTALLED=1 || true
+                else
+                    # apt version is older or not available → add PPA for latest version
+                    echo "[+] Default apt has an older version or no yt-dlp → Adding PPA ppa:tomtomtom/yt-dlp..."
+
+                    # Some distros don't have add-apt-repository → install software-properties-common
+                    if ! command -v add-apt-repository &>/dev/null; then
+                        echo "[+] Installing software-properties-common for add-apt-repository..."
+                        apt install -y software-properties-common &>/dev/null || true
+                    fi
+
+                    if command -v add-apt-repository &>/dev/null; then
+                        if add-apt-repository -y ppa:tomtomtom/yt-dlp 2>/dev/null && \
+                           apt update -qq && \
+                           apt install -y yt-dlp; then
+                            YTDLP_INSTALLED=1
+                        else
+                            echo "[!] PPA installation failed, trying other methods..."
+                        fi
+                    else
+                        echo "[!] Could not install software-properties-common, skipping PPA..."
+                    fi
+                fi
+            fi
+
+            # Fallback: install via standard package manager (dnf, pacman, apk...)
+            if [ $YTDLP_INSTALLED -eq 0 ]; then
+                pkg_install "python3" "python3"
+                if pkg_install "yt-dlp" "yt-dlp"; then
+                    YTDLP_INSTALLED=1
+                fi
+            fi
+
+            # Last fallback: download binary directly from GitHub
+            if [ $YTDLP_INSTALLED -eq 0 ]; then
                 echo "[+] Package manager installation failed, downloading yt-dlp binary directly..."
                 download_file "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$BIN_DIR/yt-dlp"
                 chmod +x "$BIN_DIR/yt-dlp"
+                YTDLP_INSTALLED=1
+            fi
+
+            # Verify installation
+            if command -v yt-dlp &>/dev/null; then
+                YTDLP_VER=$(yt-dlp --version 2>/dev/null || echo "unknown")
+                echo "[✓] yt-dlp installed successfully (version: $YTDLP_VER)."
+            else
+                echo "[!] Warning: Could not confirm yt-dlp installation."
             fi
         fi
 

@@ -213,13 +213,86 @@ install_dependencies() {
 
         echo ""
         echo "[!] yt-dlp cho phép tải video/audio từ YouTube, Facebook, TikTok..."
-        read -p "[?] Bạn có muốn cài đặt yt-dlp không? (y/n): " install_ytdlp
+
+        # Kiểm tra phiên bản yt-dlp hiện tại (nếu đã cài)
+        if command -v yt-dlp &>/dev/null; then
+            YTDLP_CURRENT=$(yt-dlp --version 2>/dev/null || echo "unknown")
+            echo "[✓] yt-dlp đã được cài sẵn (phiên bản: $YTDLP_CURRENT)."
+            read -p "[?] Bạn có muốn cài lại / cập nhật yt-dlp không? (y/n): " install_ytdlp
+        else
+            echo "[!] yt-dlp chưa được cài đặt."
+            read -p "[?] Bạn có muốn cài đặt yt-dlp không? (y/n): " install_ytdlp
+        fi
+
         if [ "$install_ytdlp" == "y" ]; then
-            pkg_install "python3" "python3"
-            if ! pkg_install "yt-dlp"; then
+            YTDLP_INSTALLED=0
+
+            if [ "$PKG_MGR" == "apt" ]; then
+                # Lấy version mới nhất từ GitHub
+                YTDLP_LATEST=$(curl -fsSL --connect-timeout 5 \
+                    "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest" 2>/dev/null \
+                    | grep '"tag_name"' | head -n1 | cut -d'"' -f4)
+                YTDLP_LATEST=${YTDLP_LATEST:-unknown}
+
+                # Lấy version có sẵn trong apt repo mặc định (chưa add PPA)
+                apt-get update -qq 2>/dev/null || true
+                YTDLP_APT=$(apt-cache policy yt-dlp 2>/dev/null \
+                    | grep "Candidate:" | awk '{print $2}')
+                YTDLP_APT=${YTDLP_APT:-none}
+
+                echo "[+] Phiên bản yt-dlp mới nhất (GitHub): $YTDLP_LATEST"
+                echo "[+] Phiên bản yt-dlp có trong apt mặc định: $YTDLP_APT"
+
+                # So sánh: nếu apt đã có version mới nhất thì cài thẳng, không cần PPA
+                if [ "$YTDLP_APT" != "none" ] && [ "$YTDLP_APT" = "$YTDLP_LATEST" ]; then
+                    echo "[✓] apt mặc định đã có phiên bản mới nhất, không cần thêm PPA."
+                    apt install -y yt-dlp && YTDLP_INSTALLED=1 || true
+                else
+                    # apt cũ hơn hoặc không có → thêm PPA để lấy version mới
+                    echo "[+] apt mặc định có version cũ hoặc chưa có yt-dlp → Đang thêm PPA ppa:tomtomtom/yt-dlp..."
+
+                    # Một số distro không có sẵn add-apt-repository → cài software-properties-common
+                    if ! command -v add-apt-repository &>/dev/null; then
+                        echo "[+] Đang cài software-properties-common để dùng add-apt-repository..."
+                        apt install -y software-properties-common &>/dev/null || true
+                    fi
+
+                    if command -v add-apt-repository &>/dev/null; then
+                        if add-apt-repository -y ppa:tomtomtom/yt-dlp 2>/dev/null && \
+                           apt update -qq && \
+                           apt install -y yt-dlp; then
+                            YTDLP_INSTALLED=1
+                        else
+                            echo "[!] Cài yt-dlp qua PPA thất bại, sẽ thử cách khác..."
+                        fi
+                    else
+                        echo "[!] Không thể cài software-properties-common, bỏ qua PPA..."
+                    fi
+                fi
+            fi
+
+            # Fallback: cài qua package manager thông thường (dnf, pacman, apk...)
+            if [ $YTDLP_INSTALLED -eq 0 ]; then
+                pkg_install "python3" "python3"
+                if pkg_install "yt-dlp" "yt-dlp"; then
+                    YTDLP_INSTALLED=1
+                fi
+            fi
+
+            # Fallback cuối: tải binary trực tiếp từ GitHub
+            if [ $YTDLP_INSTALLED -eq 0 ]; then
                 echo "[+] Cài đặt yt-dlp qua package manager thất bại, đang tải binary trực tiếp..."
                 download_file "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$BIN_DIR/yt-dlp"
                 chmod +x "$BIN_DIR/yt-dlp"
+                YTDLP_INSTALLED=1
+            fi
+
+            # Kiểm tra kết quả
+            if command -v yt-dlp &>/dev/null; then
+                YTDLP_VER=$(yt-dlp --version 2>/dev/null || echo "unknown")
+                echo "[✓] yt-dlp đã được cài đặt thành công (phiên bản: $YTDLP_VER)."
+            else
+                echo "[!] Cảnh báo: Không xác nhận được yt-dlp sau khi cài đặt."
             fi
         fi
 

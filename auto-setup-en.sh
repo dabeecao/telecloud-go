@@ -591,6 +591,8 @@ check_status() {
 }
 
 start_app() {
+    # Always stop the application before starting to avoid duplicate instances (Restart logic)
+    stop_app >/dev/null 2>&1 || true
 
     echo "[+] Starting the application..."
     if [ "$OS_TYPE" == "linux" ]; then
@@ -686,10 +688,17 @@ stop_app() {
         if command -v systemctl &>/dev/null; then
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
         else
+            pkill -f "cloudflared tunnel run" 2>/dev/null || true
             pkill -x telecloud 2>/dev/null || true
         fi
     else
+        # Stop Tmux session (Tmux sends SIGHUP; app is configured to catch SIGHUP and shut down cleanly)
         tmux kill-session -t $SESSION 2>/dev/null || true
+        
+        # Wait a bit for the app to clean up
+        sleep 1
+        
+        # Force stop if anything remains (fallback)
         pkill -f "\./telecloud" 2>/dev/null || true
         pkill -f "cloudflared tunnel run" 2>/dev/null || true
     fi
@@ -1013,23 +1022,28 @@ telecloud_commands() {
 }
 
 uninstall() {
-    echo "⚠️ WARNING: You are about to completely remove the application and all data."
+    echo "⚠️ WARNING: You are about to completely remove the application and all its data."
     read -p "Confirm uninstallation? (y/n): " cf
     if [ "$cf" == "y" ]; then
         echo "[+] Stopping the application..."
         stop_app
 
+        # Release wake lock for Termux
+        if [ "$OS_TYPE" == "termux" ] && command -v termux-wake-unlock &>/dev/null; then
+            termux-wake-unlock
+        fi
+
         if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
             TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
-            echo "[+] Removing Tunnel '$TUNNEL_NAME' from Cloudflare system..."
+            echo "[+] Removing Tunnel '$TUNNEL_NAME' from Cloudflare..."
             cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
             
             echo "------------------------------------------------------"
             echo "📢 IMPORTANT NOTE:"
-            echo "The script has deleted the Tunnel from the system,"
+            echo "The script has removed the Tunnel from the system,"
             echo "but the DNS record on the Cloudflare Dashboard"
-            echo "still exists."
-            echo "REMEMBER to visit dash.cloudflare.com to delete"
+            echo "may still exist."
+            echo "Remember to visit dash.cloudflare.com to remove"
             echo "the old DNS record to avoid system clutter."
             echo "------------------------------------------------------"
         fi
@@ -1043,14 +1057,15 @@ uninstall() {
             systemctl daemon-reload 2>/dev/null || true
         fi
         
-        echo "[+] Removing application directory: $BASE_DIR"
+        echo "[+] Deleting application directory: $BASE_DIR"
         if [ -d "$BASE_DIR" ]; then
             rm -rf "$BASE_DIR"
         fi
 
-        echo "[+] Removing 'telecloud' command..."
-        if [ -n "$BIN_DIR" ] && [ -f "$BIN_DIR/telecloud" ]; then
-            rm -f "$BIN_DIR/telecloud"
+        echo "[+] Deleting 'telecloud' command..."
+        if [ -n "$BIN_DIR" ]; then
+            rm -f "$BIN_DIR/telecloud" 2>/dev/null || true
+            rm -f "$BIN_DIR/telecloud.bak" 2>/dev/null || true
         fi
         
         echo "✅ Application successfully uninstalled."

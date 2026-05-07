@@ -191,7 +191,7 @@ func main() {
 
 	// Catch OS signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	// Initialise the WebSocket hub with the app context so it shuts down gracefully
 	ws.InitHub(appCtx)

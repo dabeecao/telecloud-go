@@ -591,6 +591,8 @@ check_status() {
 }
 
 start_app() {
+    # Luôn dừng ứng dụng trước khi khởi động để tránh chạy trùng bản (Restart logic)
+    stop_app >/dev/null 2>&1 || true
 
     echo "[+] Đang khởi động ứng dụng..."
     if [ "$OS_TYPE" == "linux" ]; then
@@ -686,10 +688,17 @@ stop_app() {
         if command -v systemctl &>/dev/null; then
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
         else
+            pkill -f "cloudflared tunnel run" 2>/dev/null || true
             pkill -x telecloud 2>/dev/null || true
         fi
     else
+        # Tắt Tmux session (Tmux gửi SIGHUP, app đã được cấu hình để bắt SIGHUP và tắt sạch sẽ)
         tmux kill-session -t $SESSION 2>/dev/null || true
+        
+        # Chờ 1 chút cho app dọn dẹp
+        sleep 1
+        
+        # Cưỡng chế tắt nếu vẫn còn sót (fallback)
         pkill -f "\./telecloud" 2>/dev/null || true
         pkill -f "cloudflared tunnel run" 2>/dev/null || true
     fi
@@ -1019,6 +1028,11 @@ uninstall() {
         echo "[+] Đang dừng ứng dụng..."
         stop_app
 
+        # Nhả wake lock cho Termux
+        if [ "$OS_TYPE" == "termux" ] && command -v termux-wake-unlock &>/dev/null; then
+            termux-wake-unlock
+        fi
+
         if [ -f "$BASE_DIR/tunnel-name.txt" ]; then
             TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt")
             echo "[+] Đang xoá Tunnel '$TUNNEL_NAME' trên hệ thống Cloudflare..."
@@ -1048,8 +1062,9 @@ uninstall() {
         fi
 
         echo "[+] Đang xóa lệnh 'telecloud'..."
-        if [ -n "$BIN_DIR" ] && [ -f "$BIN_DIR/telecloud" ]; then
-            rm -f "$BIN_DIR/telecloud"
+        if [ -n "$BIN_DIR" ]; then
+            rm -f "$BIN_DIR/telecloud" 2>/dev/null || true
+            rm -f "$BIN_DIR/telecloud.bak" 2>/dev/null || true
         fi
         
         echo "✅ Đã gỡ bỏ sạch sẽ toàn bộ ứng dụng."

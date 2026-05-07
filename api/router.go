@@ -128,6 +128,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.POST("/folders", h.handlePostFolders)
 		api.POST("/upload", h.handlePostUpload)
 		api.POST("/remote-upload", h.handlePostRemoteUpload)
+		api.POST("/remote-upload/check", h.handlePostRemoteUploadCheck)
 		api.GET("/tasks", h.handleGetTasks)
 		api.POST("/cancel_upload", h.handleCancelUpload)
 		api.POST("/actions/paste", h.handlePostPaste)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"telecloud/tgclient"
+	"telecloud/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -152,6 +153,10 @@ func (h *Handler) handlePostYTDLPFormats(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url_format"})
 		return
 	}
+	if utils.IsPrivateIP(url) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "err_forbidden_url"})
+		return
+	}
 	username := c.GetString("username")
 	info, err := tgclient.GetYTDLPFormats(url, h.cfg, username)
 	if err != nil {
@@ -175,7 +180,10 @@ func (h *Handler) handlePostYTDLPDownload(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url_format"})
 		return
 	}
-
+	if utils.IsPrivateIP(url) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "err_forbidden_url"})
+		return
+	}
 	if path == "" {
 		path = "/"
 	}
@@ -189,7 +197,10 @@ func (h *Handler) handlePostYTDLPDownload(c *gin.Context) {
 		return
 	}
 
-	taskID := fmt.Sprintf("ytdlp_%d", time.Now().UnixNano())
+	taskID := c.PostForm("task_id")
+	if taskID == "" {
+		taskID = fmt.Sprintf("ytdlp_%d", time.Now().UnixNano())
+	}
 	go tgclient.ProcessYTDLPUpload(context.Background(), url, formatID, dbPath, taskID, downloadType, h.cfg, username)
 
 	c.JSON(http.StatusOK, gin.H{"status": "started", "task_id": taskID})

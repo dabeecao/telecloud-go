@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"telecloud/config"
+	"telecloud/utils"
 	"time"
 )
 
@@ -58,6 +59,10 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 
 	if !IsValidURL(url) {
 		return nil, fmt.Errorf("invalid_url_format")
+	}
+
+	if utils.IsPrivateIP(url) {
+		return nil, fmt.Errorf("err_forbidden_url")
 	}
 
 	args := []string{"-J", "--no-playlist", url}
@@ -145,6 +150,24 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		return
 	}
 
+	if utils.IsPrivateIP(url) {
+		UpdateTaskWithFile(taskID, "error", 0, "err_forbidden_url", "", owner, 0, 0)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Register for cancellation
+	taskMutex.Lock()
+	TaskCancels[taskID] = cancel
+	taskMutex.Unlock()
+	defer func() {
+		taskMutex.Lock()
+		delete(TaskCancels, taskID)
+		taskMutex.Unlock()
+	}()
+
 	UpdateTaskWithFile(taskID, "downloading", 0, "waiting_slot", "", owner, 0, 0)
 
 	// Wait for a slot in the ytdlp queue
@@ -203,8 +226,8 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	args = append(args, url)
 
 	// Create a context with a 1-hour timeout for the ytdlp process
-	ytdlpCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
-	defer cancel()
+	ytdlpCtx, cancelTimeout := context.WithTimeout(ctx, 1*time.Hour)
+	defer cancelTimeout()
 
 	cmd := exec.CommandContext(ytdlpCtx, cfg.YTDLPPath, args...)
 	cmd.Env = os.Environ()

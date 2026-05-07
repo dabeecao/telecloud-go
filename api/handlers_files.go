@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"telecloud/database"
 	"telecloud/tgclient"
 	"telecloud/utils"
@@ -372,6 +373,11 @@ func (h *Handler) handlePostRemoteUpload(c *gin.Context) {
 		return
 	}
 
+	if utils.IsPrivateIP(remoteURL) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "err_forbidden_url"})
+		return
+	}
+
 	dbPath := mapPath(uPath, username, isAdmin)
 	if isAdmin && isChildAccountPath(dbPath) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
@@ -396,6 +402,78 @@ func (h *Handler) handlePostRemoteUpload(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "processing",
 		"task_id": taskID,
+	})
+}
+
+func (h *Handler) handlePostRemoteUploadCheck(c *gin.Context) {
+	remoteURL := c.PostForm("url")
+	if remoteURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url_required"})
+		return
+	}
+
+	if utils.IsPrivateIP(remoteURL) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden_url"})
+		return
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			if utils.IsPrivateIP(req.URL.String()) {
+				return fmt.Errorf("forbidden_url")
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), "HEAD", remoteURL, nil)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url"})
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		// Try GET if HEAD fails (some servers block HEAD)
+		req, _ = http.NewRequestWithContext(c.Request.Context(), "GET", remoteURL, nil)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+		req.Header.Set("Range", "bytes=0-0")
+		resp, err = client.Do(req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_connect"})
+			return
+		}
+	}
+	defer resp.Body.Close()
+
+	contentType := resp.Header.Get("Content-Type")
+	contentLength, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+
+	// Try to get filename from Content-Disposition
+	filename := ""
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		_, params, err := mime.ParseMediaType(cd)
+		if err == nil {
+			filename = params["filename"]
+		}
+	}
+
+	// Fallback to URL path
+	if filename == "" {
+		if u, err := url.Parse(remoteURL); err == nil {
+			filename = filepath.Base(u.Path)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"content_type":   contentType,
+		"content_length": contentLength,
+		"filename":       filename,
 	})
 }
 

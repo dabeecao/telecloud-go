@@ -11,7 +11,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -432,7 +431,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0, 0)
 
 	// SSRF Protection
-	if isPrivateIP(url) {
+	if utils.IsPrivateIP(url) {
 		UpdateTaskWithFile(taskID, "error", 0, "err_forbidden_url", "", owner, 0, 0)
 		return
 	}
@@ -721,35 +720,6 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	success = true
 }
 
-func isPrivateIP(urlStr string) bool {
-	u, err := url.Parse(urlStr)
-	if err != nil {
-		return true
-	}
-	hostname := u.Hostname()
-	if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" {
-		return true
-	}
-
-	// Check if the hostname is directly an IP address
-	if ip := net.ParseIP(hostname); ip != nil {
-		return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate()
-	}
-
-	ips, err := net.LookupIP(hostname)
-	if err != nil {
-		// On Termux/Android, DNS lookup might fail due to strict network configurations
-		// or missing /etc/resolv.conf. If we can't look it up, we allow it to proceed.
-		// If it's truly an invalid domain, the HTTP client will fail to connect anyway.
-		return false
-	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
-			return true
-		}
-	}
-	return false
-}
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
 func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType string, cfg *config.Config, overwrite bool, owner string) (fileID int64, finalName string, err error) {

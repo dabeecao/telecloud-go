@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"telecloud/config"
 	"telecloud/utils"
 	"time"
@@ -232,7 +231,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 
 	cmd := exec.CommandContext(ytdlpCtx, cfg.YTDLPPath, args...)
 	cmd.Env = os.Environ()
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -255,10 +254,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	// Ensure whole process group is killed on context cancellation
 	go func() {
 		<-ytdlpCtx.Done()
-		if cmd.Process != nil {
-			// Signal negative PID kills the process group
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
+		killProcessGroup(cmd)
 	}()
 
 	// Progress regex: [download]  10.0% of 100.00MiB at  1.00MiB/s ETA 01:30

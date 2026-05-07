@@ -38,7 +38,11 @@ type User struct {
 	TotalSize    int64     `json:"total_size"`
 }
 
-var DB *sqlx.DB
+var (
+	DB   *sqlx.DB // Alias to RWDB for backward compatibility
+	RWDB *sqlx.DB // Write pool (MaxOpenConns=1 for SQLite)
+	RODB *sqlx.DB // Read pool (MaxOpenConns=10 for SQLite)
+)
 var driverName = "sqlite"
 
 func InitDB(driver, dbPath, dbDSN string) error {
@@ -53,24 +57,36 @@ func InitDB(driver, dbPath, dbDSN string) error {
 	case "sqlite":
 		// Add PRAGMA settings to improve concurrency and prevent SQLITE_BUSY errors.
 		dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", dbPath)
-		DB, err = sqlx.Connect("sqlite", dsn)
+
+		// Initialize Write Pool (MaxOpenConns=1)
+		RWDB, err = sqlx.Connect("sqlite", dsn)
+		if err != nil {
+			return fmt.Errorf("failed to connect to write database: %v", err)
+		}
+		RWDB.SetMaxOpenConns(1)
+
+		// Initialize Read Pool (MaxOpenConns=10)
+		RODB, err = sqlx.Connect("sqlite", dsn)
+		if err != nil {
+			return fmt.Errorf("failed to connect to read database: %v", err)
+		}
+		RODB.SetMaxOpenConns(10)
+
+		DB = RWDB // Alias for existing code
 		schema = sqliteSchema
 	case "mysql":
 		if dbDSN == "" {
 			return fmt.Errorf("DATABASE_DSN must be set when DATABASE_DRIVER=mysql")
 		}
 		DB, err = sqlx.Connect("mysql", normalizeMySQLDSN(dbDSN))
+		if err != nil {
+			return err
+		}
+		RWDB = DB
+		RODB = DB
 		schema = mysqlSchema
 	default:
 		return fmt.Errorf("unsupported DATABASE_DRIVER %q (supported: sqlite, mysql)", driver)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to connect to %s database: %v", driverName, err)
-	}
-
-	if driverName == "sqlite" {
-		// SQLite requires writes to be serialized.
-		DB.SetMaxOpenConns(1)
 	}
 
 	if err := execSchema(schema); err != nil {
@@ -523,7 +539,7 @@ type FilePart struct {
 
 func GetFileParts(fileID int) ([]FilePart, error) {
 	var parts []FilePart
-	err := DB.Select(&parts, "SELECT * FROM file_parts WHERE file_id = ? ORDER BY part_index ASC", fileID)
+	err := RODB.Select(&parts, "SELECT * FROM file_parts WHERE file_id = ? ORDER BY part_index ASC", fileID)
 	return parts, err
 }
 
@@ -533,7 +549,7 @@ func GetSetting(key string) string {
 	if !IsMySQL() {
 		query = "SELECT value FROM settings WHERE key = ?"
 	}
-	err := DB.Get(&value, query, key)
+	err := RODB.Get(&value, query, key)
 	if err != nil {
 		return ""
 	}
@@ -551,7 +567,7 @@ func SetSetting(key string, value string) error {
 
 func GetTGSession(sessionID string) ([]byte, error) {
 	var data []byte
-	err := DB.Get(&data, "SELECT data FROM tg_sessions WHERE session_id = ?", sessionID)
+	err := RODB.Get(&data, "SELECT data FROM tg_sessions WHERE session_id = ?", sessionID)
 	return data, err
 }
 
@@ -579,7 +595,7 @@ func GetUserSetting(username string, key string) string {
 	if !IsMySQL() {
 		query = "SELECT value FROM user_settings WHERE username = ? AND key = ?"
 	}
-	err := DB.Get(&value, query, username, key)
+	err := RODB.Get(&value, query, username, key)
 	if err != nil {
 		return ""
 	}

@@ -283,6 +283,7 @@ Loop:
 
 	// Step 2: Cancel app context → signals Telegram client goroutine to exit
 	cancelApp()
+	tgclient.StopClient()
 
 	// Step 3: Wait for Telegram client to finish (with timeout)
 	select {

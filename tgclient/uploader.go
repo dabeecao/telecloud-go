@@ -261,7 +261,11 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			uniqueFilename, path, fileSize, mimeType, owner,
 		)
 		if dbErr == nil {
-			fileID, _ = res.LastInsertId()
+			fileID, err = res.LastInsertId()
+			if err != nil {
+				dbErr = err
+				continue
+			}
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
@@ -337,7 +341,9 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			log.Printf("[Upload] Task %s part %d attempt %d failed: %v", taskID, i+1, attempt, uploadErr)
 			
 			// Reset section reader for retry
-			_, _ = sectionReader.Seek(0, io.SeekStart)
+			if _, err := sectionReader.Seek(0, io.SeekStart); err != nil {
+				log.Printf("[Upload] Failed to seek section reader: %v", err)
+			}
 		}
 
 		if uploadErr != nil {
@@ -580,7 +586,11 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 			uniqueFilename, path, size, mimeType, owner,
 		)
 		if dbErr == nil {
-			fileID, _ = res.LastInsertId()
+			fileID, err = res.LastInsertId()
+			if err != nil {
+				dbErr = err
+				continue
+			}
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
@@ -783,7 +793,11 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 			uniqueFilename, path, fileSize, mimeType, owner,
 		)
 		if dbErr == nil {
-			fileID, _ = res.LastInsertId()
+			fileID, err = res.LastInsertId()
+			if err != nil {
+				dbErr = err
+				continue
+			}
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)

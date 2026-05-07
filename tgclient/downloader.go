@@ -128,8 +128,17 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, file database.Fil
 	// Set Content-Type if not already set
 	if w.Header().Get("Content-Type") == "" && file.MimeType != nil {
 		mime := *file.MimeType
+		// Fallback for common types if stored as octet-stream
+		lowerName := strings.ToLower(file.Filename)
+		if mime == "application/octet-stream" {
+			if strings.HasSuffix(lowerName, ".pdf") {
+				mime = "application/pdf"
+			} else if strings.HasSuffix(lowerName, ".epub") {
+				mime = "application/epub+zip"
+			}
+		}
 		// Special handling for MKV to ensure browser compatibility
-		if strings.HasSuffix(strings.ToLower(file.Filename), ".mkv") {
+		if strings.HasSuffix(lowerName, ".mkv") {
 			mime = "video/webm"
 		}
 		w.Header().Set("Content-Type", mime)
@@ -145,7 +154,7 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, file database.Fil
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"; filename*=UTF-8''%s`, safeName, encodedName))
 	}
 
-	http.ServeContent(w, c, file.Filename, time.Time{}, reader)
+	http.ServeContent(w, c, file.Filename, file.CreatedAt, reader)
 	return nil
 }
 

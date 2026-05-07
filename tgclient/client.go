@@ -350,11 +350,9 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 			close(mainStarted)
 			return cb(ctx)
 		})
-		if err != nil && err != context.Canceled {
-			errCh <- err
-		}
+		errCh <- err
 	}()
-
+ 
 	// Wait for main client to be ready or fail
 	select {
 	case <-mainStarted:
@@ -366,8 +364,13 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 		atomic.StoreInt32(&mainAuthorized, 0)
 		return ctx.Err()
 	}
-
-	return <-errCh
+ 
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {

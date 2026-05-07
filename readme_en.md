@@ -172,7 +172,7 @@ Main fields in `.env`:
 
 * Create a Telegram group and add your Userbot (or just create a private group with yourself)
 * Make sure chat history is enabled in group settings
-* Add bot [@get_all_tetegram_id_bot](https://t.me/get_all_telegram_id_bot) to the group and run `/getid`
+* Add bot [@get_all_telegram_id_bot](https://t.me/get_all_telegram_id_bot) to the group and run `/getid`
 
 Example response:
 

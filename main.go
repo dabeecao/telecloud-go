@@ -216,6 +216,7 @@ func main() {
 					log.Printf("Warning: Log Group verification failed: %v", err)
 				}
 				printStartupBox(newCfg)
+				log.Println("Starting TeleCloud on port " + newCfg.Port + "...")
 				<-ctx.Done()
 				return nil
 			})
@@ -233,11 +234,11 @@ func main() {
 	if cfg.APIID == 0 || cfg.APIHash == "" || adminUser == "" {
 		setupURL := fmt.Sprintf("http://YOUR_IP_OR_DOMAIN:%s/setup", cfg.Port)
 		log.Printf("Setup is incomplete. Starting in Setup Mode. Please visit: %s", setupURL)
+		log.Println("Starting TeleCloud on port " + cfg.Port + "...")
 	} else {
 		startTG(cfg)
 	}
 
-	log.Println("Starting TeleCloud on port " + cfg.Port + "...")
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
@@ -256,6 +257,7 @@ Loop:
 			if err != nil {
 				if strings.Contains(err.Error(), "AUTH_REQUIRED") {
 					log.Printf("Telegram session not authorized. App will remain in Maintenance Mode.")
+					log.Println("Starting TeleCloud on port " + cfg.Port + "...")
 					continue
 				}
 				log.Printf("Telegram client exited with error: %v", err)

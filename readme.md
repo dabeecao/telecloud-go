@@ -159,7 +159,7 @@ Nội dung chính trong tệp `.env`:
 #### 📡 Lấy LOG_GROUP_ID
 
 * Tạo nhóm Telegram rồi thêm Userbot vào hoặc nếu dùng chính tài khoản đó của bạn thì chỉ cần đơn giản tạo nhóm có một mình bạn. Bạn nhớ trong cài đặt nhóm phải đặt hiện lịch sử tin nhắn
-* Mở bot [@get_all_tetegram_id_bot](https://t.me/get_all_telegram_id_bot) và thêm vào nhóm, sau khi thêm bot ở nhóm hãy gõ ```/getid```
+* Mở bot [@get_all_telegram_id_bot](https://t.me/get_all_telegram_id_bot) và thêm vào nhóm, sau khi thêm bot ở nhóm hãy gõ ```/getid```
 
 * Bot sẽ phản hồi dạng:
 ```

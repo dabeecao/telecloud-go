@@ -392,50 +392,40 @@ func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("could not send test message to log group: %w", err)
 	}
 
-	// Verify all bots in the pool ONLY if they have been initialized and SkipBotPool is false
+	// Verify all bots in the pool ONLY if SkipBotPool is false
 	if !SkipBotPool {
 		botPoolMu.Lock()
-		var wgBots sync.WaitGroup
-		activeBotsChan := make(chan BotInstance, len(BotPool))
-
-		for i := range BotPool {
-			if BotPool[i].Deleted {
+		var activeBots []BotInstance
+		for i, bot := range BotPool {
+			if bot.Deleted {
 				continue
 			}
-			wgBots.Add(1)
-			go func(idx int) {
-				defer wgBots.Done()
-				bot := BotPool[idx]
-				api := bot.Client.API()
-				// Try to resolve group for this bot
-				botPeer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
-				if err != nil {
-					errMsg := err.Error()
-					if strings.Contains(errMsg, "PEER_ID_INVALID") || strings.Contains(errMsg, "CHANNEL_INVALID") {
-						errMsg = "Bot is not a member of the Log Group or ID is invalid"
-					}
-					log.Printf("Warning: Bot #%d: resolution failed: %v. Removing from pool.", idx+1, errMsg)
-					return
+
+			api := bot.Client.API()
+			// Try to resolve group for this bot
+			botPeer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
+			if err != nil {
+				errMsg := err.Error()
+				if strings.Contains(errMsg, "PEER_ID_INVALID") || strings.Contains(errMsg, "CHANNEL_INVALID") {
+					errMsg = "Bot is not a member of the Log Group or ID is invalid"
 				}
+				log.Printf("Warning: Bot #%d: resolution failed: %v. Removing from pool.", i+1, errMsg)
+				continue
+			}
 
-				// Try to send a message
-				botSender := message.NewSender(api)
-				_, err = botSender.To(botPeer).Text(ctx, fmt.Sprintf("🤖 Bot #%d (%s) is online and reporting for duty!", idx+1, bot.Token[:8]+"..."))
-				if err != nil {
-					log.Printf("Warning: Bot #%d: connectivity check failed: %v. Removing from pool.", idx+1, err)
-					return
-				}
-				activeBotsChan <- bot
-			}(i)
-		}
+			// Try to send a message
+			botSender := message.NewSender(api)
+			_, err = botSender.To(botPeer).Text(ctx, fmt.Sprintf("🤖 Bot #%d (%s) is online and reporting for duty!", i+1, bot.Token[:8]+"..."))
+			if err != nil {
+				log.Printf("Warning: Bot #%d: connectivity check failed: %v. Removing from pool.", i+1, err)
+				continue
+			}
 
-		wgBots.Wait()
-		close(activeBotsChan)
-
-		var activeBots []BotInstance
-		for bot := range activeBotsChan {
 			activeBots = append(activeBots, bot)
+			// Small delay between bots to be safe and avoid flooding
+			time.Sleep(100 * time.Millisecond)
 		}
+
 		BotPool = activeBots
 		botPoolMu.Unlock()
 		log.Printf("Log Group connectivity verified. Active Bots: %d", len(activeBots))

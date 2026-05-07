@@ -486,7 +486,6 @@ func (h *Handler) handleGetTasks(c *gin.Context) {
 
 func (h *Handler) handleCancelUpload(c *gin.Context) {
 	taskID := c.PostForm("task_id")
-	filename := c.PostForm("filename")
 	username := c.GetString("username")
 
 	if taskID != "" {
@@ -496,19 +495,27 @@ func (h *Handler) handleCancelUpload(c *gin.Context) {
 		}
 	}
 
-	if taskID != "" && filename != "" {
+	if taskID != "" {
 		if taskID == "" || strings.Contains(taskID, "..") || strings.ContainsAny(taskID, "/\\") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_task_id"})
 			return
 		}
-		safeFilename := filepath.Base(filename)
-		tempFilePath := filepath.Join(h.cfg.TempDir, taskID+"_"+safeFilename)
-		rel, err := filepath.Rel(h.cfg.TempDir, tempFilePath)
-		if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_path"})
-			return
+
+		// Cleanup files starting with taskID_ or ytdlp_taskID_
+		patterns := []string{
+			filepath.Join(h.cfg.TempDir, taskID+"_*"),
+			filepath.Join(h.cfg.TempDir, "ytdlp_"+taskID+"_*"),
 		}
-		os.Remove(tempFilePath)
+
+		for _, pattern := range patterns {
+			matches, err := filepath.Glob(pattern)
+			if err == nil {
+				for _, m := range matches {
+					os.Remove(m)
+				}
+			}
+		}
+
 		chunkTrackerSync.Delete(taskID)
 		database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskID)
 		database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskID)

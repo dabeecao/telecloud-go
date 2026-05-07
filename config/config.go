@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,7 +24,6 @@ type Config struct {
 	TempDir          string
 	ProxyURL         string
 	Version          string
-	SessionFile      string
 	FFMPEGPath       string
 	YTDLPPath        string
 	WebAuthnRPID     string
@@ -46,10 +44,6 @@ func Load() (*Config, error) {
 
 	apiID, _ := strconv.Atoi(os.Getenv("API_ID"))
 	apiHash := os.Getenv("API_HASH")
-
-	if apiID == 0 || apiHash == "" {
-		return nil, fmt.Errorf("Error: API_ID and API_HASH must be set in .env. Please get them from https://my.telegram.org")
-	}
 
 	uploadThreads, _ := strconv.Atoi(getEnv("TG_UPLOAD_THREADS", "2"))
 	if uploadThreads <= 0 {
@@ -95,7 +89,6 @@ func Load() (*Config, error) {
 		Port:             getEnv("PORT", "8091"),
 		TempDir:          getEnv("TEMP_DIR", filepath.Join(os.TempDir(), "telecloud_temp_chunks")),
 		ProxyURL:         getEnv("PROXY_URL", ""),
-		SessionFile:      getEnv("SESSION_FILE", "session.json"),
 		FFMPEGPath:       ffmpegPath,
 		YTDLPPath:        ytdlpPath,
 		WebAuthnRPID:     getEnv("WEBAUTHN_RPID", "localhost"),
@@ -159,3 +152,19 @@ func checkFileExecutable(path string) bool {
 	// Check if it's a regular file and has any executable bit set (0111 is --x--x--x)
 	return !info.IsDir() && (info.Mode().Perm()&0111 != 0)
 }
+
+func (c *Config) LoadFromDB(getSettingFunc func(key string) string) {
+	if c.APIID == 0 {
+		apiIDStr := getSettingFunc("api_id")
+		if apiIDStr != "" {
+			c.APIID, _ = strconv.Atoi(apiIDStr)
+		}
+	}
+	if c.APIHash == "" {
+		c.APIHash = getSettingFunc("api_hash")
+	}
+	if c.LogGroupID == "" {
+		c.LogGroupID = getSettingFunc("log_group_id")
+	}
+}
+

@@ -135,8 +135,8 @@ cp env.example .env
 
 Main fields in `.env`:
 
-* `API_ID` & `API_HASH`: Get from [https://my.telegram.org](https://my.telegram.org)
-* `LOG_GROUP_ID`: ID of the group/channel storing files or use `me` for Saved Messages
+* `API_ID` & `API_HASH`: (Optional) Get from [https://my.telegram.org](https://my.telegram.org). If left empty, you can configure them via the Web Setup wizard.
+* `LOG_GROUP_ID`: (Optional) ID of the group/channel storing files or use `me`. If left empty, you can configure it via the Web Setup wizard.
 * `PORT`: Port to run the application
 * `TG_UPLOAD_THREADS`: (Optional) Number of concurrent upload threads per file part. Default is `2`. Increase to `4` for maximum speed.
 * `BOT_TOKENS`: (Optional) A comma-separated list of secondary Bot tokens (e.g. `token1,token2`). These bots will help share the workload with your main account, significantly increasing download/upload performance.
@@ -150,6 +150,7 @@ Main fields in `.env`:
 * `FFMPEG_PATH`: (Optional) Path to FFmpeg (default: `ffmpeg`). Set to "disabled" to skip video/audio thumbnails if FFmpeg is not installed or causing crashes.
 * `YTDLP_PATH`: (Optional) Path to yt-dlp (default: `yt-dlp`). Set to "disabled" to skip URL media downloading if yt-dlp is not installed.
 
+* **Note on Priority**: If you provide values for `API_ID`, `API_HASH`, or `LOG_GROUP_ID` in the `.env` file, the system will **prioritize** these values and ignore any configuration stored in the database. If they are left empty in `.env`, the system will prompt you to set them up via the Web Setup wizard on the first run.
 * **Note on Themes**: The application supports multiple UI themes (Neon, Cyberpunk, Lavender, Forest) and a System theme mode. These are configured directly in the Web UI Settings after logging in, and do not require any environment variables.
 
 ---
@@ -192,34 +193,34 @@ Use the **Chat ID** as your `LOG_GROUP_ID`, typically in this format:
 
 ---
 
-### 4. Login & Run
+### 4. Startup & Setup (Web Setup)
 
-Open terminal in the binary directory:
-
-**Step A: Authenticate (first time only)**
+Open terminal in the binary directory and run:
 
 ```bash
 # Linux/macOS
-./telecloud -auth
+./telecloud
 
 # Windows
-telecloud.exe -auth
+telecloud.exe
 ```
 
-Enter your phone number, OTP, and 2FA password (if any).
+1.  Access the web interface at: `http://localhost:8091/setup` (or your server IP).
+2.  The **Web Setup Wizard** will appear to guide you step-by-step:
+    *   Configure Telegram API (if not provided in `.env`).
+    *   Log in to Telegram (Scan QR code or receive OTP via phone number).
+    *   Set up the Storage Group (Log Group).
+    *   Create an Admin account.
+3.  Once completed, the system will automatically restart, and you can log in to the Dashboard.
 
----
+> [!TIP]
+> **WebDAV** is available at: `http://localhost:8091/webdav` after setup is complete.
 
-**Step B: Start the server**
+#### 🛠️ Additional Commands (Optional)
 
-```bash
-./telecloud
-```
-
-Access the web interface at: `http://localhost:8091`
-- **On first access**, the system will prompt you to create an admin account and password.
-- Other configurations like changing password and configuring **WebDAV** can be done directly in the **Settings** section of the web interface after logging in.
-WebDAV at: `http://localhost:8091/webdav`
+If you need to reset the password or log in manually via terminal:
+- **Reset Password**: `./telecloud -resetpass`
+- **Manual Authentication (Legacy)**: `./telecloud -auth` (Not recommended, use Web Setup instead).
 
 ---
 
@@ -322,21 +323,10 @@ mv env.example .env
 # Edit .env and fill in API_ID, API_HASH, LOG_GROUP_ID
 ```
 
-3. Authenticate (first time only):
+3. Run:
 ```bash
 mkdir -p data
 sudo chmod 777 data
-sudo docker run --rm -it \
-    -v "$(pwd)/data:/app/data" \
-    --env-file .env \
-    -e DATABASE_PATH=/app/data/database.db \
-    -e SESSION_FILE=/app/data/session.json \
-    --user 65532:65532 \
-    ghcr.io/dabeecao/telecloud-go -auth
-```
-
-4. Run:
-```bash
 sudo docker run -d \
     --name telecloud \
     --restart unless-stopped \
@@ -346,12 +336,11 @@ sudo docker run -d \
     -e DATABASE_PATH=/app/data/database.db \
     -e THUMBS_DIR=/app/data/thumbs \
     -e TEMP_DIR=/app/data/temp \
-    -e SESSION_FILE=/app/data/session.json \
     --user 65532:65532 \
     ghcr.io/dabeecao/telecloud-go
 ```
 
-Access the web interface at: `http://localhost:8091`
+4. Access the web interface at: `http://localhost:8091/setup` to complete the setup (API, Telegram Login, Admin).
 
 **On first visit**, the system will prompt you to create an admin account and password.
 
@@ -388,21 +377,13 @@ PORT=8091
 
 > The `DATABASE_PATH`, `THUMBS_DIR`, and `TEMP_DIR` variables are automatically overridden by docker-compose to point inside the `./data/` volume — you **do not need** to set them when using Docker.
 
-#### 3. Authenticate your Telegram account (First time only)
-
-```bash
-sudo docker compose run --rm -it telecloud -auth
-```
-
-Enter your phone number, OTP, and 2FA password (if any). The `session.json` file will be saved in `./data/`.
-
-#### 4. Start the server
-
+#### 3. Start the server
 ```bash
 sudo docker compose up -d
 ```
 
-Access the web interface at: `http://localhost:8091`
+#### 4. Setup (Web Setup)
+Access the web interface at: `http://localhost:8091/setup` to complete Telegram configuration and create an Admin account.
 
 **On first visit**, the system will prompt you to create an admin account and password.
 
@@ -457,21 +438,10 @@ cp env.example .env
 # Edit .env and fill in API_ID, API_HASH, LOG_GROUP_ID
 ```
 
-4. Authenticate (first time only):
+4. Run your locally built image:
 ```bash
 mkdir -p data
 sudo chmod 777 data
-sudo docker run --rm -it \
-    -v "$(pwd)/data:/app/data" \
-    --env-file .env \
-    -e DATABASE_PATH=/app/data/database.db \
-    -e SESSION_FILE=/app/data/session.json \
-    --user 65532:65532 \
-    telecloud:local -auth
-```
-
-5. Run your locally built image:
-```bash
 sudo docker run -d \
     --name telecloud \
     --restart unless-stopped \
@@ -481,10 +451,11 @@ sudo docker run -d \
     -e DATABASE_PATH=/app/data/database.db \
     -e THUMBS_DIR=/app/data/thumbs \
     -e TEMP_DIR=/app/data/temp \
-    -e SESSION_FILE=/app/data/session.json \
     --user 65532:65532 \
     telecloud:local
 ```
+
+5. Access `http://localhost:8091/setup` to set up.
 
 Access the web interface at: `http://localhost:8091`
 

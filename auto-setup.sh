@@ -216,10 +216,23 @@ install_dependencies() {
         read -p "[?] Bạn có muốn cài đặt yt-dlp không? (y/n): " install_ytdlp
         if [ "$install_ytdlp" == "y" ]; then
             pkg_install "python3" "python3"
-            if ! pkg_install "yt-dlp"; then
-                echo "[+] Cài đặt yt-dlp qua package manager thất bại, đang tải binary trực tiếp..."
-                download_file "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$BIN_DIR/yt-dlp"
-                chmod +x "$BIN_DIR/yt-dlp"
+            # Thử cài đặt pip nếu chưa có
+            if ! command -v pip3 &>/dev/null && ! python3 -m pip --version &>/dev/null; then
+                echo "[+] Đang cài đặt pip..."
+                pkg_install "python3-pip" "pip3" || pkg_install "python-pip" "pip3"
+            fi
+            
+            echo "[+] Đang cài đặt/cập nhật yt-dlp qua pip để có bản mới nhất..."
+            # Sử dụng --break-system-packages cho các distro Linux mới (Debian 12+, Ubuntu 23+)
+            if python3 -m pip install -U yt-dlp --break-system-packages 2>/dev/null; then
+                echo "[✓] yt-dlp đã được cài đặt qua pip."
+            else
+                # Fallback nếu không hỗ trợ --break-system-packages hoặc pip cũ
+                python3 -m pip install -U yt-dlp || {
+                    echo "[+] Cài đặt qua pip thất bại, đang tải binary trực tiếp..."
+                    download_file "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$BIN_DIR/yt-dlp"
+                    chmod +x "$BIN_DIR/yt-dlp"
+                }
             fi
         fi
 
@@ -255,11 +268,18 @@ install_dependencies() {
         MAIN_PACKAGES="wget curl tar unzip tmux jq nano python"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
-        [ "$install_ytdlp" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES yt-dlp"
 
         for pkg in $MAIN_PACKAGES; do
             pkg_install "$pkg"
         done
+
+        if [ "$install_ytdlp" == "y" ]; then
+            echo "[+] Đang cài đặt/cập nhật yt-dlp qua pip..."
+            python3 -m pip install -U yt-dlp 2>/dev/null || python -m pip install -U yt-dlp || {
+                echo "[!] Không thể cài qua pip, đang thử cài qua package manager..."
+                pkg_install "yt-dlp"
+            }
+        fi
     fi
 }
 
@@ -320,26 +340,10 @@ create_env() {
     if [ ! -f "$BASE_DIR/.env" ]; then
         echo "[+] Thiết lập cấu hình .env..."
 
-        API_ID=""
-        while [ -z "$API_ID" ]; do
-            read -p "Nhập API_ID (Bắt buộc): " API_ID
-        done
-
-        API_HASH=""
-        while [ -z "$API_HASH" ]; do
-            read -p "Nhập API_HASH (Bắt buộc): " API_HASH
-        done
-
         read -p "Cổng PORT [Mặc định 8091]: " PORT
         PORT=${PORT:-8091}
 
-        read -p "LOG_GROUP_ID [Mặc định me]: " LOG_GROUP_ID
-        LOG_GROUP_ID=${LOG_GROUP_ID:-me}
-
         cat > "$BASE_DIR/.env" <<EOF
-API_ID=$API_ID
-API_HASH=$API_HASH
-LOG_GROUP_ID=$LOG_GROUP_ID
 PORT=$PORT
 EOF
         
@@ -587,11 +591,6 @@ check_status() {
 }
 
 start_app() {
-    if [ ! -f "$BASE_DIR/session.json" ]; then
-        echo "❌ LỖI: Bạn chưa đăng nhập Telegram!"
-        echo "Vui lòng chọn Mục 8: 'Các lệnh của Telecloud' -> 'Đăng nhập lần đầu' trước."
-        return 1
-    fi
 
     echo "[+] Đang khởi động ứng dụng..."
     if [ "$OS_TYPE" == "linux" ]; then
@@ -609,6 +608,10 @@ start_app() {
                 if journalctl -u telecloud.service -n 50 | grep -q "TeleCloud shut down"; then
                     success=2; break
                 fi
+                # Kiểm tra nếu service đã chết (failed/inactive)
+                if ! systemctl is-active --quiet telecloud; then
+                    success=3; break
+                fi
                 sleep 1
                 timeout=$((timeout - 1))
             done
@@ -617,6 +620,9 @@ start_app() {
                 echo "✅ TeleCloud đã khởi động thành công!"
             elif [ $success -eq 2 ]; then
                 echo "❌ LỖI: TeleCloud đã tự đóng (shut down). Vui lòng kiểm tra log (Mục 6)."
+                return 1
+            elif [ $success -eq 3 ]; then
+                echo "❌ LỖI: TeleCloud không thể duy trì trạng thái hoạt động. Vui lòng kiểm tra log (Mục 6)."
                 return 1
             else
                 echo "⚠️  CẢNH BÁO: Quá thời gian chờ (30s) nhưng chưa xác nhận được trạng thái."
@@ -651,6 +657,10 @@ start_app() {
             if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
                 success=2; break
             fi
+            # Kiểm tra nếu tiến trình không còn tồn tại
+            if ! pgrep -f "\./telecloud" > /dev/null; then
+                success=3; break
+            fi
             sleep 1
             timeout=$((timeout - 1))
         done
@@ -659,6 +669,9 @@ start_app() {
             echo "✅ TeleCloud đã khởi động thành công!"
         elif [ $success -eq 2 ]; then
             echo "❌ LỖI: TeleCloud đã tự đóng (shut down). Vui lòng kiểm tra log (Mục 6)."
+            return 1
+        elif [ $success -eq 3 ]; then
+            echo "❌ LỖI: Tiến trình TeleCloud đã thoát đột ngột. Vui lòng kiểm tra log (Mục 6)."
             return 1
         else
             echo "⚠️  CẢNH BÁO: Quá thời gian chờ (30s) nhưng chưa xác nhận được trạng thái."
@@ -847,12 +860,12 @@ backup_data() {
     echo "[+] Đang tạm dừng ứng dụng để đảm bảo an toàn dữ liệu..."
     stop_app
     echo "[+] Đang tạo bản sao lưu..."
-    (cd "$BASE_DIR" && tar -czf "$HOME/telecloud_backups/$BK_NAME" session.json database.db* .env 2>/dev/null)
+    (cd "$BASE_DIR" && tar -czf "$HOME/telecloud_backups/$BK_NAME" database.db* .env 2>/dev/null)
     
     if [ $? -eq 0 ]; then
         echo "✅ Đã sao lưu thành công tại: $HOME/telecloud_backups/$BK_NAME"
     else
-        echo "❌ Lỗi: Có thể một số tệp (session.json, database.db) chưa tồn tại."
+        echo "❌ Lỗi: Có thể một số tệp (database.db) chưa tồn tại."
     fi
     start_app
 }
@@ -982,22 +995,17 @@ telecloud_commands() {
     echo "=========================================="
     echo "          CÁC LỆNH CỦA TELECLOUD          "
     echo "=========================================="
-    echo "1. Đăng nhập lần đầu (-auth)"
-    echo "2. Reset mật khẩu (-resetpass)"
-    echo "3. Cập nhật chính Script này (Setup Script)"
-    echo "4. Quay lại Menu chính"
-    read -p "Chọn lệnh (1-4): " cmd_choice
+    echo "1. Reset mật khẩu (-resetpass)"
+    echo "2. Cập nhật chính Script này (Setup Script)"
+    echo "3. Quay lại Menu chính"
+    read -p "Chọn lệnh (1-3): " cmd_choice
     
     case $cmd_choice in
         1)
-            echo "[+] Đang mở giao diện đăng nhập..."
-            cd "$BASE_DIR" && ./telecloud -auth
-            ;;
-        2)
             echo "[+] Đang tiến hành reset mật khẩu..."
             cd "$BASE_DIR" && ./telecloud -resetpass
             ;;
-        3)
+        2)
             update_setup_script
             ;;
         *) return ;;
@@ -1061,7 +1069,7 @@ while true; do
     echo "  5. Quản lý kết nối (Cloudflare Tunnel)"
     echo "  6. Xem Log (Nhật ký hệ thống)"
     echo "  7. Sửa cấu hình (.env)"
-    echo "  8. Các lệnh của Telecloud (Auth / Reset Pass)"
+    echo "  8. Các lệnh của Telecloud (Reset Pass / Setup)"
     echo "  9. Kiểm tra Cập nhật (Update)"
     echo "  10. Quản lý Sao lưu (Backup)"
     echo "  11. Gỡ cài đặt ứng dụng"
@@ -1137,7 +1145,15 @@ if [ ! -f "$BASE_DIR/telecloud" ]; then
     echo "Gõ lệnh sau để mở Menu Quản lý:"
     echo "   telecloud"
     echo ""
-    echo "Trong Menu, hãy chọn Mục 8: 'Các lệnh của Telecloud' -> 'Đăng nhập lần đầu' để thiết lập nhé!"
+    local PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
+    PORT=${PORT:-8091}
+    echo "Ứng dụng sẽ tự động chạy ở chế độ Thiết lập (Setup Mode)."
+    echo "Vui lòng truy cập địa chỉ sau để hoàn tất cài đặt:"
+    if [ -f "$BASE_DIR/domain.txt" ]; then
+        echo "   https://$(cat $BASE_DIR/domain.txt)/setup"
+    else
+        echo "   http://IP_HOAC_TEN_MIEN:$PORT/setup"
+    fi
     echo "============================================="
     exit 0
 fi

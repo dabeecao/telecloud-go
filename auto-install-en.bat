@@ -26,23 +26,21 @@ echo       TeleCloud Management Menu (Windows)
 echo ==========================================
 echo 1. Install / Update TeleCloud
 echo 2. Manage Cloudflare Tunnel
-echo 3. Authenticate with Telegram (First Time)
-echo 4. Start TeleCloud (Background)
-echo 5. Stop TeleCloud
-echo 6. View Logs
-echo 7. Edit .env
-echo 8. Exit
+echo 3. Start TeleCloud (Background)
+echo 4. Stop TeleCloud
+echo 5. View Logs
+echo 6. Edit .env
+echo 7. Exit
 echo ==========================================
-set /p choice="Select an option (1-8): "
+set /p choice="Select an option (1-7): "
 
 if "%choice%"=="1" goto INSTALL
 if "%choice%"=="2" goto CLOUDFLARED_SETUP
-if "%choice%"=="3" goto AUTH
-if "%choice%"=="4" goto START_APP
-if "%choice%"=="5" goto STOP_APP
-if "%choice%"=="6" goto VIEW_LOGS
-if "%choice%"=="7" goto EDIT_ENV
-if "%choice%"=="8" exit /b
+if "%choice%"=="3" goto START_APP
+if "%choice%"=="4" goto STOP_APP
+if "%choice%"=="5" goto VIEW_LOGS
+if "%choice%"=="6" goto EDIT_ENV
+if "%choice%"=="7" exit /b
 goto MENU
 
 :INSTALL
@@ -147,14 +145,13 @@ if not exist ".env" (
         powershell -Command "(Get-Content .env) -replace '^#?YTDLP_PATH=.*', 'YTDLP_PATH=yt-dlp' | Set-Content .env"
     )
 
-    echo [!] Please edit .env with your credentials!
+    echo [v] Installation complete!
+    echo.
+    echo [!] The application will run in Setup Mode.
+    echo [!] Please start TeleCloud (Option 3) then visit:
+    echo     http://YOUR_IP_OR_DOMAIN:8091/setup
     pause
-    notepad .env
-)
-
-echo [v] Installation/Update complete!
-pause
-goto MENU
+    goto MENU
 
 :CLOUDFLARED_SETUP
 cls
@@ -352,16 +349,6 @@ if !errorlevel! equ 0 (
 pause
 goto CLOUDFLARED_SETUP
 
-:AUTH
-echo [+] Starting authentication flow...
-if not exist "%BIN_NAME%" (
-    echo [!] %BIN_NAME% not found. Please install first.
-    pause
-    goto MENU
-)
-"%BIN_NAME%" -auth
-pause
-goto MENU
 
 :START_APP
 echo [+] Starting TeleCloud in background...
@@ -389,6 +376,13 @@ if !errorlevel! equ 0 (
 findstr /C:"TeleCloud shut down" app.log >nul
 if !errorlevel! equ 0 (
     echo [!] TeleCloud failed to start. Please check app.log for details.
+    pause
+    goto MENU
+)
+:: Check if the process still exists
+tasklist /FI "IMAGENAME eq %BIN_NAME%" /NH | find /I "%BIN_NAME%" >nul
+if !errorlevel! neq 0 (
+    echo [!] ERROR: TeleCloud process (%BIN_NAME%) exited unexpectedly. Please check app.log.
     pause
     goto MENU
 )

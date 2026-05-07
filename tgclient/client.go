@@ -29,13 +29,47 @@ import (
 )
 
 var (
-	Client *telegram.Client
+	Client  *telegram.Client
+	BotPool []BotInstance
 
-	BotPool        []BotInstance
-	botCounter     uint32
-	botPeers       sync.Map // Map of bot index to resolved peer
-	botPoolMu      sync.RWMutex
+	tgCtx    context.Context
+	tgCancel context.CancelFunc
+
+	SkipBotPool bool
+
+	botCounter uint32
+	botPeers   sync.Map // Map of bot index to resolved peer
+	botPoolMu  sync.RWMutex
+
+	mainAuthorized int32
+	mainRunning    int32
+	systemReady    int32
+
+	Dispatcher = tg.NewUpdateDispatcher()
+	tgMu       sync.Mutex
 )
+
+func IsAuthorized() bool {
+	return atomic.LoadInt32(&mainAuthorized) == 1
+}
+
+func IsRunning() bool {
+	return atomic.LoadInt32(&mainRunning) == 1
+}
+
+func IsSystemReady() bool {
+	return atomic.LoadInt32(&systemReady) == 1
+}
+
+func GetAuthStatus(ctx context.Context) (*auth.Status, error) {
+	tgMu.Lock()
+	c := Client
+	tgMu.Unlock()
+	if c == nil {
+		return nil, fmt.Errorf("client not initialized")
+	}
+	return c.Auth().Status(ctx)
+}
 
 type BotInstance struct {
 	Client  *telegram.Client
@@ -122,50 +156,41 @@ func (s *DBSessionStorage) StoreSession(ctx context.Context, data []byte) error 
 	return database.SetTGSession(s.SessionID, data)
 }
 
-type HybridSessionStorage struct {
-	SessionID string
-	FilePath  string
+
+func StopClient() {
+	tgMu.Lock()
+	defer tgMu.Unlock()
+	stopClientUnlocked()
 }
 
-func (s *HybridSessionStorage) LoadSession(ctx context.Context) ([]byte, error) {
-	// 1. Try DB first
-	data, err := database.GetTGSession(s.SessionID)
-	if err == nil && len(data) > 0 {
-		return data, nil
+func stopClientUnlocked() {
+	if tgCancel != nil {
+		log.Println("Stopping existing Telegram client...")
+		tgCancel()
+		tgCancel = nil
 	}
-
-	// 2. Fallback to file
-	fileStorage := &session.FileStorage{Path: s.FilePath}
-	data, err = fileStorage.LoadSession(ctx)
-	if err == nil {
-		// Update DB with file session
-		_ = database.SetTGSession(s.SessionID, data)
-		return data, nil
-	}
-
-	return nil, session.ErrNotFound
-}
-
-func (s *HybridSessionStorage) StoreSession(ctx context.Context, data []byte) error {
-	// Store in both
-	_ = database.SetTGSession(s.SessionID, data)
-	fileStorage := &session.FileStorage{Path: s.FilePath}
-	return fileStorage.StoreSession(ctx, data)
 }
 
 func InitClient(cfg *config.Config, runAuthFlow bool) error {
-	sessionDir := cfg.SessionFile
+	tgMu.Lock()
+	defer tgMu.Unlock()
+
+	stopClientUnlocked() // Stop previous client if running
+	tgCtx, tgCancel = context.WithCancel(context.Background())
+	Dispatcher = tg.NewUpdateDispatcher()
+
+	BotPool = nil // Clear existing bot pool
 
 	options := telegram.Options{
-		SessionStorage: &HybridSessionStorage{
+		SessionStorage: &DBSessionStorage{
 			SessionID: "main",
-			FilePath:  sessionDir,
 		},
 		Device: telegram.DeviceConfig{
 			DeviceModel:   "TeleCloud Server",
 			SystemVersion: "Linux",
 			AppVersion:    cfg.Version,
 		},
+		UpdateHandler: Dispatcher,
 	}
 
 	if cfg.ProxyURL != "" {
@@ -204,7 +229,7 @@ func InitClient(cfg *config.Config, runAuthFlow bool) error {
 		if token == "" || isPrivateMe {
 			continue
 		}
-		// Create bot-specific options to avoid session file conflicts
+		// Create bot-specific options with database storage
 		botOptions := options
 		botOptions.SessionStorage = &DBSessionStorage{SessionID: token}
 		botClient := telegram.NewClient(cfg.APIID, cfg.APIHash, botOptions)
@@ -212,7 +237,7 @@ func InitClient(cfg *config.Config, runAuthFlow bool) error {
 	}
 
 	if runAuthFlow {
-		err := Client.Run(context.Background(), func(ctx context.Context) error {
+		err := Client.Run(tgCtx, func(ctx context.Context) error {
 			flow := auth.NewFlow(
 				termAuth{},
 				auth.SendCodeOptions{},
@@ -220,7 +245,7 @@ func InitClient(cfg *config.Config, runAuthFlow bool) error {
 			if err := Client.Auth().IfNecessary(ctx, flow); err != nil {
 				return fmt.Errorf("auth error: %w", err)
 			}
-			fmt.Println("Successfully authenticated! Session saved to", sessionDir)
+			fmt.Println("Successfully authenticated! Session saved to database.")
 			return nil
 		})
 		if err != nil {
@@ -234,89 +259,95 @@ func InitClient(cfg *config.Config, runAuthFlow bool) error {
 
 func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) error) error {
 	errCh := make(chan error, len(BotPool)+1)
-	var wg sync.WaitGroup
+	atomic.StoreInt32(&mainRunning, 1)
+	defer atomic.StoreInt32(&mainRunning, 0)
 
-	for i := range BotPool {
-		wg.Add(1)
-		ready := make(chan struct{})
-		log.Printf("Initializing Bot #%d session...", i+1)
-		go func(idx int, r chan struct{}) {
-			defer wg.Done()
-			b := &BotPool[idx]
-			err := b.Client.Run(ctx, func(ctx context.Context) error {
-				_, err := b.Client.Auth().Bot(ctx, b.Token)
-				if err != nil {
-					return err
-				}
-				close(r) // Signal that this bot is authorized and ready
-				<-ctx.Done()
-				return nil
-			})
-			if err != nil && err != context.Canceled {
-				// Close channel to avoid hang if not already closed
-				select {
-				case <-r:
-				default:
-					close(r)
-				}
-				log.Printf("Warning: Bot #%d encountered an error and will be disabled: %v", idx+1, err)
-				b.Deleted = true
-				// We DO NOT send this error to errCh because we want the app to keep running
-			}
-		}(i, ready)
-
-		// Wait for this bot to be ready before starting the next one or proceeding
-		select {
-		case <-ready:
-			// Bot is ready, continue
-		case <-time.After(15 * time.Second):
-			log.Printf("Warning: Bot #%d authorization timed out", i+1)
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-
-		if i < len(BotPool)-1 {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-
-	wg.Add(1)
+	// 1. Initialize main Telegram session FIRST
 	log.Println("Initializing main Telegram session...")
+	mainStarted := make(chan struct{})
 	go func() {
-		defer wg.Done()
-		err := Client.Run(ctx, func(ctx context.Context) error {
+		err := Client.Run(tgCtx, func(ctx context.Context) error {
 			status, err := Client.Auth().Status(ctx)
 			if err != nil {
 				return err
 			}
 			if !status.Authorized {
-				return fmt.Errorf("not authorized, please run with -auth flag first to login")
+				atomic.StoreInt32(&mainAuthorized, 0)
+				return fmt.Errorf("AUTH_REQUIRED: not authorized, please login first")
 			}
 
-			// Always detect Telegram account status to set part size
-			{
-				api := Client.API()
-				fullUser, err := api.UsersGetFullUser(ctx, &tg.InputUserSelf{})
-				if err == nil {
-					isPremium := false
-					for _, u := range fullUser.Users {
-						if user, ok := u.(*tg.User); ok {
-							isPremium = user.Premium
-							break
-						}
+			atomic.StoreInt32(&mainAuthorized, 1)
+
+			// Detect Telegram account status
+			api := Client.API()
+			fullUser, _ := api.UsersGetFullUser(ctx, &tg.InputUserSelf{})
+			if fullUser != nil {
+				isPremium := false
+				for _, u := range fullUser.Users {
+					if user, ok := u.(*tg.User); ok {
+						isPremium = user.Premium
+						break
 					}
-					cfg.IsPremium = isPremium
-					if isPremium && len(BotPool) == 0 {
-						cfg.MaxPartSize = 3900 * 1024 * 1024
-					} else {
-						cfg.MaxPartSize = 1900 * 1024 * 1024
-					}
+				}
+				cfg.IsPremium = isPremium
+				if isPremium && len(BotPool) == 0 {
+					cfg.MaxPartSize = 3900 * 1024 * 1024
 				} else {
-					cfg.IsPremium = false
-					cfg.MaxPartSize = 1900 * 1024 * 1024 // Fallback
+					cfg.MaxPartSize = 1900 * 1024 * 1024
 				}
 			}
 
+			// 2. Start Bot Pool ONLY after main client is up
+			if !SkipBotPool {
+				for i := range BotPool {
+					ready := make(chan bool, 1)
+					go func(idx int, r chan bool) {
+						b := &BotPool[idx]
+						log.Printf("Initializing Bot #%d session...", idx+1)
+
+						// Try login
+						err := b.Client.Run(ctx, func(ctx context.Context) error {
+							_, err := b.Client.Auth().Bot(ctx, b.Token)
+							if err != nil {
+								return err
+							}
+							r <- true // Success
+							<-ctx.Done() // Keep the connection alive
+							return nil
+						})
+
+						if err != nil && err != context.Canceled {
+							if strings.Contains(err.Error(), "AUTH_KEY_UNREGISTERED") {
+								log.Printf("Bot #%d: session invalid, clearing and retrying...", idx+1)
+								database.DB.Exec("DELETE FROM tg_sessions WHERE session_id = ?", b.Token)
+							}
+							log.Printf("Warning: Bot #%d encountered an error and will be disabled: %v", idx+1, err)
+							b.Deleted = true
+							select {
+							case r <- false:
+							default:
+							}
+						}
+					}(i, ready)
+
+					// Wait for this bot to be ready or fail before moving to next
+					select {
+					case ok := <-ready:
+						if !ok {
+							log.Printf("Bot #%d failed to start.", i+1)
+						}
+					case <-time.After(15 * time.Second):
+						log.Printf("Warning: Bot #%d authorization timed out", i+1)
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			} else {
+				log.Println("Bot Pool startup skipped (SkipBotPool is true).")
+			}
+
+			atomic.StoreInt32(&systemReady, 1)
+			close(mainStarted)
 			return cb(ctx)
 		})
 		if err != nil && err != context.Canceled {
@@ -324,18 +355,19 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 		}
 	}()
 
-	// Wait for first error or context cancellation
-	go func() {
-		wg.Wait()
-		close(errCh)
-	}()
-
+	// Wait for main client to be ready or fail
 	select {
+	case <-mainStarted:
+		log.Println("Telegram system (Main + Pool) initialized.")
 	case err := <-errCh:
+		atomic.StoreInt32(&mainAuthorized, 0)
 		return err
 	case <-ctx.Done():
+		atomic.StoreInt32(&mainAuthorized, 0)
 		return ctx.Err()
 	}
+
+	return <-errCh
 }
 
 func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {
@@ -357,49 +389,56 @@ func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("could not send test message to log group: %w", err)
 	}
 
-	// Verify all bots in the pool
-	botPoolMu.Lock()
-	var wgBots sync.WaitGroup
-	activeBotsChan := make(chan BotInstance, len(BotPool))
+	// Verify all bots in the pool ONLY if they have been initialized and SkipBotPool is false
+	if !SkipBotPool {
+		botPoolMu.Lock()
+		var wgBots sync.WaitGroup
+		activeBotsChan := make(chan BotInstance, len(BotPool))
 
-	for i := range BotPool {
-		if BotPool[i].Deleted {
-			continue
+		for i := range BotPool {
+			if BotPool[i].Deleted {
+				continue
+			}
+			wgBots.Add(1)
+			go func(idx int) {
+				defer wgBots.Done()
+				bot := BotPool[idx]
+				api := bot.Client.API()
+				// Try to resolve group for this bot
+				botPeer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
+				if err != nil {
+					errMsg := err.Error()
+					if strings.Contains(errMsg, "PEER_ID_INVALID") || strings.Contains(errMsg, "CHANNEL_INVALID") {
+						errMsg = "Bot is not a member of the Log Group or ID is invalid"
+					}
+					log.Printf("Warning: Bot #%d: resolution failed: %v. Removing from pool.", idx+1, errMsg)
+					return
+				}
+
+				// Try to send a message
+				botSender := message.NewSender(api)
+				_, err = botSender.To(botPeer).Text(ctx, fmt.Sprintf("🤖 Bot #%d (%s) is online and reporting for duty!", idx+1, bot.Token[:8]+"..."))
+				if err != nil {
+					log.Printf("Warning: Bot #%d: connectivity check failed: %v. Removing from pool.", idx+1, err)
+					return
+				}
+				activeBotsChan <- bot
+			}(i)
 		}
-		wgBots.Add(1)
-		go func(idx int) {
-			defer wgBots.Done()
-			bot := BotPool[idx]
-			api := bot.Client.API()
-			// Try to resolve group for this bot
-			botPeer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
-			if err != nil {
-				log.Printf("Warning: Bot #%d: resolution failed: %v. Removing from pool.", idx+1, err)
-				return
-			}
 
-			// Try to send a message
-			botSender := message.NewSender(api)
-			_, err = botSender.To(botPeer).Text(ctx, fmt.Sprintf("🤖 Bot #%d (%s) is online and reporting for duty!", idx+1, bot.Token[:8]+"..."))
-			if err != nil {
-				log.Printf("Warning: Bot #%d: connectivity check failed: %v. Removing from pool.", idx+1, err)
-				return
-			}
-			activeBotsChan <- bot
-		}(i)
+		wgBots.Wait()
+		close(activeBotsChan)
+
+		var activeBots []BotInstance
+		for bot := range activeBotsChan {
+			activeBots = append(activeBots, bot)
+		}
+		BotPool = activeBots
+		botPoolMu.Unlock()
+		log.Printf("Log Group connectivity verified. Active Bots: %d", len(activeBots))
+	} else {
+		log.Println("Log Group connectivity verified (Main Client only, skipping bot pool check during setup).")
 	}
-
-	wgBots.Wait()
-	close(activeBotsChan)
-
-	var activeBots []BotInstance
-	for bot := range activeBotsChan {
-		activeBots = append(activeBots, bot)
-	}
-	BotPool = activeBots
-	botPoolMu.Unlock()
-
-	log.Printf("Log Group connectivity verified. Active Bots: %d", len(activeBots))
 	return nil
 }
 

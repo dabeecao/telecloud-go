@@ -115,10 +115,14 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 	}
 	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, finalSize, finalUploaded)
 
-	// Auto-cleanup: remove task from memory after 5 minutes once terminal
+	// Auto-cleanup: remove task from memory once terminal
 	if status == "done" || status == "error" {
 		go func() {
-			time.Sleep(5 * time.Minute)
+			if status == "done" {
+				time.Sleep(5 * time.Second)
+			} else {
+				time.Sleep(5 * time.Minute)
+			}
 			taskMutex.Lock()
 			delete(UploadTasks, taskID)
 			taskMutex.Unlock()

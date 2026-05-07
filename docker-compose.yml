@@ -16,7 +16,6 @@ services:
       - DATABASE_PATH=/app/data/database.db
       - THUMBS_DIR=/app/data/thumbs
       - TEMP_DIR=/app/data/temp
-      - SESSION_FILE=/app/data/session.json
       # Optional: Paths to FFmpeg and yt-dlp. These are built into the Docker image,
       # but you can override them here if you want to use external binaries.
       - FFMPEG_PATH=/usr/bin/ffmpeg

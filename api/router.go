@@ -28,6 +28,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"rsc.io/qr"
 )
 
 type chunkState struct {
@@ -47,6 +48,12 @@ func generateCSRFToken() string {
 	return uuid.New().String()
 }
 
+// isSecure checks if the application is running on HTTPS based on SITE_URL.
+func isSecure() bool {
+	siteURL := database.GetSetting("site_url")
+	return strings.HasPrefix(siteURL, "https://")
+}
+
 // setCSRFCookie sets the CSRF cookie on a response.
 // HttpOnly=false so JavaScript can read it to include in request headers.
 func setCSRFCookie(c *gin.Context) string {
@@ -54,7 +61,7 @@ func setCSRFCookie(c *gin.Context) string {
 	if err != nil || token == "" {
 		token = generateCSRFToken()
 	}
-	c.SetCookie(csrfCookieName, token, 3600*24*7, "/", "", false, false)
+	c.SetCookie(csrfCookieName, token, 3600*24*7, "/", "", isSecure(), false)
 	return token
 }
 
@@ -176,7 +183,7 @@ func securityHeadersMiddleware() gin.HandlerFunc {
 	}
 }
 
-func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
+func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.Config), restartApp func()) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	// Trust private network IPs and loopback for reverse proxies (e.g. Cloudflare Tunnel, Nginx, Docker)
@@ -193,12 +200,94 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 	// Middleware for checking if setup is needed
 	setupCheckMiddleware := func() gin.HandlerFunc {
 		return func(c *gin.Context) {
+			path := c.Request.URL.Path
+			if strings.HasPrefix(path, "/static") || strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/reset-admin") || path == "/api/system/status" {
+				c.Next()
+				return
+			}
+
 			adminUser := database.GetSetting("admin_username")
-			if adminUser == "" && !strings.HasPrefix(c.Request.URL.Path, "/setup") && !strings.HasPrefix(c.Request.URL.Path, "/static") {
+			isSetupEndpoint := strings.HasPrefix(path, "/api/setup") || strings.HasPrefix(path, "/setup")
+			
+			if isSetupEndpoint && adminUser != "" {
+				token, _ := c.Cookie("session_token")
+				var sessionUsername string
+				if token != "" {
+					database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+				}
+				
+				// Only admin can access setup once it's configured
+				if sessionUsername != adminUser {
+					if strings.HasPrefix(path, "/api/") {
+						c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "unauthorized"})
+					} else {
+						c.Redirect(http.StatusFound, "/login")
+					}
+					return
+				}
+
+				// Optimization: If admin is logged in and system is already ready, 
+				// redirect to dashboard instead of showing setup wizard again
+				if path == "/setup" && tgclient.IsSystemReady() {
+					c.Redirect(http.StatusFound, "/")
+					c.Abort()
+					return
+				}
+
+				c.Next()
+				return
+			}
+			
+			if isSetupEndpoint {
+				c.Next()
+				return
+			}
+
+			if adminUser == "" {
 				c.Redirect(http.StatusFound, "/setup")
 				c.Abort()
 				return
 			}
+
+			// If admin exists but Telegram system is not ready, handle accordingly
+			if !tgclient.IsSystemReady() {
+				// If the system is currently initializing, show a loading message instead of redirecting to setup
+				if tgclient.IsRunning() {
+					c.Data(http.StatusServiceUnavailable, "text/html; charset=utf-8", []byte(`
+						<!DOCTYPE html><html><head><meta http-equiv="refresh" content="3"><title>Starting up...</title>
+						<style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;color:#334155;text-align:center;} h2{margin-bottom:8px;} p{color:#64748b;}</style>
+						</head><body><div><h2>TeleCloud is starting up</h2><p>Please wait a few seconds...</p></div></body></html>
+					`))
+					c.Abort()
+					return
+				}
+
+				token, _ := c.Cookie("session_token")
+				var sessionUsername string
+				if token != "" {
+					database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+				}
+
+				if sessionUsername == "" {
+					c.Redirect(http.StatusFound, "/login")
+					c.Abort()
+					return
+				}
+
+				if sessionUsername != adminUser {
+					c.String(http.StatusForbidden, "System is in maintenance mode. Only admin can access.")
+					c.Abort()
+					return
+				}
+
+				// If admin is logged in, redirect to setup to fix Telegram
+				if path != "/setup" {
+					c.Redirect(http.StatusFound, "/setup")
+					c.Abort()
+					return
+				}
+			}
+
 			c.Next()
 		}
 	}
@@ -286,17 +375,17 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 	r.GET("/setup", func(c *gin.Context) {
 		adminUser := database.GetSetting("admin_username")
-		if adminUser != "" {
-			c.Redirect(http.StatusFound, "/")
-			return
-		}
 		setCSRFCookie(c)
 		c.HTML(http.StatusOK, "setup.html", gin.H{
-			"version": cfg.Version,
+			"version":      cfg.Version,
+			"api_id":       cfg.APIID,
+			"api_hash":     cfg.APIHash,
+			"log_group_id": cfg.LogGroupID,
+			"admin_exists": adminUser != "",
 		})
 	})
 
-	r.POST("/setup", func(c *gin.Context) {
+	r.POST("/setup", csrfMiddleware(), func(c *gin.Context) {
 		adminUser := database.GetSetting("admin_username")
 		if adminUser != "" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "already setup"})
@@ -335,9 +424,197 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 			return
 		}
-		c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
+		c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", isSecure(), true)
 
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
+	r.POST("/api/setup/config", csrfMiddleware(), func(c *gin.Context) {
+		apiID, _ := strconv.Atoi(c.PostForm("api_id"))
+		apiHash := c.PostForm("api_hash")
+		siteURL := strings.TrimRight(c.PostForm("site_url"), "/")
+
+		if apiID == 0 || apiHash == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "API_ID and API_HASH required"})
+			return
+		}
+
+		database.SetSetting("api_id", strconv.Itoa(apiID))
+		database.SetSetting("api_hash", apiHash)
+		database.SetSetting("site_url", siteURL)
+
+		// Auto-configure WebAuthn based on Site URL
+		if u, err := url.Parse(siteURL); err == nil {
+			database.SetSetting("webauthn_rpid", u.Hostname())
+			database.SetSetting("webauthn_rporigin", siteURL)
+		}
+
+		cfg.APIID = apiID
+		cfg.APIHash = apiHash
+
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
+	r.POST("/api/setup/tg/phone", csrfMiddleware(), func(c *gin.Context) {
+		phone := c.PostForm("phone")
+
+		// Always restart for a fresh phone login attempt to avoid conflicts with QR
+		tgclient.StartWebAuth(cfg)
+		wa := tgclient.GetActiveWebAuth()
+
+		if wa != nil {
+			wa.SubmitPhone(phone)
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
+	r.POST("/api/setup/tg/qr", csrfMiddleware(), func(c *gin.Context) {
+		// Always restart for a fresh QR login attempt
+		tgclient.StartQRAuth(cfg)
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
+	r.GET("/api/setup/tg/qr/image", func(c *gin.Context) {
+		wa := tgclient.GetActiveWebAuth()
+		if wa == nil || wa.GetQRURL() == "" {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		code, err := qr.Encode(wa.GetQRURL(), qr.M)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "QR generation failed"})
+			return
+		}
+
+		c.Header("Content-Type", "image/png")
+		c.Header("Cache-Control", "no-cache")
+		c.Writer.Write(code.PNG())
+	})
+
+	r.POST("/api/setup/tg/code", csrfMiddleware(), func(c *gin.Context) {
+		code := c.PostForm("code")
+		wa := tgclient.GetActiveWebAuth()
+		if wa != nil {
+			wa.SubmitCode(code)
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "SESSION_EXPIRED"})
+		}
+	})
+
+	r.POST("/api/setup/tg/password", csrfMiddleware(), func(c *gin.Context) {
+		password := c.PostForm("password")
+		wa := tgclient.GetActiveWebAuth()
+		if wa != nil {
+			wa.SubmitPassword(password)
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "SESSION_EXPIRED"})
+		}
+	})
+
+	r.POST("/api/setup/tg/cancel", csrfMiddleware(), func(c *gin.Context) {
+		wa := tgclient.GetActiveWebAuth()
+		if wa != nil {
+			wa.Cancel(fmt.Errorf("USER_CANCELLED"))
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
+	r.POST("/api/setup/tg/test-log-group", csrfMiddleware(), func(c *gin.Context) {
+		logGroupID := c.PostForm("log_group_id")
+		if logGroupID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "log_group_id required"})
+			return
+		}
+
+		database.SetSetting("log_group_id", logGroupID)
+		cfg.LogGroupID = logGroupID
+
+		// During setup, we only want to test the main client, so skip bots to avoid FLOOD_WAIT
+		tgclient.SkipBotPool = true
+		
+		// Attempt synchronous verification
+		if err := tgclient.VerifyLogGroup(c.Request.Context(), cfg); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// If verification succeeded, start the background services
+		startTG(cfg)
+
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
+
+	r.POST("/api/setup/restart", csrfMiddleware(), func(c *gin.Context) {
+		adminUser := database.GetSetting("admin_username")
+		if adminUser == "" {
+			// If no admin, this shouldn't be called yet but let's be safe
+			c.JSON(http.StatusForbidden, gin.H{"error": "setup not finished"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"status": "restarting"})
+		go restartApp()
+	})
+
+	r.GET("/api/system/status", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"authorized": tgclient.IsAuthorized(),
+			"ready":      tgclient.IsSystemReady(),
+			"running":    tgclient.IsRunning(),
+		})
+	})
+
+	r.GET("/api/setup/tg/status", func(c *gin.Context) {
+		wa := tgclient.GetActiveWebAuth()
+		
+		// Prioritize returning the last error if we are not authorized and an error exists
+		if !tgclient.IsAuthorized() && tgclient.LastAuthError != nil {
+			errStr := tgclient.LastAuthError.Error()
+			authState := "none"
+			if wa != nil {
+				authState = wa.GetState()
+			}
+			c.JSON(http.StatusOK, gin.H{"authorized": false, "authState": authState, "error": errStr})
+			return
+		}
+
+		if tgclient.Client == nil && wa == nil {
+			c.JSON(http.StatusOK, gin.H{"authorized": false, "authState": "none"})
+			return
+		}
+
+		authState := "none"
+		if wa != nil {
+			authState = wa.GetState()
+			transErr := wa.GetTransientErr()
+			if transErr != "" {
+				wa.SetTransientErr("")
+			}
+			
+			// If web auth is active, we know it's not authorized yet and we don't want to block on Status()
+			c.JSON(http.StatusOK, gin.H{
+				"authorized":      authState == "success",
+				"authState":       authState,
+				"qr_url":          wa.GetQRURL(),
+				"transient_error": transErr,
+			})
+			return
+		}
+
+		// Check status using a quick timeout to prevent hanging if client is stuck
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		
+		status, err := tgclient.GetAuthStatus(ctx)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"authorized": false, "error": err.Error(), "authState": authState})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"authorized": status.Authorized, "authState": authState})
 	})
 
 	r.GET("/reset-admin", func(c *gin.Context) {
@@ -552,7 +829,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 				return
 			}
-			c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
+			c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", isSecure(), true)
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 			return
 		}
@@ -577,8 +854,8 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 		if token != "" {
 			database.DB.Exec("DELETE FROM sessions WHERE token = ?", token)
 		}
-		c.SetCookie("session_token", "", -1, "/", "", false, true)
-		c.SetCookie(csrfCookieName, "", -1, "/", "", false, false)
+		c.SetCookie("session_token", "", -1, "/", "", isSecure(), true)
+		c.SetCookie(csrfCookieName, "", -1, "/", "", isSecure(), false)
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
@@ -785,7 +1062,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 				sessionToken := uuid.New().String()
 				_, err = database.DB.Exec("INSERT INTO sessions (token, username) VALUES (?, ?)", sessionToken, username)
 				if err == nil {
-					c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", false, true)
+					c.SetCookie("session_token", sessionToken, 3600*24*30, "/", "", isSecure(), true)
 				}
 			}
 
@@ -1274,6 +1551,29 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"chunks": chunks})
 		})
 
+		api.POST("/upload/check-exists", func(c *gin.Context) {
+			path := c.PostForm("path")
+			filenamesStr := c.PostForm("filenames")
+			if filenamesStr == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "filenames_required"})
+				return
+			}
+			filenames := strings.Split(filenamesStr, "|")
+			username := c.GetString("username")
+			isAdmin := c.GetBool("is_admin")
+			dbPath := mapPath(path, username, isAdmin)
+
+			existing := make([]string, 0)
+			for _, fn := range filenames {
+				var count int
+				err := database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dbPath, fn, username)
+				if err == nil && count > 0 {
+					existing = append(existing, fn)
+				}
+			}
+			c.JSON(http.StatusOK, gin.H{"existing": existing})
+		})
+
 		api.GET("/ws", func(c *gin.Context) {
 			username := c.GetString("username")
 			ws.HandleWebSocket(c.Writer, c.Request, username)
@@ -1473,7 +1773,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 			}
 
 			// Store metadata in DB if it's the first chunk
-			database.DB.Exec(database.InsertIgnoreSQL("upload_tasks", "id, filename, owner", "?, ?, ?"), taskID, safeFilename, username)
+			// Read overwrite flag (only used when inserting new task)
+			overwriteFlag := c.PostForm("overwrite") == "true"
+			database.DB.Exec(database.InsertIgnoreSQL("upload_tasks", "id, filename, owner, overwrite", "?, ?, ?, ?"), taskID, safeFilename, username, overwriteFlag)
 
 			// WriteAt is safe for concurrent goroutines writing non-overlapping offsets
 			out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
@@ -1524,7 +1826,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS) *gin.Engine {
 
 				go func() {
 					defer os.Remove(tempFilePath)
-					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, cfg, false, username)
+					// Retrieve overwrite flag for this task
+					var ov bool
+					database.DB.Get(&ov, "SELECT overwrite FROM upload_tasks WHERE id = ?", taskID)
+					tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, cfg, ov, username)
 				}()
 
 				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "pushing_to_tg"})

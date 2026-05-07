@@ -217,10 +217,23 @@ install_dependencies() {
         read -p "[?] Do you want to install yt-dlp? (y/n): " install_ytdlp
         if [ "$install_ytdlp" == "y" ]; then
             pkg_install "python3" "python3"
-            if ! pkg_install "yt-dlp"; then
-                echo "[+] Package manager installation failed, downloading yt-dlp binary directly..."
-                download_file "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$BIN_DIR/yt-dlp"
-                chmod +x "$BIN_DIR/yt-dlp"
+            # Try to install pip if not present
+            if ! command -v pip3 &>/dev/null && ! python3 -m pip --version &>/dev/null; then
+                echo "[+] Installing pip..."
+                pkg_install "python3-pip" "pip3" || pkg_install "python-pip" "pip3"
+            fi
+            
+            echo "[+] Installing/Updating yt-dlp via pip to get the latest version..."
+            # Use --break-system-packages for newer Linux distros (Debian 12+, Ubuntu 23+)
+            if python3 -m pip install -U yt-dlp --break-system-packages 2>/dev/null; then
+                echo "[✓] yt-dlp installed successfully via pip."
+            else
+                # Fallback if --break-system-packages is not supported or pip is old
+                python3 -m pip install -U yt-dlp || {
+                    echo "[+] pip installation failed, downloading binary directly..."
+                    download_file "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$BIN_DIR/yt-dlp"
+                    chmod +x "$BIN_DIR/yt-dlp"
+                }
             fi
         fi
 
@@ -256,11 +269,18 @@ install_dependencies() {
         MAIN_PACKAGES="wget curl tar unzip tmux jq nano python"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
-        [ "$install_ytdlp" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES yt-dlp"
 
         for pkg in $MAIN_PACKAGES; do
             pkg_install "$pkg"
         done
+
+        if [ "$install_ytdlp" == "y" ]; then
+            echo "[+] Installing/Updating yt-dlp via pip..."
+            python3 -m pip install -U yt-dlp 2>/dev/null || python -m pip install -U yt-dlp || {
+                echo "[!] pip installation failed, trying package manager..."
+                pkg_install "yt-dlp"
+            }
+        fi
     fi
 }
 
@@ -320,26 +340,10 @@ create_env() {
     if [ ! -f "$BASE_DIR/.env" ]; then
         echo "[+] Setting up .env configuration..."
 
-        API_ID=""
-        while [ -z "$API_ID" ]; do
-            read -p "Enter API_ID (Required): " API_ID
-        done
-
-        API_HASH=""
-        while [ -z "$API_HASH" ]; do
-            read -p "Enter API_HASH (Required): " API_HASH
-        done
-
         read -p "PORT [Default 8091]: " PORT
         PORT=${PORT:-8091}
 
-        read -p "LOG_GROUP_ID [Default me]: " LOG_GROUP_ID
-        LOG_GROUP_ID=${LOG_GROUP_ID:-me}
-
         cat > "$BASE_DIR/.env" <<EOF
-API_ID=$API_ID
-API_HASH=$API_HASH
-LOG_GROUP_ID=$LOG_GROUP_ID
 PORT=$PORT
 EOF
         
@@ -587,11 +591,6 @@ check_status() {
 }
 
 start_app() {
-    if [ ! -f "$BASE_DIR/session.json" ]; then
-        echo "❌ ERROR: You are not logged in to Telegram!"
-        echo "Please select Option 8: 'Telecloud Commands' -> 'Initial Login' first."
-        return 1
-    fi
 
     echo "[+] Starting the application..."
     if [ "$OS_TYPE" == "linux" ]; then
@@ -609,6 +608,10 @@ start_app() {
                 if journalctl -u telecloud.service -n 50 | grep -q "TeleCloud shut down"; then
                     success=2; break
                 fi
+                # Check if the service is dead (failed/inactive)
+                if ! systemctl is-active --quiet telecloud; then
+                    success=3; break
+                fi
                 sleep 1
                 timeout=$((timeout - 1))
             done
@@ -617,6 +620,9 @@ start_app() {
                 echo "✅ TeleCloud started successfully!"
             elif [ $success -eq 2 ]; then
                 echo "❌ ERROR: TeleCloud has shut down. Please check the logs (Option 5)."
+                return 1
+            elif [ $success -eq 3 ]; then
+                echo "❌ ERROR: TeleCloud failed to maintain an active state. Please check the logs (Option 5)."
                 return 1
             else
                 echo "⚠️  WARNING: Wait time exceeded (30s). Status unconfirmed."
@@ -651,6 +657,10 @@ start_app() {
             if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
                 success=2; break
             fi
+            # Check if the process still exists
+            if ! pgrep -f "\./telecloud" > /dev/null; then
+                success=3; break
+            fi
             sleep 1
             timeout=$((timeout - 1))
         done
@@ -659,6 +669,9 @@ start_app() {
             echo "✅ TeleCloud started successfully!"
         elif [ $success -eq 2 ]; then
             echo "❌ ERROR: TeleCloud has shut down. Please check the logs (Option 6)."
+            return 1
+        elif [ $success -eq 3 ]; then
+            echo "❌ ERROR: TeleCloud process exited unexpectedly. Please check the logs (Option 6)."
             return 1
         else
             echo "⚠️  WARNING: Wait time exceeded (30s). Status unconfirmed."
@@ -847,12 +860,12 @@ backup_data() {
     echo "[+] Stopping application to ensure data integrity..."
     stop_app
     echo "[+] Creating backup..."
-    (cd "$BASE_DIR" && tar -czf "$HOME/telecloud_backups/$BK_NAME" session.json database.db* .env 2>/dev/null)
+    (cd "$BASE_DIR" && tar -czf "$HOME/telecloud_backups/$BK_NAME" database.db* .env 2>/dev/null)
     
     if [ $? -eq 0 ]; then
         echo "✅ Backup successful: $HOME/telecloud_backups/$BK_NAME"
     else
-        echo "❌ Error: Required files (session.json, database.db) might be missing."
+        echo "❌ Error: Some files (database.db) might not exist yet."
     fi
     start_app
 }
@@ -982,22 +995,17 @@ telecloud_commands() {
     echo "=========================================="
     echo "            TELECLOUD COMMANDS            "
     echo "=========================================="
-    echo "1. Initial Login (-auth)"
-    echo "2. Reset Password (-resetpass)"
-    echo "3. Update this Setup Script"
-    echo "4. Return to Main Menu"
-    read -p "Choose a command (1-4): " cmd_choice
+    echo "1. Reset Password (-resetpass)"
+    echo "2. Update this Setup Script"
+    echo "3. Return to Main Menu"
+    read -p "Choose a command (1-3): " cmd_choice
     
     case $cmd_choice in
         1)
-            echo "[+] Opening login interface..."
-            cd "$BASE_DIR" && ./telecloud -auth
-            ;;
-        2)
             echo "[+] Resetting password..."
             cd "$BASE_DIR" && ./telecloud -resetpass
             ;;
-        3)
+        2)
             update_setup_script
             ;;
         *) return ;;
@@ -1062,7 +1070,7 @@ while true; do
     echo "  5. Manage Remote Access (Cloudflare Tunnel)"
     echo "  6. View Logs"
     echo "  7. Edit Config (.env)"
-    echo "  8. Telecloud Commands (Auth / Reset Pass)"
+    echo "  8. Telecloud Commands (Reset Pass / Setup)"
     echo "  9. Check for Updates"
     echo "  10. Manage Backups"
     echo "  11. Uninstall Application"
@@ -1138,7 +1146,15 @@ if [ ! -f "$BASE_DIR/telecloud" ]; then
     echo "Type the following command to open the Management Menu:"
     echo "   telecloud"
     echo ""
-    echo "In the Menu, please select Option 8: 'Telecloud Commands' -> 'Initial Login' to set up!"
+    local PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
+    PORT=${PORT:-8091}
+    echo "The application is running in Setup Mode."
+    echo "Please visit the following URL to complete the setup:"
+    if [ -f "$BASE_DIR/domain.txt" ]; then
+        echo "   https://$(cat $BASE_DIR/domain.txt)/setup"
+    else
+        echo "   http://YOUR_IP_OR_DOMAIN:$PORT/setup"
+    fi
     echo "============================================="
     exit 0
 fi

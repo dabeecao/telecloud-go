@@ -55,8 +55,31 @@ import (
 //go:embed web/static/locales/*.min.json
 var contentFS embed.FS
 
+func restartApp() {
+	log.Println("Restarting TeleCloud...")
+	executable, err := os.Executable()
+	if err != nil {
+		log.Printf("Error getting executable path: %v. Exiting instead.", err)
+		os.Exit(0)
+	}
+
+	if runtime.GOOS == "windows" {
+		log.Println("Self-restart not supported on Windows. Please restart manually.")
+		os.Exit(0)
+	}
+
+	// Small delay to allow HTTP response to be sent
+	time.Sleep(500 * time.Millisecond)
+
+	err = syscall.Exec(executable, os.Args, os.Environ())
+	if err != nil {
+		log.Printf("Failed to restart app: %v. Exiting instead.", err)
+		os.Exit(0)
+	}
+}
+
 var (
-	version = "v3.2.0-beta2"
+	version = "v3.2.0-beta3"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -100,6 +123,7 @@ func main() {
 	if err := database.InitDB(cfg.DatabaseDriver, cfg.DatabasePath, cfg.DatabaseDSN); err != nil {
 		fatalf("%v", err)
 	}
+	cfg.LoadFromDB(database.GetSetting)
 
 	if *resetPassFlag {
 		token := uuid.New().String()
@@ -107,10 +131,15 @@ func main() {
 		database.SetSetting("admin_reset_token", token)
 		database.SetSetting("admin_reset_expiry", fmt.Sprintf("%d", expiry))
 
+		siteURL := database.GetSetting("site_url")
+		if siteURL == "" {
+			siteURL = "http://<your-domain-or-ip>"
+		}
+
 		log.Println("================================================================")
 		log.Println("ADMIN PASSWORD RESET INITIATED")
 		log.Printf("Please visit the following URL to reset your admin password:\n")
-		log.Printf("http://<your-domain-or-ip>/reset-admin?token=%s\n", token)
+		log.Printf("%s/reset-admin?token=%s\n", siteURL, token)
 		log.Println("This link will expire in 15 minutes.")
 		log.Println("================================================================")
 		waitExitOnWindows()
@@ -156,11 +185,6 @@ func main() {
 
 	startCleanupTask(cfg)
 
-	if err := tgclient.InitClient(cfg, *authFlag); err != nil {
-		fatalf("Telegram client init error: %v", err)
-	}
-	tgclient.InitUploader(cfg)
-
 	// cancelCtx is used to signal the Telegram client to stop
 	appCtx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
@@ -178,45 +202,71 @@ func main() {
 		fatalf("Failed to create sub FS for web: %v", err)
 	}
 
-	router := api.SetupRouter(cfg, webFS)
+	tgErrCh := make(chan error, 1)
+
+	startTG := func(newCfg *config.Config) {
+		if err := tgclient.InitClient(newCfg, *authFlag); err != nil {
+			log.Printf("Telegram client init error: %v", err)
+			return
+		}
+		tgclient.InitUploader(newCfg)
+		go func() {
+			tgErrCh <- tgclient.Run(appCtx, newCfg, func(ctx context.Context) error {
+				if err := tgclient.VerifyLogGroup(ctx, newCfg); err != nil {
+					log.Printf("Warning: Log Group verification failed: %v", err)
+				}
+				printStartupBox(newCfg)
+				<-ctx.Done()
+				return nil
+			})
+		}()
+	}
+
+	router := api.SetupRouter(cfg, webFS, startTG, restartApp)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: router,
 	}
 
-	// Run Telegram client in the background; it will block until appCtx is cancelled
-	tgErrCh := make(chan error, 1)
+	adminUser := database.GetSetting("admin_username")
+	if cfg.APIID == 0 || cfg.APIHash == "" || adminUser == "" {
+		setupURL := fmt.Sprintf("http://YOUR_IP_OR_DOMAIN:%s/setup", cfg.Port)
+		log.Printf("Setup is incomplete. Starting in Setup Mode. Please visit: %s", setupURL)
+	} else {
+		startTG(cfg)
+	}
+
+	log.Println("Starting TeleCloud on port " + cfg.Port + "...")
 	go func() {
-		tgErrCh <- tgclient.Run(appCtx, cfg, func(ctx context.Context) error {
-			if err := tgclient.VerifyLogGroup(ctx, cfg); err != nil {
-				return fmt.Errorf("Log Group verification failed: %v", err)
-			}
-			printStartupBox(cfg)
-			log.Println("Starting TeleCloud on port " + cfg.Port + "...")
-
-			// Start HTTP server in its own goroutine so Telegram keeps running alongside
-			go func() {
-				if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Printf("HTTP server error: %v", err)
-				}
-			}()
-
-			// Block until the app context is cancelled (signal received)
-			<-ctx.Done()
-			return nil
-		})
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP server error: %v", err)
+		}
 	}()
 
 	// Wait for shutdown signal or Telegram client to exit
 	var exitCode int
-	select {
-	case sig := <-sigCh:
-		log.Printf("Received signal: %v — initiating graceful shutdown...", sig)
-	case err := <-tgErrCh:
-		if err != nil {
-			log.Printf("Telegram client exited with error: %v", err)
-			exitCode = 1
+Loop:
+	for {
+		select {
+		case sig := <-sigCh:
+			log.Printf("Received signal: %v — initiating graceful shutdown...", sig)
+			break Loop
+		case err := <-tgErrCh:
+			if err != nil {
+				if strings.Contains(err.Error(), "AUTH_REQUIRED") {
+					log.Printf("Telegram session not authorized. App will remain in Maintenance Mode.")
+					continue
+				}
+				log.Printf("Telegram client exited with error: %v", err)
+				adminUser := database.GetSetting("admin_username")
+				if adminUser == "" {
+					log.Println("Setup is incomplete. Keeping HTTP server alive for Web Setup.")
+					continue
+				}
+				exitCode = 1
+				break Loop
+			}
 		}
 	}
 

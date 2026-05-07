@@ -26,23 +26,21 @@ echo       Menu Quan Ly TeleCloud (Windows)
 echo ==========================================
 echo 1. Cai dat / Cap nhat TeleCloud
 echo 2. Thiet lap Cloudflare Tunnel
-echo 3. Dang nhap Telegram (Lan dau)
-echo 4. Khoi dong TeleCloud (Chay ngam)
-echo 5. Dung TeleCloud
-echo 6. Xem Nhat ky (Logs)
-echo 7. Chinh sua .env
-echo 8. Thoat
+echo 3. Khoi dong TeleCloud (Chay ngam)
+echo 4. Dung TeleCloud
+echo 5. Xem Nhat ky (Logs)
+echo 6. Chinh sua .env
+echo 7. Thoat
 echo ==========================================
-set /p choice="Chon mot tuy chon (1-8): "
+set /p choice="Chon mot tuy chon (1-7): "
 
 if "%choice%"=="1" goto INSTALL
 if "%choice%"=="2" goto CLOUDFLARED_SETUP
-if "%choice%"=="3" goto AUTH
-if "%choice%"=="4" goto START_APP
-if "%choice%"=="5" goto STOP_APP
-if "%choice%"=="6" goto VIEW_LOGS
-if "%choice%"=="7" goto EDIT_ENV
-if "%choice%"=="8" exit /b
+if "%choice%"=="3" goto START_APP
+if "%choice%"=="4" goto STOP_APP
+if "%choice%"=="5" goto VIEW_LOGS
+if "%choice%"=="6" goto EDIT_ENV
+if "%choice%"=="7" exit /b
 goto MENU
 
 :INSTALL
@@ -147,14 +145,13 @@ if not exist ".env" (
         powershell -Command "(Get-Content .env) -replace '^#?YTDLP_PATH=.*', 'YTDLP_PATH=yt-dlp' | Set-Content .env"
     )
 
-    echo [!] Vui long chinh sua .env voi thong tin cua ban!
+    echo [v] Cai dat hoan tat!
+    echo.
+    echo [!] Ung dung se chay o che do Thiet lap (Setup Mode).
+    echo [!] Vui long khoi dong TeleCloud (Muc 3) roi truy cap:
+    echo     http://IP_HOAC_TEN_MIEN:8091/setup
     pause
-    notepad .env
-)
-
-echo [v] Cai dat/Cap nhat hoan tat!
-pause
-goto MENU
+    goto MENU
 
 :CLOUDFLARED_SETUP
 cls
@@ -352,16 +349,6 @@ if !errorlevel! equ 0 (
 pause
 goto CLOUDFLARED_SETUP
 
-:AUTH
-echo [+] Dang bat dau xac thuc...
-if not exist "%BIN_NAME%" (
-    echo [!] Khong tim thay %BIN_NAME%. Vui long cai dat truoc.
-    pause
-    goto MENU
-)
-"%BIN_NAME%" -auth
-pause
-goto MENU
 
 :START_APP
 echo [+] Dang khoi dong TeleCloud chay ngam...
@@ -378,7 +365,7 @@ type nul > app.log
 powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c %BIN_NAME% >> app.log 2>&1' -WindowStyle Hidden"
 
 :: Kiem tra trang thai khoi dong
-echo [+] Dang kiem tra trang thai khoi dong (cho toi da 30s)...
+echo [+] Dang kiem tra trang thái khoi dong (cho toi da 30s)...
 set /a timeout=30
 :CHECK_LOOP
 findstr /C:"Starting TeleCloud on port" app.log >nul
@@ -389,6 +376,13 @@ if !errorlevel! equ 0 (
 findstr /C:"TeleCloud shut down" app.log >nul
 if !errorlevel! equ 0 (
     echo [!] TeleCloud khoi dong that bai. Vui long kiem tra app.log de biet chi tiet.
+    pause
+    goto MENU
+)
+:: Kiem tra neu tien trinh da thoat dot ngot
+tasklist /FI "IMAGENAME eq %BIN_NAME%" /NH | find /I "%BIN_NAME%" >nul
+if !errorlevel! neq 0 (
+    echo [!] LOI: Tien trinh %BIN_NAME% da thoat dot ngot. Vui long kiem tra app.log.
     pause
     goto MENU
 )

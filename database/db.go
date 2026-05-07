@@ -169,6 +169,7 @@ const sqliteSchema = `
 		id TEXT PRIMARY KEY,
 		filename TEXT NOT NULL,
 		owner TEXT NOT NULL,
+		overwrite BOOLEAN DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -266,6 +267,7 @@ const mysqlSchema = `
 		id VARCHAR(191) PRIMARY KEY,
 		filename VARCHAR(191) NOT NULL,
 		owner VARCHAR(191) NOT NULL,
+		overwrite TINYINT(1) DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -304,6 +306,7 @@ func migrateSQLite() error {
 	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_child_accounts_s3_key ON child_accounts(s3_access_key)")
 
 	DB.Exec("CREATE TABLE IF NOT EXISTS tg_sessions (session_id TEXT PRIMARY KEY, data BLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+	DB.Exec("ALTER TABLE upload_tasks ADD COLUMN overwrite BOOLEAN DEFAULT 0")
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
 	return nil
@@ -395,6 +398,10 @@ func migrateMySQL() error {
 	}
 
 	if _, err := DB.Exec("CREATE TABLE IF NOT EXISTS tg_sessions (session_id VARCHAR(191) PRIMARY KEY, data LONGBLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"); err != nil {
+		return err
+	}
+
+	if err := alterTableMySQL("upload_tasks", "ADD COLUMN overwrite TINYINT(1) DEFAULT 0"); err != nil {
 		return err
 	}
 

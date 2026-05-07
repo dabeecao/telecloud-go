@@ -294,7 +294,7 @@ Loop:
 	}
 
 	// Step 4: Close database connection safely
-	if err := database.DB.Close(); err != nil {
+	if err := database.CloseDB(); err != nil {
 		log.Printf("Error closing database: %v", err)
 	} else {
 		log.Println("Database closed cleanly.")

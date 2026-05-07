@@ -692,3 +692,21 @@ func EnsureFoldersExist(dbPath string, owner string) error {
 	}
 	return nil
 }
+
+func CloseDB() error {
+	var errs []string
+	if RWDB != nil {
+		if err := RWDB.Close(); err != nil {
+			errs = append(errs, fmt.Sprintf("RWDB: %v", err))
+		}
+	}
+	if RODB != nil && RODB != RWDB {
+		if err := RODB.Close(); err != nil {
+			errs = append(errs, fmt.Sprintf("RODB: %v", err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to close database: %s", strings.Join(errs, ", "))
+	}
+	return nil
+}

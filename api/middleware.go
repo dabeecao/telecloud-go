@@ -97,15 +97,34 @@ func securityHeadersMiddleware() gin.HandlerFunc {
 func setupCheckMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if strings.HasPrefix(path, "/static") || strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/reset-admin") || path == "/api/system/status" {
+		adminUser := database.GetSetting("admin_username")
+
+		// Always accessible
+		if strings.HasPrefix(path, "/static") || path == "/api/system/status" {
 			c.Next()
 			return
 		}
 
-		adminUser := database.GetSetting("admin_username")
+		// If setup not finished, redirect all non-setup pages to /setup
+		if adminUser == "" {
+			if strings.HasPrefix(path, "/setup") || strings.HasPrefix(path, "/api/setup") {
+				c.Next()
+				return
+			}
+			c.Redirect(http.StatusFound, "/setup")
+			c.Abort()
+			return
+		}
+
+		// If already setup, /login and /reset-admin are accessible
+		if strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/reset-admin") {
+			c.Next()
+			return
+		}
+
 		isSetupEndpoint := strings.HasPrefix(path, "/api/setup") || strings.HasPrefix(path, "/setup")
 
-		if isSetupEndpoint && adminUser != "" {
+		if isSetupEndpoint {
 			token, _ := c.Cookie("session_token")
 			var sessionUsername string
 			if token != "" {
@@ -131,17 +150,6 @@ func setupCheckMiddleware() gin.HandlerFunc {
 			}
 
 			c.Next()
-			return
-		}
-
-		if isSetupEndpoint {
-			c.Next()
-			return
-		}
-
-		if adminUser == "" {
-			c.Redirect(http.StatusFound, "/setup")
-			c.Abort()
 			return
 		}
 

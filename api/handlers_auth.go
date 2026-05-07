@@ -12,6 +12,12 @@ import (
 )
 
 func (h *Handler) handleGetLogin(c *gin.Context) {
+	adminUser := database.GetSetting("admin_username")
+	if adminUser == "" {
+		c.Redirect(http.StatusFound, "/setup")
+		return
+	}
+
 	token, _ := c.Cookie("session_token")
 	var sessionUsername string
 	if token != "" {

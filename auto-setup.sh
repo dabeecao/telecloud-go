@@ -240,8 +240,9 @@ install_dependencies() {
         if [ "${TUNNEL_METHOD:-}" == "cloudflare" ]; then
             if ! command -v cloudflared &>/dev/null; then
                 echo "[+] Đang cài đặt Cloudflared..."
-                ARCH=$(normalize_arch)
-                CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
+                CF_ARCH=$(normalize_arch)
+                [ "$CF_ARCH" == "armv7" ] && CF_ARCH="arm"
+                CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}"
                 download_file "$CF_URL" "$BIN_DIR/cloudflared" || return 1
                 chmod +x "$BIN_DIR/cloudflared"
                 if ! "$BIN_DIR/cloudflared" --version &>/dev/null; then
@@ -328,6 +329,7 @@ download_telecloud() {
         echo "[!] Binary 'telecloud' không tìm thấy!"; return 1
     fi
     
+    chmod +x "$BASE_DIR/telecloud"
     echo "$VERSION" > "$BASE_DIR/version.txt"
     rm -f telecloud.tar.gz
     hash -r 2>/dev/null
@@ -453,8 +455,15 @@ EOF
         cat > "$BASE_DIR/run.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
+cd "$BASE_DIR" || exit 1
 while true; do
-    ./telecloud >> "$BASE_DIR/app.log" 2>&1
+    if [ -f "./telecloud" ]; then
+        chmod +x "./telecloud"
+        ./telecloud >> "$BASE_DIR/app.log" 2>&1
+    else
+        echo "[ERROR] Binary ./telecloud not found in \$(pwd)" >> "$BASE_DIR/app.log" 2>&1
+        exit 1
+    fi
     sleep 3
 done
 EOF
@@ -463,6 +472,7 @@ EOF
         cat > "$BASE_DIR/run-cloudflared.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
+cd "$BASE_DIR" || exit 1
 TUNNEL_NAME=\$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "telecloud-tunnel")
 while true; do
     cloudflared tunnel run --url http://localhost:$APP_PORT \$TUNNEL_NAME >> "$BASE_DIR/tunnel.log" 2>&1
@@ -579,7 +589,7 @@ check_status() {
         fi
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
-        (pgrep -f "\./telecloud" > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+        (pgrep -x telecloud > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
         (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
     fi
     if [ -f "$BASE_DIR/domain.txt" ]; then
@@ -660,7 +670,7 @@ start_app() {
                 success=2; break
             fi
             # Kiểm tra nếu tiến trình không còn tồn tại
-            if ! pgrep -f "\./telecloud" > /dev/null; then
+            if ! pgrep -x telecloud > /dev/null; then
                 success=3; break
             fi
             sleep 1
@@ -698,15 +708,16 @@ stop_app() {
         # Chờ 1 chút cho app dọn dẹp
         sleep 1
         
-        # Cưỡng chế tắt nếu vẫn còn sót (fallback)
-        pkill -f "\./telecloud" 2>/dev/null || true
+        # Cưỡng chế tắt các script bảo vệ và binary nếu vẫn còn sót (fallback)
+        pkill -f "$BASE_DIR/run.sh" 2>/dev/null || true
+        pkill -f "$BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
+        pkill -x telecloud 2>/dev/null || true
         pkill -f "cloudflared tunnel run" 2>/dev/null || true
     fi
     echo "✅ Đã dừng toàn bộ."
 }
 
 restart_app() {
-    stop_app
     start_app
 }
 
@@ -977,6 +988,7 @@ update_app() {
         return
     }
     
+    chmod +x "$BASE_DIR/telecloud"
     echo "$LATEST" > "$BASE_DIR/version.txt"
     rm -f telecloud.tar.gz "$BASE_DIR/telecloud.old" 2>/dev/null
     hash -r 2>/dev/null
@@ -1012,7 +1024,7 @@ telecloud_commands() {
     case $cmd_choice in
         1)
             echo "[+] Đang tiến hành reset mật khẩu..."
-            cd "$BASE_DIR" && ./telecloud -resetpass
+            "$BASE_DIR/telecloud" -resetpass
             ;;
         2)
             update_setup_script
@@ -1057,7 +1069,7 @@ uninstall() {
         fi
         
         echo "[+] Đang xóa thư mục ứng dụng: $BASE_DIR"
-        if [ -d "$BASE_DIR" ]; then
+        if [ -n "$BASE_DIR" ] && [ "$BASE_DIR" != "/" ] && [ -d "$BASE_DIR" ]; then
             rm -rf "$BASE_DIR"
         fi
 

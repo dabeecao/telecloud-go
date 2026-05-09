@@ -256,67 +256,93 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 		}, nil
 	}
 
+	// Helper function to resolve media from a specific API client
+	resolve := func(targetApi *tg.Client) (*tg.InputDocumentFileLocation, error) {
+		peer, err := resolveLogGroup(ctx, targetApi, cfg.LogGroupID)
+		if err != nil {
+			return nil, err
+		}
+
+		var msgs tg.MessageClassArray
+		if channel, ok := peer.(*tg.InputPeerChannel); ok {
+			res, err := targetApi.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
+				Channel: &tg.InputChannel{
+					ChannelID:  channel.ChannelID,
+					AccessHash: channel.AccessHash,
+				},
+				ID: []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}},
+			})
+			if err != nil {
+				return nil, err
+			}
+			switch m := res.(type) {
+			case *tg.MessagesMessages:
+				msgs = m.Messages
+			case *tg.MessagesMessagesSlice:
+				msgs = m.Messages
+			case *tg.MessagesChannelMessages:
+				msgs = m.Messages
+			}
+		} else {
+			res, err := targetApi.MessagesGetMessages(ctx, []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}})
+			if err != nil {
+				return nil, err
+			}
+			switch m := res.(type) {
+			case *tg.MessagesMessages:
+				msgs = m.Messages
+			case *tg.MessagesMessagesSlice:
+				msgs = m.Messages
+			case *tg.MessagesChannelMessages:
+				msgs = m.Messages
+			}
+		}
+
+		if len(msgs) == 0 {
+			return nil, fmt.Errorf("message not found")
+		}
+
+		msg, ok := msgs[0].(*tg.Message)
+		if !ok || msg.Media == nil {
+			// This often happens if the bot is not an admin in a group and privacy mode is on,
+			// or if the message ID is invalid for this session.
+			return nil, fmt.Errorf("message has no media")
+		}
+
+		docMedia, ok := msg.Media.(*tg.MessageMediaDocument)
+		if !ok {
+			return nil, fmt.Errorf("media is not a document")
+		}
+
+		doc, ok := docMedia.Document.(*tg.Document)
+		if !ok {
+			return nil, fmt.Errorf("document is empty")
+		}
+
+		return doc.AsInputDocumentFileLocation(), nil
+	}
+
 	api := GetAPI()
-	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
+	loc, err := resolve(api)
+
+	// Fallback to main client if the selected bot failed to find the message/media
+	if err != nil && api != Client.API() {
+		// Only retry for specific "not found" or "no media" errors which usually indicate permission issues in bot pool
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no media") {
+			mainApi := Client.API()
+			if locRetry, errRetry := resolve(mainApi); errRetry == nil {
+				api = mainApi
+				loc = locRetry
+				err = nil
+			}
+		}
+	}
+
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-
-	var msgs tg.MessageClassArray
-
-	if channel, ok := peer.(*tg.InputPeerChannel); ok {
-		res, err := api.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
-			Channel: &tg.InputChannel{
-				ChannelID:  channel.ChannelID,
-				AccessHash: channel.AccessHash,
-			},
-			ID:      []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}},
-		})
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		if m, ok := res.(*tg.MessagesChannelMessages); ok {
-			msgs = m.Messages
-		}
-	} else {
-		res, err := api.MessagesGetMessages(ctx, []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}})
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		if m, ok := res.(*tg.MessagesMessages); ok {
-			msgs = m.Messages
-		} else if m, ok := res.(*tg.MessagesMessagesSlice); ok {
-			msgs = m.Messages
-		}
-	}
-
-	if len(msgs) == 0 {
-		cancel()
-		return nil, fmt.Errorf("message not found")
-	}
-
-	msg, ok := msgs[0].(*tg.Message)
-	if !ok || msg.Media == nil {
-		cancel()
-		return nil, fmt.Errorf("message has no media")
-	}
-
-	docMedia, ok := msg.Media.(*tg.MessageMediaDocument)
-	if !ok {
-		cancel()
-		return nil, fmt.Errorf("media is not a document")
-	}
-
-	doc, ok := docMedia.Document.(*tg.Document)
-	if !ok {
-		cancel()
-		return nil, fmt.Errorf("document is empty")
-	}
-
-	loc := doc.AsInputDocumentFileLocation()
 	
 	// Cache the location AND the API client for 1 hour
 	cacheMutex.Lock()

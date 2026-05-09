@@ -37,7 +37,26 @@ var (
 	// Limit concurrent uploads to Telegram to prevent floodwait
 	uploadSemaphore       chan struct{}
 	remoteUploadSemaphore chan struct{}
+	
+	// Stagger mechanism to prevent bursts
+	lastUploadStart time.Time
+	startMu         sync.Mutex
 )
+
+func staggerUpload(ctx context.Context) {
+	startMu.Lock()
+	defer startMu.Unlock()
+	
+	elapsed := time.Since(lastUploadStart)
+	if elapsed < 500*time.Millisecond {
+		wait := 500*time.Millisecond - elapsed
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+		}
+	}
+	lastUploadStart = time.Now()
+}
 
 func InitUploader(cfg *config.Config) {
 	count := 3
@@ -319,6 +338,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
+		staggerUpload(ctx)
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
 		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, fileSize, 0)
@@ -340,7 +360,6 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
-	api := GetAPI()
 
 	// Create the main file record first so we have an ID for parts
 	var fileID int64
@@ -412,6 +431,9 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		var msgID int
 		var uploadErr error
 		for attempt := 1; attempt <= 3; attempt++ {
+			// Fresh API client per attempt to rotate through the bot pool on failure.
+			currentApi := GetAPI()
+			
 			if attempt > 1 {
 				UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("retrying_part_%d_attempt_%d", i+1, attempt), "")
 				time.Sleep(5 * time.Second)
@@ -421,11 +443,11 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			}
 			// Fresh uploader per attempt: avoids reusing a session that
 			// Telegram may have already invalidated after a partial upload.
-			freshUp := uploader.NewUploader(api).
+			freshUp := uploader.NewUploader(currentApi).
 				WithPartSize(uploader.MaximumPartSize).
 				WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start, owner: owner}).
 				WithThreads(cfg.UploadThreads)
-			msgID, uploadErr = uploadFilePart(ctx, api, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
 			if uploadErr == nil {
 				break
 			}
@@ -635,6 +657,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
+		staggerUpload(ctx)
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
 		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, size, 0)
@@ -656,7 +679,6 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
-	api := GetAPI()
 
 	// Create main record first
 	var fileID int64
@@ -711,16 +733,22 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, partIndex+1)
 		}
 
-		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1), "")
-
-		up := uploader.NewUploader(api).
+		var msgID int
+		var uploadErr error
+		// Remote upload: we pick a bot for this part
+		currentApi := GetAPI()
+		
+		up := uploader.NewUploader(currentApi).
 			WithPartSize(uploader.MaximumPartSize).
 			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
 			WithThreads(cfg.UploadThreads)
 
-		// Truyền size = -1 để gotd xử lý dưới dạng stream, tránh FILE_PART_INVALID do size mismatch
-		msgID, uploadErr := uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+		// Truyền size = -1 để gotd xử lý dưới dạng stream
+		msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+		
 		if uploadErr != nil {
+			// For remote uploads, if we already read data, we can't easily retry this part 
+			// without Range support from the source. So we fail fast to avoid corruption.
 			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
 			return
 		}
@@ -790,6 +818,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
+		staggerUpload(ctx)
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
 		return 0, "", fmt.Errorf("upload cancelled while waiting for queue")
@@ -814,7 +843,6 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		fileSize = fileInfo.Size()
 	}
 
-	api := GetAPI()
 
 	// Create main record
 	var dbErr error
@@ -880,15 +908,16 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		var msgID int
 		var uploadErr error
 		for attempt := 1; attempt <= 3; attempt++ {
+			currentApi := GetAPI()
 			if attempt > 1 {
 				time.Sleep(5 * time.Second)
 				_, _ = sectionReader.Seek(0, io.SeekStart)
 			}
 			// Fresh uploader per attempt to avoid stale session state.
-			freshUp := uploader.NewUploader(api).
+			freshUp := uploader.NewUploader(currentApi).
 				WithPartSize(uploader.MaximumPartSize).
 				WithThreads(cfg.UploadThreads)
-			msgID, uploadErr = uploadFilePart(ctx, api, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
 			if uploadErr == nil {
 				break
 			}
@@ -1115,6 +1144,7 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 	// Wait for a slot in the upload queue
 	select {
 	case uploadSemaphore <- struct{}{}:
+		staggerUpload(ctx)
 		defer func() { <-uploadSemaphore }()
 	case <-ctx.Done():
 		return 0, "", fmt.Errorf("cancelled while waiting for upload slot")
@@ -1133,7 +1163,6 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
-	api := GetAPI()
 
 	// Create main record
 	var fileID int64
@@ -1183,12 +1212,15 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 
 		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1), "")
 
-		up := uploader.NewUploader(api).
+		// Remote upload sync: pick a bot for this part
+		currentApi := GetAPI()
+		
+		up := uploader.NewUploader(currentApi).
 			WithPartSize(uploader.MaximumPartSize).
 			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
 			WithThreads(cfg.UploadThreads)
 
-		msgID, uploadErr := uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+		msgID, uploadErr := uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
 		if uploadErr != nil {
 			return 0, "", fmt.Errorf("upload_part_failed: %w", uploadErr)
 		}

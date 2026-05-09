@@ -266,7 +266,7 @@ install_dependencies() {
         echo "[!] yt-dlp cho phép tải video/audio từ YouTube, Facebook, TikTok..."
         read -p "[?] Bạn có muốn cài đặt yt-dlp không? (y/n): " install_ytdlp
 
-        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python"
+        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python procps"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
 
@@ -406,8 +406,8 @@ create_run_scripts() {
     local APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
     APP_PORT=${APP_PORT:-8091}
 
-    if [ "$OS_TYPE" == "linux" ]; then
-        # Cấu hình Systemd cho Linux
+    # Tạo systemd service cho Linux có systemd
+    if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null; then
         cat > /etc/systemd/system/telecloud.service <<EOF
 [Unit]
 Description=Telecloud Go Service
@@ -442,24 +442,24 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
         fi
+        systemctl daemon-reload
+    fi
 
+    # Tạo run.sh cho mọi OS (Linux fallback + Termux/macOS)
+    WAKELOCK=""
+    [ "$OS_TYPE" == "termux" ] && WAKELOCK="termux-wake-lock"
 
-        if command -v systemctl &>/dev/null; then
-            systemctl daemon-reload
-        fi
-    else
-        # Cấu hình Tmux cho Termux / macOS
-        WAKELOCK=""
-        [ "$OS_TYPE" == "termux" ] && WAKELOCK="termux-wake-lock"
-
-        cat > "$BASE_DIR/run.sh" <<EOF
+    cat > "$BASE_DIR/run.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
 cd "$BASE_DIR" || exit 1
 while true; do
     if [ -f "./telecloud" ]; then
         chmod +x "./telecloud"
+        echo "[RUN] \$(date '+%Y-%m-%d %H:%M:%S') - Kh\u1edfi d\u1ed9ng TeleCloud..." >> "$BASE_DIR/app.log"
         ./telecloud >> "$BASE_DIR/app.log" 2>&1
+        EXIT_CODE=\$?
+        echo "[RUN] \$(date '+%Y-%m-%d %H:%M:%S') - TeleCloud d\u1eebng (exit code: \$EXIT_CODE). Kh\u1edfi d\u1ed9ng l\u1ea1i sau 3s..." >> "$BASE_DIR/app.log"
     else
         echo "[ERROR] Binary ./telecloud not found in \$(pwd)" >> "$BASE_DIR/app.log" 2>&1
         exit 1
@@ -467,9 +467,9 @@ while true; do
     sleep 3
 done
 EOF
-        chmod +x "$BASE_DIR/run.sh"
+    chmod +x "$BASE_DIR/run.sh"
 
-        cat > "$BASE_DIR/run-cloudflared.sh" <<EOF
+    cat > "$BASE_DIR/run-cloudflared.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
 cd "$BASE_DIR" || exit 1
@@ -479,9 +479,7 @@ while true; do
     sleep 3
 done
 EOF
-        chmod +x "$BASE_DIR/run-cloudflared.sh"
-
-    fi
+    chmod +x "$BASE_DIR/run-cloudflared.sh"
 }
 
 # =============================
@@ -585,12 +583,27 @@ check_status() {
             (systemctl is-active --quiet telecloud) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
             (systemctl is-active --quiet telecloud-tunnel) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
         else
-            (pgrep -x telecloud >/dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+            # Linux không có systemd → kiểm tra qua tmux + ps
+            (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
+            if ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+                echo "✅ Telecloud App    : Running"
+            else
+                echo "❌ Telecloud App    : Stopped"
+            fi
         fi
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
-        (pgrep -x telecloud > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        # Dùng ps để tìm tiến trình, tương thích với Termux
+        if ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+            echo "✅ Telecloud App    : Running"
+        else
+            echo "❌ Telecloud App    : Stopped"
+        fi
+        if ps auxww 2>/dev/null | grep -v grep | grep -q "cloudflared tunnel run"; then
+            echo "✅ CF Tunnel        : Online"
+        else
+            echo "❌ CF Tunnel        : Offline"
+        fi
     fi
     if [ -f "$BASE_DIR/domain.txt" ]; then
         echo "🔗 Tên miền         : https://$(cat $BASE_DIR/domain.txt)"
@@ -611,7 +624,8 @@ start_app() {
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
             echo "[+] Đang kiểm tra trạng thái khởi động (tối đa 30s)..."
-            local timeout=30
+            sleep 2
+            local timeout=28
             local success=0
             while [ $timeout -gt 0 ]; do
                 if journalctl -u telecloud.service -n 50 | grep -q "Starting TeleCloud on port"; then
@@ -641,7 +655,50 @@ start_app() {
                 echo "Có thể ứng dụng vẫn đang khởi chạy hoặc có lỗi ngầm."
             fi
         else
-            echo "[!] Hệ thống không hỗ trợ systemctl. Vui lòng chạy thủ công."
+            # Linux không có systemd → fallback dùng tmux (tương tự macOS/Termux)
+            echo "[!] Không có systemctl, dùng tmux để chạy nền..."
+            > "$BASE_DIR/app.log"
+            tmux kill-session -t $SESSION 2>/dev/null || true
+            sleep 1
+            tmux new-session -d -s $SESSION "bash $BASE_DIR/run.sh"
+            if [ $? -ne 0 ]; then
+                echo "❌ LỖI: Không thể tạo phiên TMUX. Kiểm tra tmux đã cài chưa."
+                return 1
+            fi
+            [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "bash $BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
+
+            echo "[+] Đang kiểm tra trạng thái khởi động (tối đa 30s)..."
+            sleep 2
+            local timeout=28
+            local success=0
+            while [ $timeout -gt 0 ]; do
+                if grep -q "Starting TeleCloud on port" "$BASE_DIR/app.log" 2>/dev/null; then
+                    success=1; break
+                fi
+                if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
+                    success=2; break
+                fi
+                if ! tmux has-session -t $SESSION 2>/dev/null; then
+                    success=3; break
+                fi
+                sleep 1
+                timeout=$((timeout - 1))
+            done
+
+            if [ $success -eq 1 ]; then
+                echo "✅ TeleCloud đã khởi động thành công! (chế độ tmux)"
+            elif [ $success -eq 2 ]; then
+                echo "❌ LỖI: TeleCloud đã tự đóng. Vui lòng kiểm tra log (Mục 6)."
+                tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
+                return 1
+            elif [ $success -eq 3 ]; then
+                echo "❌ LỖI: Phiên TMUX bị kết thúc bất thường. Vui lòng kiểm tra log (Mục 6)."
+                tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
+                return 1
+            else
+                echo "⚠️  CẢNH BÁO: Quá thời gian chờ (30s). Ứng dụng có thể vẫn đang khởi chạy."
+                tail -n 5 "$BASE_DIR/app.log" 2>/dev/null
+            fi
         fi
     else
         # Tránh spawn lồng nhau nếu đang ở trong tmux
@@ -654,13 +711,20 @@ start_app() {
 
         # Xóa log cũ để kiểm tra log mới
         > "$BASE_DIR/app.log"
-        if ! tmux has-session -t $SESSION 2>/dev/null; then
-            tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
+        
+        # Đảm bảo kill hết session cũ rồi mới tạo session mới
+        tmux kill-session -t $SESSION 2>/dev/null || true
+        sleep 1
+        tmux new-session -d -s $SESSION "bash $BASE_DIR/run.sh"
+        if [ $? -ne 0 ]; then
+            echo "❌ LỖI: Không thể tạo phiên TMUX. Vui lòng kiểm tra tmux đã được cài chưa."
+            return 1
         fi
-        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
+        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "bash $BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
         
         echo "[+] Đang kiểm tra trạng thái khởi động (tối đa 30s)..."
-        local timeout=30
+        sleep 2
+        local timeout=28
         local success=0
         while [ $timeout -gt 0 ]; do
             if grep -q "Starting TeleCloud on port" "$BASE_DIR/app.log" 2>/dev/null; then
@@ -669,8 +733,8 @@ start_app() {
             if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
                 success=2; break
             fi
-            # Kiểm tra nếu tiến trình không còn tồn tại
-            if ! pgrep -x telecloud > /dev/null; then
+            # Kiểm tra nếu phiên TMUX quản lý đã chết (đồng nghĩa script chạy nền đã dừng)
+            if ! tmux has-session -t $SESSION 2>/dev/null; then
                 success=3; break
             fi
             sleep 1
@@ -681,13 +745,19 @@ start_app() {
             echo "✅ TeleCloud đã khởi động thành công!"
         elif [ $success -eq 2 ]; then
             echo "❌ LỖI: TeleCloud đã tự đóng (shut down). Vui lòng kiểm tra log (Mục 6)."
+            echo "--- 10 dòng log cuối ---"
+            tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
             return 1
         elif [ $success -eq 3 ]; then
-            echo "❌ LỖI: Tiến trình TeleCloud đã thoát đột ngột. Vui lòng kiểm tra log (Mục 6)."
+            echo "❌ LỖI: Phiên TMUX bị kết thúc bất thường. Vui lòng kiểm tra log (Mục 6)."
+            echo "--- 10 dòng log cuối ---"
+            tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
             return 1
         else
             echo "⚠️  CẢNH BÁO: Quá thời gian chờ (30s) nhưng chưa xác nhận được trạng thái."
             echo "Có thể ứng dụng vẫn đang khởi chạy hoặc có lỗi ngầm."
+            echo "--- 5 dòng log cuối ---"
+            tail -n 5 "$BASE_DIR/app.log" 2>/dev/null
         fi
     fi
 }
@@ -698,8 +768,25 @@ stop_app() {
         if command -v systemctl &>/dev/null; then
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
         else
-            pkill -f "cloudflared tunnel run" 2>/dev/null || true
-            pkill -x telecloud 2>/dev/null || true
+            # Linux không có systemd → dùng tmux
+            tmux kill-session -t $SESSION 2>/dev/null || true
+            local timeout=15
+            while [ $timeout -gt 0 ]; do
+                if ! ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+                    break
+                fi
+                sleep 1
+                timeout=$((timeout - 1))
+            done
+            for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run.sh" | awk '{print $2}'); do
+                kill "$pid" 2>/dev/null || true
+            done
+            for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/telecloud" | awk '{print $2}'); do
+                kill -9 "$pid" 2>/dev/null || true
+            done
+            for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "cloudflared tunnel run" | awk '{print $2}'); do
+                kill -9 "$pid" 2>/dev/null || true
+            done
         fi
     else
         # Tắt Tmux session (Tmux gửi SIGHUP, app đã được cấu hình để bắt SIGHUP và tắt sạch sẽ)
@@ -707,16 +794,28 @@ stop_app() {
         
         # Chờ tiến trình thoát hoàn toàn (tối đa 15s)
         local timeout=15
-        while pgrep -x telecloud > /dev/null && [ $timeout -gt 0 ]; do
+        while [ $timeout -gt 0 ]; do
+            # Dùng ps auxww để hiện đầy đủ path (tránh cắt ngắn trên macOS)
+            if ! ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+                break
+            fi
             sleep 1
             timeout=$((timeout - 1))
         done
         
-        # Cưỡng chế tắt các script bảo vệ và binary nếu vẫn còn sót (fallback)
-        pkill -f "$BASE_DIR/run.sh" 2>/dev/null || true
-        pkill -f "$BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
-        pkill -9 -x telecloud 2>/dev/null || true
-        pkill -9 -f "cloudflared tunnel run" 2>/dev/null || true
+        # Cưỡng chế tắt nếu vẫn còn (fallback - dùng kill theo PID)
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run.sh" | awk '{print $2}'); do
+            kill "$pid" 2>/dev/null || true
+        done
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run-cloudflared.sh" | awk '{print $2}'); do
+            kill "$pid" 2>/dev/null || true
+        done
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/telecloud" | awk '{print $2}'); do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "cloudflared tunnel run" | awk '{print $2}'); do
+            kill -9 "$pid" 2>/dev/null || true
+        done
     fi
     echo "✅ Đã dừng toàn bộ."
 }
@@ -791,7 +890,9 @@ manage_tunnel() {
                     systemctl disable telecloud-tunnel 2>/dev/null
                 fi
             else
-                pkill -f "cloudflared tunnel run" 2>/dev/null
+                for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "cloudflared tunnel run" | awk '{print $2}'); do
+                    kill "$pid" 2>/dev/null || true
+                done
             fi
             echo "[+] Đang gỡ bỏ tunnel $TUNNEL_NAME từ Cloudflare..."
             cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null
@@ -1176,7 +1277,7 @@ if [ ! -f "$BASE_DIR/telecloud" ]; then
     echo "Gõ lệnh sau để mở Menu Quản lý:"
     echo "   telecloud"
     echo ""
-    local PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
+    PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
     PORT=${PORT:-8091}
     echo "Ứng dụng sẽ tự động chạy ở chế độ Thiết lập (Setup Mode)."
     echo "Vui lòng truy cập địa chỉ sau để hoàn tất cài đặt:"

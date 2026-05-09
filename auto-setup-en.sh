@@ -267,7 +267,7 @@ install_dependencies() {
         echo "[!] yt-dlp allows downloading video/audio from YouTube, Facebook, TikTok..."
         read -p "[?] Do you want to install yt-dlp? (y/n): " install_ytdlp
 
-        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python"
+        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python procps"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
 
@@ -406,8 +406,8 @@ create_run_scripts() {
     local APP_PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
     APP_PORT=${APP_PORT:-8091}
 
-    if [ "$OS_TYPE" == "linux" ]; then
-        # Configure Systemd for Linux
+    # Create systemd service for Linux with systemd
+    if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null; then
         cat > /etc/systemd/system/telecloud.service <<EOF
 [Unit]
 Description=Telecloud Go Service
@@ -442,24 +442,24 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
         fi
+        systemctl daemon-reload
+    fi
 
+    # Create run.sh for all OS types (Linux fallback + Termux/macOS)
+    WAKELOCK=""
+    [ "$OS_TYPE" == "termux" ] && WAKELOCK="termux-wake-lock"
 
-        if command -v systemctl &>/dev/null; then
-            systemctl daemon-reload
-        fi
-    else
-        # Configure Tmux for Termux / macOS
-        WAKELOCK=""
-        [ "$OS_TYPE" == "termux" ] && WAKELOCK="termux-wake-lock"
-
-        cat > "$BASE_DIR/run.sh" <<EOF
+    cat > "$BASE_DIR/run.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
 cd "$BASE_DIR" || exit 1
 while true; do
     if [ -f "./telecloud" ]; then
         chmod +x "./telecloud"
+        echo "[RUN] \$(date '+%Y-%m-%d %H:%M:%S') - Starting TeleCloud..." >> "$BASE_DIR/app.log"
         ./telecloud >> "$BASE_DIR/app.log" 2>&1
+        EXIT_CODE=\$?
+        echo "[RUN] \$(date '+%Y-%m-%d %H:%M:%S') - TeleCloud stopped (exit code: \$EXIT_CODE). Restarting in 3s..." >> "$BASE_DIR/app.log"
     else
         echo "[ERROR] Binary ./telecloud not found in \$(pwd)" >> "$BASE_DIR/app.log" 2>&1
         exit 1
@@ -467,9 +467,9 @@ while true; do
     sleep 3
 done
 EOF
-        chmod +x "$BASE_DIR/run.sh"
+    chmod +x "$BASE_DIR/run.sh"
 
-        cat > "$BASE_DIR/run-cloudflared.sh" <<EOF
+    cat > "$BASE_DIR/run-cloudflared.sh" <<EOF
 #!/bin/bash
 $WAKELOCK
 cd "$BASE_DIR" || exit 1
@@ -479,9 +479,7 @@ while true; do
     sleep 3
 done
 EOF
-        chmod +x "$BASE_DIR/run-cloudflared.sh"
-
-    fi
+    chmod +x "$BASE_DIR/run-cloudflared.sh"
 }
 
 # =============================
@@ -585,12 +583,27 @@ check_status() {
             (systemctl is-active --quiet telecloud) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
             (systemctl is-active --quiet telecloud-tunnel) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
         else
-            (pgrep -x telecloud >/dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
+            # Linux without systemd → check via tmux + ps
+            (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Background): Running" || echo "❌ TMUX (Background): Stopped"
+            if ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+                echo "✅ Telecloud App    : Running"
+            else
+                echo "❌ Telecloud App    : Stopped"
+            fi
         fi
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Background): Running" || echo "❌ TMUX (Background): Stopped"
-        (pgrep -x telecloud > /dev/null) && echo "✅ Telecloud App    : Running" || echo "❌ Telecloud App    : Stopped"
-        (pgrep -f "cloudflared tunnel run" > /dev/null) && echo "✅ CF Tunnel        : Online" || echo "❌ CF Tunnel        : Offline"
+        # Use ps to find processes for Termux compatibility
+        if ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+            echo "✅ Telecloud App    : Running"
+        else
+            echo "❌ Telecloud App    : Stopped"
+        fi
+        if ps auxww 2>/dev/null | grep -v grep | grep -q "cloudflared tunnel run"; then
+            echo "✅ CF Tunnel        : Online"
+        else
+            echo "❌ CF Tunnel        : Offline"
+        fi
     fi
     if [ -f "$BASE_DIR/domain.txt" ]; then
         echo "🔗 Domain           : https://$(cat $BASE_DIR/domain.txt)"
@@ -611,7 +624,8 @@ start_app() {
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
             echo "[+] Checking startup status (waiting up to 30s)..."
-            local timeout=30
+            sleep 2
+            local timeout=28
             local success=0
             while [ $timeout -gt 0 ]; do
                 if journalctl -u telecloud.service -n 50 | grep -q "Starting TeleCloud on port"; then
@@ -641,7 +655,50 @@ start_app() {
                 echo "The application might still be starting or encountered an error."
             fi
         else
-            echo "[!] Your system does not support systemctl. Please run manually."
+            # Linux without systemd → fall back to tmux (same as macOS/Termux)
+            echo "[!] systemctl not found, using tmux to run in background..."
+            > "$BASE_DIR/app.log"
+            tmux kill-session -t $SESSION 2>/dev/null || true
+            sleep 1
+            tmux new-session -d -s $SESSION "bash $BASE_DIR/run.sh"
+            if [ $? -ne 0 ]; then
+                echo "❌ ERROR: Failed to create TMUX session. Please check if tmux is installed."
+                return 1
+            fi
+            [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "bash $BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
+
+            echo "[+] Checking startup status (waiting up to 30s)..."
+            sleep 2
+            local timeout=28
+            local success=0
+            while [ $timeout -gt 0 ]; do
+                if grep -q "Starting TeleCloud on port" "$BASE_DIR/app.log" 2>/dev/null; then
+                    success=1; break
+                fi
+                if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
+                    success=2; break
+                fi
+                if ! tmux has-session -t $SESSION 2>/dev/null; then
+                    success=3; break
+                fi
+                sleep 1
+                timeout=$((timeout - 1))
+            done
+
+            if [ $success -eq 1 ]; then
+                echo "✅ TeleCloud started successfully! (tmux mode)"
+            elif [ $success -eq 2 ]; then
+                echo "❌ ERROR: TeleCloud has shut down. Please check the logs (Option 6)."
+                tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
+                return 1
+            elif [ $success -eq 3 ]; then
+                echo "❌ ERROR: TMUX session terminated unexpectedly. Please check the logs (Option 6)."
+                tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
+                return 1
+            else
+                echo "⚠️  WARNING: Wait time exceeded (30s). App may still be starting."
+                tail -n 5 "$BASE_DIR/app.log" 2>/dev/null
+            fi
         fi
     else
         # Prevent nested spawning if already inside tmux
@@ -654,13 +711,20 @@ start_app() {
 
         # Clear old log for fresh check
         > "$BASE_DIR/app.log"
-        if ! tmux has-session -t $SESSION 2>/dev/null; then
-            tmux new-session -d -s $SESSION "cd $BASE_DIR && ./run.sh" || true
+        
+        # Ensure old session is killed before creating a new one
+        tmux kill-session -t $SESSION 2>/dev/null || true
+        sleep 1
+        tmux new-session -d -s $SESSION "bash $BASE_DIR/run.sh"
+        if [ $? -ne 0 ]; then
+            echo "❌ ERROR: Failed to create TMUX session. Please check if tmux is installed."
+            return 1
         fi
-        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "cd $BASE_DIR && ./run-cloudflared.sh" 2>/dev/null || true
+        [ -f "$BASE_DIR/tunnel.txt" ] && tmux split-window -h -t $SESSION "bash $BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
         
         echo "[+] Checking startup status (waiting up to 30s)..."
-        local timeout=30
+        sleep 2
+        local timeout=28
         local success=0
         while [ $timeout -gt 0 ]; do
             if grep -q "Starting TeleCloud on port" "$BASE_DIR/app.log" 2>/dev/null; then
@@ -669,8 +733,8 @@ start_app() {
             if grep -q "TeleCloud shut down" "$BASE_DIR/app.log" 2>/dev/null; then
                 success=2; break
             fi
-            # Check if the process still exists
-            if ! pgrep -x telecloud > /dev/null; then
+            # Check if the TMUX session has died (meaning the background runner stopped)
+            if ! tmux has-session -t $SESSION 2>/dev/null; then
                 success=3; break
             fi
             sleep 1
@@ -681,13 +745,19 @@ start_app() {
             echo "✅ TeleCloud started successfully!"
         elif [ $success -eq 2 ]; then
             echo "❌ ERROR: TeleCloud has shut down. Please check the logs (Option 6)."
+            echo "--- Last 10 log lines ---"
+            tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
             return 1
         elif [ $success -eq 3 ]; then
-            echo "❌ ERROR: TeleCloud process exited unexpectedly. Please check the logs (Option 6)."
+            echo "❌ ERROR: TMUX session terminated unexpectedly. Please check the logs (Option 6)."
+            echo "--- Last 10 log lines ---"
+            tail -n 10 "$BASE_DIR/app.log" 2>/dev/null
             return 1
         else
             echo "⚠️  WARNING: Wait time exceeded (30s). Status unconfirmed."
             echo "The application might still be starting or encountered an error."
+            echo "--- Last 5 log lines ---"
+            tail -n 5 "$BASE_DIR/app.log" 2>/dev/null
         fi
     fi
 }
@@ -698,8 +768,25 @@ stop_app() {
         if command -v systemctl &>/dev/null; then
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
         else
-            pkill -f "cloudflared tunnel run" 2>/dev/null || true
-            pkill -x telecloud 2>/dev/null || true
+            # Linux without systemd → use tmux
+            tmux kill-session -t $SESSION 2>/dev/null || true
+            local timeout=15
+            while [ $timeout -gt 0 ]; do
+                if ! ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+                    break
+                fi
+                sleep 1
+                timeout=$((timeout - 1))
+            done
+            for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run.sh" | awk '{print $2}'); do
+                kill "$pid" 2>/dev/null || true
+            done
+            for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/telecloud" | awk '{print $2}'); do
+                kill -9 "$pid" 2>/dev/null || true
+            done
+            for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "cloudflared tunnel run" | awk '{print $2}'); do
+                kill -9 "$pid" 2>/dev/null || true
+            done
         fi
     else
         # Stop Tmux session (Tmux sends SIGHUP; app is configured to catch SIGHUP and shut down cleanly)
@@ -707,16 +794,28 @@ stop_app() {
         
         # Wait for the process to exit completely (max 15s)
         local timeout=15
-        while pgrep -x telecloud > /dev/null && [ $timeout -gt 0 ]; do
+        while [ $timeout -gt 0 ]; do
+            # Use ps auxww to show full path (prevents truncation on macOS)
+            if ! ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+                break
+            fi
             sleep 1
             timeout=$((timeout - 1))
         done
         
-        # Force stop if anything remains (fallback)
-        pkill -f "$BASE_DIR/run.sh" 2>/dev/null || true
-        pkill -f "$BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
-        pkill -9 -x telecloud 2>/dev/null || true
-        pkill -9 -f "cloudflared tunnel run" 2>/dev/null || true
+        # Force stop if anything remains (fallback - kill by PID)
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run.sh" | awk '{print $2}'); do
+            kill "$pid" 2>/dev/null || true
+        done
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run-cloudflared.sh" | awk '{print $2}'); do
+            kill "$pid" 2>/dev/null || true
+        done
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/telecloud" | awk '{print $2}'); do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+        for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "cloudflared tunnel run" | awk '{print $2}'); do
+            kill -9 "$pid" 2>/dev/null || true
+        done
     fi
     echo "✅ Stopped everything."
 }
@@ -791,7 +890,9 @@ manage_tunnel() {
                     systemctl disable telecloud-tunnel 2>/dev/null
                 fi
             else
-                pkill -f "cloudflared tunnel run" 2>/dev/null
+                for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "cloudflared tunnel run" | awk '{print $2}'); do
+                    kill "$pid" 2>/dev/null || true
+                done
             fi
             echo "[+] Removing tunnel $TUNNEL_NAME from Cloudflare..."
             cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null
@@ -1177,7 +1278,7 @@ if [ ! -f "$BASE_DIR/telecloud" ]; then
     echo "Type the following command to open the Management Menu:"
     echo "   telecloud"
     echo ""
-    local PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
+    PORT=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
     PORT=${PORT:-8091}
     echo "The application is running in Setup Mode."
     echo "Please visit the following URL to complete the setup:"

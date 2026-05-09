@@ -454,14 +454,14 @@ EOF
 $WAKELOCK
 cd "$BASE_DIR" || exit 1
 while true; do
-    if [ -f "./telecloud" ]; then
-        chmod +x "./telecloud"
+    if [ -f "$BASE_DIR/telecloud" ]; then
+        chmod +x "$BASE_DIR/telecloud"
         echo "[RUN] \$(date '+%Y-%m-%d %H:%M:%S') - Starting TeleCloud..." >> "$BASE_DIR/app.log"
-        ./telecloud >> "$BASE_DIR/app.log" 2>&1
+        "$BASE_DIR/telecloud" >> "$BASE_DIR/app.log" 2>&1
         EXIT_CODE=\$?
         echo "[RUN] \$(date '+%Y-%m-%d %H:%M:%S') - TeleCloud stopped (exit code: \$EXIT_CODE). Restarting in 3s..." >> "$BASE_DIR/app.log"
     else
-        echo "[ERROR] Binary ./telecloud not found in \$(pwd)" >> "$BASE_DIR/app.log" 2>&1
+        echo "[ERROR] Binary $BASE_DIR/telecloud not found!" >> "$BASE_DIR/app.log" 2>&1
         exit 1
     fi
     sleep 3
@@ -924,24 +924,18 @@ view_logs() {
 
     case $log_choice in
         1)
-            if [ "$OS_TYPE" == "linux" ]; then
-                if command -v systemctl &>/dev/null; then
-                    journalctl -u telecloud.service -f -n 50
-                else
-                    echo "[!] journalctl not available."
-                fi
+            if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null && [ -f /etc/systemd/system/telecloud.service ]; then
+                journalctl -u telecloud.service -f -n 50
             else
+                # Linux without systemd (tmux fallback) or Termux/macOS → read app.log
                 [ -f "$BASE_DIR/app.log" ] && tail -f -n 50 "$BASE_DIR/app.log" || echo "❌ No app log file found."
             fi
             ;;
         2)
-            if [ "$OS_TYPE" == "linux" ]; then
-                if command -v systemctl &>/dev/null; then
-                    journalctl -u telecloud-tunnel.service -f -n 50
-                else
-                    echo "[!] journalctl not available."
-                fi
+            if [ "$OS_TYPE" == "linux" ] && command -v systemctl &>/dev/null && [ -f /etc/systemd/system/telecloud-tunnel.service ]; then
+                journalctl -u telecloud-tunnel.service -f -n 50
             else
+                # Linux without systemd (tmux fallback) or Termux/macOS → read tunnel.log
                 [ -f "$BASE_DIR/tunnel.log" ] && tail -f -n 50 "$BASE_DIR/tunnel.log" || echo "❌ No tunnel log file found."
             fi
             ;;

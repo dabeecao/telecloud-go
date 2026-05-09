@@ -201,7 +201,7 @@ install_dependencies() {
 
     if [ "$OS_TYPE" == "linux" ]; then
         # Cài lần lượt, bỏ qua gói đã có
-        for pkg in curl wget tar unzip jq tmux nano; do
+        for pkg in curl wget tar unzip jq tmux nano procps; do
             pkg_install "$pkg"
         done
 
@@ -545,6 +545,31 @@ download_file() {
     return 1
 }
 
+is_app_running() {
+    local app_path="$1"
+    # 1. Check by full path in ps
+    if ps auxww 2>/dev/null | grep -v grep | grep -q "$app_path"; then
+        return 0
+    fi
+    # 2. Check by pgrep -f (more robust on some systems)
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -f "$app_path" >/dev/null 2>&1 && return 0
+    fi
+    # 3. Check by port (if .env exists and port is configured)
+    if [ -f "$BASE_DIR/.env" ]; then
+        local p=$(grep "^PORT=" "$BASE_DIR/.env" | cut -d'=' -f2)
+        p=${p:-8091}
+        if command -v lsof >/dev/null 2>&1; then
+            lsof -i ":$p" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+        elif command -v netstat >/dev/null 2>&1; then
+            netstat -tuln 2>/dev/null | grep -q ":$p " && return 0
+        elif command -v ss >/dev/null 2>&1; then
+            ss -tuln 2>/dev/null | grep -q ":$p " && return 0
+        fi
+    fi
+    return 1
+}
+
 if [ -n "$PREFIX" ] && echo "$PREFIX" | grep -q "termux"; then
     OS_TYPE="termux"
     BASE_DIR="$HOME/telecloud-go"
@@ -585,7 +610,7 @@ check_status() {
         else
             # Linux không có systemd → kiểm tra qua tmux + ps
             (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
-            if ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+            if is_app_running "$BASE_DIR/telecloud"; then
                 echo "✅ Telecloud App    : Running"
             else
                 echo "❌ Telecloud App    : Stopped"
@@ -593,13 +618,18 @@ check_status() {
         fi
     else
         (tmux has-session -t $SESSION 2>/dev/null) && echo "✅ TMUX (Nền)       : Running" || echo "❌ TMUX (Nền)       : Stopped"
-        # Dùng ps để tìm tiến trình, tương thích với Termux
-        if ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+        # Dùng helper để tìm tiến trình, tương thích với Termux/macOS
+        if is_app_running "$BASE_DIR/telecloud"; then
             echo "✅ Telecloud App    : Running"
         else
             echo "❌ Telecloud App    : Stopped"
         fi
-        if ps auxww 2>/dev/null | grep -v grep | grep -q "cloudflared tunnel run"; then
+
+        # Kiểm tra Tunnel cụ thể hơn
+        local TUNNEL_NAME=$(cat "$BASE_DIR/tunnel-name.txt" 2>/dev/null || echo "")
+        if [ -n "$TUNNEL_NAME" ] && ps auxww 2>/dev/null | grep -v grep | grep -q "cloudflared tunnel run.*$TUNNEL_NAME"; then
+            echo "✅ CF Tunnel        : Online"
+        elif ps auxww 2>/dev/null | grep -v grep | grep -q "cloudflared tunnel run"; then
             echo "✅ CF Tunnel        : Online"
         else
             echo "❌ CF Tunnel        : Offline"
@@ -772,7 +802,7 @@ stop_app() {
             tmux kill-session -t $SESSION 2>/dev/null || true
             local timeout=15
             while [ $timeout -gt 0 ]; do
-                if ! ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+                if ! is_app_running "$BASE_DIR/telecloud"; then
                     break
                 fi
                 sleep 1
@@ -795,8 +825,8 @@ stop_app() {
         # Chờ tiến trình thoát hoàn toàn (tối đa 15s)
         local timeout=15
         while [ $timeout -gt 0 ]; do
-            # Dùng ps auxww để hiện đầy đủ path (tránh cắt ngắn trên macOS)
-            if ! ps auxww 2>/dev/null | grep -v grep | grep -q "$BASE_DIR/telecloud"; then
+            # Dùng helper để kiểm tra trạng thái thoát
+            if ! is_app_running "$BASE_DIR/telecloud"; then
                 break
             fi
             sleep 1

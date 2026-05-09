@@ -18,6 +18,35 @@ import (
 	"time"
 )
 
+func translateYTDLPError(errMsg string) string {
+	errMsg = strings.ToLower(errMsg)
+	
+	switch {
+	case strings.Contains(errMsg, "sign in to confirm your age"):
+		return "age_restricted"
+	case strings.Contains(errMsg, "incomplete youtube id") || strings.Contains(errMsg, "not a valid url"):
+		return "invalid_url"
+	case strings.Contains(errMsg, "this video is unavailable") || strings.Contains(errMsg, "video unavailable"):
+		return "video_unavailable"
+	case strings.Contains(errMsg, "private video"):
+		return "video_private"
+	case strings.Contains(errMsg, "403: forbidden") || strings.Contains(errMsg, "403 forbidden"):
+		return "remote_forbidden"
+	case strings.Contains(errMsg, "429: too many requests") || strings.Contains(errMsg, "429 too many requests"):
+		return "too_many_requests"
+	case strings.Contains(errMsg, "unsupported url"):
+		return "unsupported_url"
+	case strings.Contains(errMsg, "geo-restricted") || strings.Contains(errMsg, "not available in your country"):
+		return "geo_restricted"
+	case strings.Contains(errMsg, "ffmpeg not found"):
+		return "ffmpeg_missing"
+	case strings.Contains(errMsg, "getaddrinfo failed") || strings.Contains(errMsg, "name or service not known"):
+		return "network_error"
+	}
+	
+	return "ytdlp_error"
+}
+
 func IsValidURL(u string) bool {
 	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
 }
@@ -62,7 +91,7 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 	}
 
 	if utils.IsPrivateIP(url) {
-		return nil, fmt.Errorf("err_forbidden_url")
+		return nil, fmt.Errorf("forbidden_url")
 	}
 
 	args := []string{"-J", "--no-playlist", url}
@@ -89,7 +118,13 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
-		// Limit error message length
+		
+		cleanErr := translateYTDLPError(errMsg)
+		if cleanErr != "ytdlp_error" {
+			return nil, fmt.Errorf("%s", cleanErr)
+		}
+
+		// Limit error message length for generic errors
 		if len(errMsg) > 200 {
 			errMsg = errMsg[:197] + "..."
 		}
@@ -151,7 +186,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	}
 
 	if utils.IsPrivateIP(url) {
-		UpdateTaskWithFile(taskID, "error", 0, "err_forbidden_url", "", owner, 0, 0)
+		UpdateTaskWithFile(taskID, "error", 0, "forbidden_url", "", owner, 0, 0)
 		return
 	}
 
@@ -245,6 +280,11 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	}
 	// Merge stdout and stderr so progress lines and error messages are all captured
 	combined := io.MultiReader(stdout, stderr)
+	
+	// We also need to capture stderr separately for error reporting if it fails
+	var stderrBuf strings.Builder
+	stderrTee := io.TeeReader(stderr, &stderrBuf)
+	combined = io.MultiReader(stdout, stderrTee)
 
 	if err := cmd.Start(); err != nil {
 		UpdateTaskWithFile(taskID, "error", 0, "start_error", "", owner, 0, 0)
@@ -292,7 +332,14 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 			UpdateTask(taskID, "error", 0, statusMsg, owner)
 			return
 		}
-		UpdateTask(taskID, "error", 0, "ytdlp_failed", owner)
+		
+		errMsg := stderrBuf.String()
+		if idx := strings.Index(errMsg, "ERROR:"); idx != -1 {
+			errMsg = strings.TrimSpace(errMsg[idx+6:])
+		}
+		
+		cleanErr := translateYTDLPError(errMsg)
+		UpdateTask(taskID, "error", 0, cleanErr, owner)
 		return
 	}
 

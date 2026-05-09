@@ -154,7 +154,7 @@ func (h *Handler) handlePostYTDLPFormats(c *gin.Context) {
 		return
 	}
 	if utils.IsPrivateIP(url) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "err_forbidden_url"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden_url"})
 		return
 	}
 	username := c.GetString("username")
@@ -181,7 +181,7 @@ func (h *Handler) handlePostYTDLPDownload(c *gin.Context) {
 		return
 	}
 	if utils.IsPrivateIP(url) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "err_forbidden_url"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden_url"})
 		return
 	}
 	if path == "" {

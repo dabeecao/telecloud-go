@@ -47,18 +47,10 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func verifyItemAccess(c *gin.Context, path string) bool {
-	isAdmin := c.GetBool("is_admin")
-	if isAdmin {
-		return true
-	}
-	username := c.GetString("username")
-	prefix := "/" + username
-	return path == prefix || strings.HasPrefix(path, prefix+"/")
-}
+
 
 func isChildAccountPath(dbPath string) bool {
-	return isChildAccountPathQuery(database.DB, dbPath)
+	return isChildAccountPathQuery(database.RODB, dbPath)
 }
 
 func isChildAccountPathQuery(q database.Queryer, dbPath string) bool {
@@ -72,4 +64,11 @@ func isChildAccountPathQuery(q database.Queryer, dbPath string) bool {
 	var exists int
 	q.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
 	return exists > 0
+}
+func getRequestOrigin(c *gin.Context) string {
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + c.Request.Host
 }

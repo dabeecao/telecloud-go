@@ -79,7 +79,7 @@ func restartApp() {
 }
 
 var (
-	version = "v3.2.0-beta3"
+	version = "v3.2.2"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -170,18 +170,8 @@ func main() {
 	utils.InitCrypto(cryptoSecret)
 	utils.InitMedia(cfg.ThumbsDir)
 
-	rpid := database.GetSetting("webauthn_rpid")
-	if rpid == "" {
-		rpid = cfg.WebAuthnRPID
-	}
-	rporigin := database.GetSetting("webauthn_rporigin")
-	origins := []string{}
-	if rporigin != "" {
-		origins = strings.Split(rporigin, ",")
-	} else if cfg.WebAuthnRPOrigin != "" {
-		origins = strings.Split(cfg.WebAuthnRPOrigin, ",")
-	}
-	api.InitWebAuthn(rpid, origins)
+	// Initialize WebAuthn (logic moved to api.InitWebAuthn for consistency)
+	api.InitWebAuthn("", nil)
 
 	startCleanupTask(cfg)
 
@@ -242,6 +232,9 @@ func main() {
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
+			if p, err := os.FindProcess(os.Getpid()); err == nil {
+				p.Signal(syscall.SIGTERM)
+			}
 		}
 	}()
 

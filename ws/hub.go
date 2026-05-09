@@ -124,22 +124,45 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request, username string) {
 }
 
 type TaskUpdate struct {
-	TaskID        string `json:"task_id"`
-	Status        string `json:"status"`
-	Percent       int    `json:"percent"`
-	Message       string `json:"message,omitempty"`
-	Size          int64  `json:"size,omitempty"`
-	UploadedBytes int64  `json:"uploaded_bytes,omitempty"`
+	TaskID        string  `json:"task_id"`
+	Status        string  `json:"status"`
+	Phase         string  `json:"phase,omitempty"`
+	Progress      float64 `json:"progress"`
+	Percent       int     `json:"percent"`
+	Message       string  `json:"message,omitempty"`
+	Size          int64   `json:"size,omitempty"`
+	UploadedBytes int64   `json:"uploaded_bytes,omitempty"`
+	Speed         int64   `json:"speed,omitempty"`
+	ETA           int     `json:"eta,omitempty"`
 }
 
-func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, size int64, uploadedBytes int64) {
+func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, size int64, uploadedBytes int64, speed int64, eta int) {
+	phase := status
+	switch status {
+	case "telegram":
+		phase = "telegram_upload"
+	case "downloading":
+		phase = "remote_download"
+	case "uploading_to_server":
+		phase = "server_upload"
+	}
+
+	progress := float64(percent)
+	if size > 0 {
+		progress = (float64(uploadedBytes) / float64(size)) * 100
+	}
+
 	update := TaskUpdate{
 		TaskID:        taskID,
 		Status:        status,
+		Phase:         phase,
+		Progress:      progress,
 		Percent:       percent,
 		Message:       msg,
 		Size:          size,
 		UploadedBytes: uploadedBytes,
+		Speed:         speed,
+		ETA:           eta,
 	}
 	data, err := json.Marshal(update)
 	if err != nil {

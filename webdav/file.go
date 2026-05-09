@@ -35,12 +35,13 @@ type telecloudFile struct {
 	name  string
 	size  int64
 	mtime time.Time
-	rs    io.ReadSeeker
+	rs    io.ReadSeekCloser
 
 	dirItems []os.FileInfo
 	dirIndex int
 	isAdmin  bool
 	username string
+	fs       *telecloudFS
 }
 
 func (f *telecloudFile) Read(p []byte) (int, error) {
@@ -70,30 +71,44 @@ func (f *telecloudFile) Readdir(count int) ([]os.FileInfo, error) {
 	
 	if f.dirItems == nil {
 		searchPath := f.path
+		cacheKey := f.username + ":" + searchPath
 
-		var files []database.File
-		err := database.DB.Select(&files, "SELECT * FROM files WHERE path = ? AND owner = ? ORDER BY is_folder DESC, filename ASC", searchPath, f.username)
-		if err != nil {
-			return nil, err
-		}
-
-		f.dirItems = []os.FileInfo{}
-		for _, v := range files {
-			// Admin isolation check: hide child folders in root
-			if f.isAdmin && f.path == "/" {
-				var exists int
-				database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", v.Filename)
-				if exists > 0 {
-					continue
+		// Check cache
+		if f.fs != nil {
+			if val, ok := f.fs.dirCache.Load(cacheKey); ok {
+				entry := val.(*dirCacheEntry)
+				if time.Now().Before(entry.expiresAt) {
+					f.dirItems = entry.items
 				}
 			}
+		}
 
-			f.dirItems = append(f.dirItems, &telecloudFileInfo{
-				name:  v.Filename,
-				size:  v.Size,
-				isDir: v.IsFolder,
-				mtime: v.CreatedAt,
-			})
+		if f.dirItems == nil {
+			var files []database.File
+			// Optimized query: message_id IS NOT NULL is sufficient for visibility as it's set as soon as the first part is uploaded.
+			// This avoids the expensive subquery on file_parts.
+			err := database.RODB.Select(&files, "SELECT filename, size, is_folder, created_at FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, filename ASC", searchPath, f.username)
+			if err != nil {
+				return nil, err
+			}
+
+			f.dirItems = make([]os.FileInfo, 0, len(files))
+			for _, v := range files {
+				f.dirItems = append(f.dirItems, &telecloudFileInfo{
+					name:  v.Filename,
+					size:  v.Size,
+					isDir: v.IsFolder,
+					mtime: v.CreatedAt,
+				})
+			}
+
+			// Update cache (10 seconds TTL)
+			if f.fs != nil {
+				f.fs.dirCache.Store(cacheKey, &dirCacheEntry{
+					items:     f.dirItems,
+					expiresAt: time.Now().Add(10 * time.Second),
+				})
+			}
 		}
 	}
 
@@ -125,6 +140,9 @@ func (f *telecloudFile) Stat() (os.FileInfo, error) {
 }
 
 func (f *telecloudFile) Close() error {
+	if f.rs != nil {
+		return f.rs.Close()
+	}
 	return nil
 }
 

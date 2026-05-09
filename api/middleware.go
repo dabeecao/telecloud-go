@@ -15,7 +15,8 @@ import (
 
 type chunkState struct {
 	sync.Mutex
-	received map[int]bool
+	received      map[int]bool
+	uploadStarted bool // guards against double-trigger in concurrent chunk finalization
 }
 
 var (
@@ -128,7 +129,7 @@ func setupCheckMiddleware() gin.HandlerFunc {
 			token, _ := c.Cookie("session_token")
 			var sessionUsername string
 			if token != "" {
-				database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+				database.RODB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
 			}
 
 			// Only admin can access setup once it's configured
@@ -169,7 +170,7 @@ func setupCheckMiddleware() gin.HandlerFunc {
 			token, _ := c.Cookie("session_token")
 			var sessionUsername string
 			if token != "" {
-				database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+				database.RODB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
 			}
 
 			if sessionUsername == "" {
@@ -205,13 +206,13 @@ func authMiddleware() gin.HandlerFunc {
 
 		token, err := c.Cookie("session_token")
 		if err == nil && token != "" {
-			err = database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+			err = database.RODB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
 			if err == nil {
 				adminUser := database.GetSetting("admin_username")
 				isAdmin = sessionUsername == adminUser
 
 				if !isAdmin {
-					database.DB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", sessionUsername)
+					database.RODB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", sessionUsername)
 				}
 			}
 		}
@@ -220,22 +221,45 @@ func authMiddleware() gin.HandlerFunc {
 		if sessionUsername == "" {
 			user, password, hasAuth := c.Request.BasicAuth()
 			if hasAuth {
+				// Apply the same IP-based rate limiting as the login form
+				ip := c.ClientIP()
+				val, _ := loginAttempts.Load(ip)
+				var att loginAttempt
+				if val != nil {
+					att = val.(loginAttempt)
+					if att.count >= 5 && time.Since(att.last) < 15*time.Minute {
+						c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too_many_requests"})
+						return
+					}
+				}
+
+				var authOK bool
 				adminUser := database.GetSetting("admin_username")
 				adminPassHash := database.GetSetting("admin_password_hash")
 				if user == adminUser && bcrypt.CompareHashAndPassword([]byte(adminPassHash), []byte(password)) == nil {
 					sessionUsername = user
 					isAdmin = true
+					authOK = true
 				} else {
 					var child struct {
 						Hash        string `db:"password_hash"`
 						ForceChange int    `db:"force_password_change"`
 					}
-					err := database.DB.Get(&child, "SELECT password_hash, force_password_change FROM child_accounts WHERE username = ?", user)
+					err := database.RODB.Get(&child, "SELECT password_hash, force_password_change FROM child_accounts WHERE username = ?", user)
 					if err == nil && bcrypt.CompareHashAndPassword([]byte(child.Hash), []byte(password)) == nil {
 						sessionUsername = user
 						isAdmin = false
 						forceChange = child.ForceChange == 1
+						authOK = true
 					}
+				}
+
+				if authOK {
+					loginAttempts.Delete(ip)
+				} else {
+					att.count++
+					att.last = time.Now()
+					loginAttempts.Store(ip, att)
 				}
 			}
 		}

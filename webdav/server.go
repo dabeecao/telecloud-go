@@ -75,7 +75,7 @@ func NewHandler(cfg *config.Config) http.Handler {
 				Enabled      int    `db:"webdav_enabled"`
 				ForceChange  int    `db:"force_password_change"`
 			}
-			err := database.DB.Get(&userStatus, "SELECT password_hash, webdav_enabled, force_password_change FROM child_accounts WHERE username = ?", user)
+			err := database.RODB.Get(&userStatus, "SELECT password_hash, webdav_enabled, force_password_change FROM child_accounts WHERE username = ?", user)
 			if err != nil {
 				w.Header().Set("WWW-Authenticate", `Basic realm="TeleCloud WebDAV"`)
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)

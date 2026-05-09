@@ -69,6 +69,10 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 
 	// Public Upload API
 	r.POST("/api/upload-api/upload", h.handlePublicUploadAPI)
+	r.POST("/api/upload-api/remote", h.handlePublicRemoteUploadAPI)
+	r.GET("/api/upload-api/tasks/:task_id", h.handleGetPublicTaskStatusAPI)
+	r.DELETE("/api/upload-api/tasks/:task_id", h.handleDeletePublicTaskAPI)
+	r.POST("/api/upload-api/share", h.handlePublicShareAPI)
 
 	// Passkey Login (Public)
 	r.GET("/api/passkey/login/begin", LoginPasskeyBegin)

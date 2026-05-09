@@ -65,7 +65,7 @@ func NewHandler(cfg *config.Config) http.Handler {
 					Username string `db:"username"`
 					Enabled  int    `db:"s3_enabled"`
 				}
-				err := database.DB.Get(&child, "SELECT username, s3_enabled FROM child_accounts WHERE s3_access_key = ?", accessKey)
+				err := database.RODB.Get(&child, "SELECT username, s3_enabled FROM child_accounts WHERE s3_access_key = ?", accessKey)
 				if err == nil && child.Username != "" {
 					if child.Enabled == 0 {
 						http.Error(w, "S3 API disabled", http.StatusForbidden)

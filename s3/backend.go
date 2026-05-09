@@ -31,21 +31,6 @@ func NewBackend(cfg *config.Config, username string, isAdmin bool) *TelecloudBac
 	}
 }
 
-// isChildAccountPath checks if a DB path belongs to a child account folder.
-func isChildAccountPath(dbPath string) bool {
-	dbPath = path.Clean(dbPath)
-	if dbPath == "/" || dbPath == "." {
-		return false
-	}
-
-	parts := strings.Split(strings.TrimPrefix(dbPath, "/"), "/")
-	rootFolder := parts[0]
-
-	var exists int
-	database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
-	return exists > 0
-}
-
 // mapPath maps an S3 key to a database path and filename.
 func (b *TelecloudBackend) mapPath(s3Key string) (dbDir string, dbBase string) {
 	cleanPath := path.Clean("/" + s3Key)
@@ -91,26 +76,53 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 	}
 
 	searchDir, searchBase := b.mapPath(s3Prefix)
-	fullSearchPath := searchDir
-	if searchBase != "" {
-		fullSearchPath = path.Join(searchDir, searchBase)
-	}
+	
+	// If the prefix doesn't end in a slash, it might be a partial filename.
+	// We need to search in the parent directory for files starting with searchBase.
+	isPartialFile := s3Prefix != "" && !strings.HasSuffix(s3Prefix, "/")
 
-	// Optimization: If we have a delimiter and prefix, we can narrow down the search
 	if prefix != nil && prefix.HasDelimiter && prefix.Delimiter == "/" {
-		if b.isAdmin {
-			err = database.DB.Select(&files, "SELECT * FROM files WHERE path = ? ORDER BY filename ASC", fullSearchPath)
-		} else {
-			err = database.DB.Select(&files, "SELECT * FROM files WHERE path = ? AND owner = ? ORDER BY filename ASC", fullSearchPath, b.username)
+		// Non-recursive: list children of exact directory
+		fullSearchPath := searchDir
+		if searchBase != "" && !isPartialFile {
+			fullSearchPath = path.Join(searchDir, searchBase)
 		}
+		
+		query := "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL)"
+		args := []interface{}{fullSearchPath, b.username}
+		
+		if isPartialFile {
+			query += " AND filename LIKE ?"
+			args = append(args, searchBase+"%")
+		}
+		
+		query += " ORDER BY filename ASC"
+		err = database.RODB.Select(&files, query, args...)
 	} else {
-		query := "SELECT * FROM files WHERE (path = ? OR path LIKE ?) AND owner = ? ORDER BY path ASC, filename ASC"
-		args := []interface{}{fullSearchPath, fullSearchPath + "/%", b.username}
-		if b.isAdmin {
-			query = "SELECT * FROM files WHERE (path = ? OR path LIKE ?) ORDER BY path ASC, filename ASC"
-			args = []interface{}{fullSearchPath, fullSearchPath + "/%"}
+		// Recursive list: list everything starting with the prefix path
+		fullSearchPath := searchDir
+		if searchBase != "" && !isPartialFile {
+			fullSearchPath = path.Join(searchDir, searchBase)
 		}
-		err = database.DB.Select(&files, query, args...)
+
+		likePattern := fullSearchPath + "/%"
+		if fullSearchPath == "/" {
+			likePattern = "/%"
+		}
+
+		query := "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE (path = ? OR path LIKE ?) AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL)"
+		args := []interface{}{fullSearchPath, likePattern, b.username}
+
+		if isPartialFile {
+			query = "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE ((path = ? AND filename LIKE ?) OR (path LIKE ?)) AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL)"
+			args = []interface{}{searchDir, searchBase + "%", path.Join(searchDir, searchBase) + "/%", b.username}
+		}
+
+		query += " ORDER BY path ASC, filename ASC"
+		if page.MaxKeys > 0 {
+			query += fmt.Sprintf(" LIMIT %d", page.MaxKeys+1)
+		}
+		err = database.RODB.Select(&files, query, args...)
 	}
 
 	if err != nil {
@@ -127,11 +139,6 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 	count := 0
 	for _, f := range files {
 		fullPath := path.Join(f.Path, f.Filename)
-
-		// Strict Admin isolation
-		if b.isAdmin && isChildAccountPath(fullPath) {
-			continue
-		}
 
 		key := strings.TrimPrefix(fullPath, dbPrefix)
 		if key == fullPath && !b.isAdmin {
@@ -171,21 +178,12 @@ func (b *TelecloudBackend) GetObject(bucketName, objectName string, rangeRequest
 	}
 
 	dbPath, filename := b.mapPath(objectName)
-	fullPath := path.Join(dbPath, filename)
-
-	if b.isAdmin && isChildAccountPath(fullPath) {
-		return nil, gofakes3.KeyNotFound(objectName)
-	}
 
 	var file database.File
 	query := "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?"
 	args := []interface{}{dbPath, filename, b.username}
-	if b.isAdmin {
-		query = "SELECT * FROM files WHERE path = ? AND filename = ?"
-		args = []interface{}{dbPath, filename}
-	}
 
-	err := database.DB.Get(&file, query, args...)
+	err := database.RODB.Get(&file, query, args...)
 	if err != nil {
 		return nil, gofakes3.KeyNotFound(objectName)
 	}
@@ -195,8 +193,12 @@ func (b *TelecloudBackend) GetObject(bucketName, objectName string, rangeRequest
 		return nil, err
 	}
 
+	mimeType := "application/octet-stream"
+	if file.MimeType != nil && *file.MimeType != "" {
+		mimeType = *file.MimeType
+	}
 	metadata := make(map[string]string)
-	metadata["Content-Type"] = "application/octet-stream"
+	metadata["Content-Type"] = mimeType
 
 	var body io.ReadCloser
 	size := file.Size
@@ -204,16 +206,18 @@ func (b *TelecloudBackend) GetObject(bucketName, objectName string, rangeRequest
 	if rangeRequest != nil {
 		contentRange, err := rangeRequest.Range(size)
 		if err != nil {
+			rs.Close()
 			return nil, err
 		}
 		_, err = rs.Seek(contentRange.Start, io.SeekStart)
 		if err != nil {
+			rs.Close()
 			return nil, err
 		}
-		body = io.NopCloser(io.LimitReader(rs, contentRange.Length))
+		body = &closerReader{r: io.LimitReader(rs, contentRange.Length), c: rs}
 		size = contentRange.Length
 	} else {
-		body = io.NopCloser(rs)
+		body = rs
 	}
 
 	return &gofakes3.Object{
@@ -225,7 +229,34 @@ func (b *TelecloudBackend) GetObject(bucketName, objectName string, rangeRequest
 }
 
 func (b *TelecloudBackend) HeadObject(bucketName, objectName string) (*gofakes3.Object, error) {
-	return b.GetObject(bucketName, objectName, nil)
+	if bucketName != "telecloud" {
+		return nil, gofakes3.BucketNotFound(bucketName)
+	}
+
+	dbPath, filename := b.mapPath(objectName)
+
+	var file database.File
+	query := "SELECT id, filename, size, is_folder, created_at, mime_type FROM files WHERE path = ? AND filename = ? AND owner = ?"
+	args := []interface{}{dbPath, filename, b.username}
+
+	err := database.RODB.Get(&file, query, args...)
+	if err != nil {
+		return nil, gofakes3.KeyNotFound(objectName)
+	}
+
+	mimeType := "application/octet-stream"
+	if file.MimeType != nil && *file.MimeType != "" {
+		mimeType = *file.MimeType
+	}
+	metadata := make(map[string]string)
+	metadata["Content-Type"] = mimeType
+
+	return &gofakes3.Object{
+		Name:     objectName,
+		Metadata: metadata,
+		Size:     file.Size,
+		Contents: nil, // Optimization: HeadObject doesn't need to read content
+	}, nil
 }
 
 func (b *TelecloudBackend) DeleteObject(bucketName, objectName string) (gofakes3.ObjectDeleteResult, error) {
@@ -234,47 +265,31 @@ func (b *TelecloudBackend) DeleteObject(bucketName, objectName string) (gofakes3
 	}
 
 	dbPath, filename := b.mapPath(objectName)
-	fullPath := path.Join(dbPath, filename)
-
-	if b.isAdmin && isChildAccountPath(fullPath) {
-		return gofakes3.ObjectDeleteResult{}, nil
-	}
 
 	var file database.File
 	query := "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?"
 	args := []interface{}{dbPath, filename, b.username}
-	if b.isAdmin {
-		query = "SELECT * FROM files WHERE path = ? AND filename = ?"
-		args = []interface{}{dbPath, filename}
-	}
 
-	err := database.DB.Get(&file, query, args...)
+	err := database.RODB.Get(&file, query, args...)
 	if err != nil {
 		return gofakes3.ObjectDeleteResult{}, nil
 	}
 
 	if !file.IsFolder {
-		// Collect all message IDs for this file (parts)
-		var msgIDs []int
-		database.DB.Select(&msgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", file.ID)
-		if file.MessageID != nil {
-			msgIDs = append(msgIDs, *file.MessageID)
-		}
+		// Identify messages to delete from Telegram safely
+		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{file.ID})
 
-		if len(msgIDs) > 0 {
-			go tgclient.DeleteMessages(context.Background(), b.cfg, msgIDs)
+		if len(msgIDsToDelete) > 0 {
+			go tgclient.DeleteMessages(context.Background(), b.cfg, msgIDsToDelete)
 		}
 
 		if file.ThumbPath != nil {
 			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *file.ThumbPath)
+			database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *file.ThumbPath)
 			if count <= 1 {
 				os.Remove(*file.ThumbPath)
 			}
 		}
-	} else {
-		// If it's a folder, we might want to prevent deleting non-empty folders via S3 DeleteObject
-		// but S3 actually allows deleting "folder objects" separately.
 	}
 
 	database.DB.Exec("DELETE FROM files WHERE id = ?", file.ID)
@@ -301,11 +316,6 @@ func (b *TelecloudBackend) PutObject(bucketName, key string, meta map[string]str
 
 	dbPath, filename := b.mapPath(key)
 	fullPath := path.Join(dbPath, filename)
-
-	// Strict Admin isolation
-	if b.isAdmin && isChildAccountPath(fullPath) {
-		return gofakes3.PutObjectResult{}, gofakes3.ErrNotImplemented // Or another appropriate error
-	}
 
 	// Handle Folder creation (S3 folders end with /)
 	if strings.HasSuffix(key, "/") {
@@ -336,12 +346,16 @@ func (b *TelecloudBackend) PutObject(bucketName, key string, meta map[string]str
 	out.Close()
 	defer os.Remove(tempFilePath)
 
+	if err != nil {
+		return gofakes3.PutObjectResult{}, fmt.Errorf("failed to write temp file: %w", err)
+	}
+
 	mimeType := meta["Content-Type"]
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
 
-	_, _, err = tgclient.ProcessCompleteUploadSync(context.Background(), tempFilePath, filename, dbPath, mimeType, b.cfg, true, b.username)
+	_, _, err = tgclient.ProcessCompleteUploadSync(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, b.cfg, true, b.username)
 	if err != nil {
 		return gofakes3.PutObjectResult{}, err
 	}
@@ -357,23 +371,11 @@ func (b *TelecloudBackend) CopyObject(srcBucket, srcKey, dstBucket, dstKey strin
 	srcDbPath, srcFilename := b.mapPath(srcKey)
 	dstDbPath, dstFilename := b.mapPath(dstKey)
 
-	srcFullPath := path.Join(srcDbPath, srcFilename)
-	dstFullPath := path.Join(dstDbPath, dstFilename)
-
-	// Strict Admin isolation
-	if b.isAdmin && (isChildAccountPath(srcFullPath) || isChildAccountPath(dstFullPath)) {
-		return gofakes3.CopyObjectResult{}, gofakes3.KeyNotFound(srcKey)
-	}
-
 	var file database.File
-	query := "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?"
+	query := "SELECT id, message_id, filename, path, size, mime_type, is_folder, thumb_path FROM files WHERE path = ? AND filename = ? AND owner = ?"
 	args := []interface{}{srcDbPath, srcFilename, b.username}
-	if b.isAdmin {
-		query = "SELECT * FROM files WHERE path = ? AND filename = ?"
-		args = []interface{}{srcDbPath, srcFilename}
-	}
 
-	err := database.DB.Get(&file, query, args...)
+	err := database.RODB.Get(&file, query, args...)
 	if err != nil {
 		return gofakes3.CopyObjectResult{}, gofakes3.KeyNotFound(srcKey)
 	}
@@ -431,4 +433,16 @@ func (b *TelecloudBackend) BucketExists(name string) (bool, error) {
 
 func (b *TelecloudBackend) ForceDeleteBucket(name string) error {
 	return gofakes3.ErrNotImplemented
+}
+type closerReader struct {
+	r io.Reader
+	c io.Closer
+}
+
+func (cr *closerReader) Read(p []byte) (int, error) {
+	return cr.r.Read(p)
+}
+
+func (cr *closerReader) Close() error {
+	return cr.c.Close()
 }

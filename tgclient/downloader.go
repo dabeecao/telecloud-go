@@ -40,11 +40,13 @@ func init() {
 
 type cachedLocation struct {
 	loc       *tg.InputDocumentFileLocation
+	api       *tg.Client // Store the API client that resolved this location
 	expiresAt time.Time
 }
 
 type tgFileReader struct {
 	ctx         context.Context
+	cancel      context.CancelFunc
 	api         *tg.Client
 	loc         tg.InputFileLocationClass
 	size        int64
@@ -53,15 +55,26 @@ type tgFileReader struct {
 	chunkData   []byte
 }
 
+func (r *tgFileReader) Close() error {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	return nil
+}
+
 func (r *tgFileReader) Read(p []byte) (int, error) {
 	if r.offset >= r.size {
 		return 0, io.EOF
 	}
 
-	chunkSize := int64(1024 * 1024) // 1MB chunks — max supported by Telegram UploadGetFile
-	chunkStart := (r.offset / chunkSize) * chunkSize
+	// 1MB chunks — max supported by Telegram UploadGetFile
+	const chunkSize = int64(1024 * 1024)
 
-	if r.chunkData == nil || r.chunkOffset != chunkStart {
+	// If we have no data or the current offset is outside our cached chunk
+	if r.chunkData == nil || r.offset < r.chunkOffset || r.offset >= r.chunkOffset+int64(len(r.chunkData)) {
+		// Align chunkStart to 1MB to take advantage of sequential reading
+		chunkStart := (r.offset / chunkSize) * chunkSize
+		
 		req := &tg.UploadGetFileRequest{
 			Precise:  true,
 			Location: r.loc,
@@ -69,7 +82,41 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 			Limit:    int(chunkSize),
 		}
 
-		res, err := r.api.UploadGetFile(r.ctx, req)
+		// Retry up to 3 times for transient Telegram errors
+		var res tg.UploadFileClass
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			res, err = r.api.UploadGetFile(r.ctx, req)
+			if err == nil {
+				break
+			}
+			if r.ctx.Err() != nil {
+				return 0, r.ctx.Err()
+			}
+			errStr := err.Error()
+			if strings.Contains(errStr, "FLOOD_WAIT") || strings.Contains(errStr, "TIMEOUT") || strings.Contains(errStr, "RPC_CALL_FAIL") {
+				waitDuration := time.Duration(attempt+1) * 2 * time.Second
+				if strings.Contains(errStr, "FLOOD_WAIT_") {
+					parts := strings.Split(errStr, "FLOOD_WAIT_")
+					if len(parts) > 1 {
+						if secs, e := fmt.Sscanf(parts[1], "%d", new(int)); e == nil && secs > 0 {
+							waitDuration = time.Duration(secs) * time.Second
+						}
+					}
+				}
+				select {
+				case <-time.After(waitDuration):
+					continue
+				case <-r.ctx.Done():
+					return 0, r.ctx.Err()
+				}
+			}
+			select {
+			case <-time.After(time.Duration(attempt+1) * time.Second):
+			case <-r.ctx.Done():
+				return 0, r.ctx.Err()
+			}
+		}
 		if err != nil {
 			return 0, err
 		}
@@ -79,6 +126,10 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 			r.chunkData = result.Bytes
 			r.chunkOffset = chunkStart
 			if len(r.chunkData) == 0 {
+				// If Telegram returns 0 bytes but we haven't reached r.size, it's an error or unexpected EOF
+				if r.offset < r.size {
+					return 0, fmt.Errorf("unexpected end of file from telegram at offset %d (expected %d)", r.offset, r.size)
+				}
 				return 0, io.EOF
 			}
 		case *tg.UploadFileCDNRedirect:
@@ -89,8 +140,10 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 	}
 
 	inChunkOffset := r.offset - r.chunkOffset
-	if inChunkOffset >= int64(len(r.chunkData)) {
-		return 0, io.EOF
+	if inChunkOffset < 0 || inChunkOffset >= int64(len(r.chunkData)) {
+		// This should not happen with the check above, but for safety:
+		r.chunkData = nil
+		return r.Read(p)
 	}
 
 	n := copy(p, r.chunkData[inChunkOffset:])
@@ -99,17 +152,22 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 }
 
 func (r *tgFileReader) Seek(offset int64, whence int) (int64, error) {
+	var newOffset int64
 	switch whence {
 	case io.SeekStart:
-		r.offset = offset
+		newOffset = offset
 	case io.SeekCurrent:
-		r.offset += offset
+		newOffset = r.offset + offset
 	case io.SeekEnd:
-		r.offset = r.size + offset
+		newOffset = r.size + offset
 	}
-	if r.offset < 0 {
-		r.offset = 0
+	if newOffset < 0 {
+		newOffset = 0
 	}
+	if newOffset > r.size {
+		newOffset = r.size
+	}
+	r.offset = newOffset
 	return r.offset, nil
 }
 
@@ -154,19 +212,22 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, file database.Fil
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"; filename*=UTF-8''%s`, safeName, encodedName))
 	}
 
+	defer reader.Close()
 	http.ServeContent(w, c, file.Filename, file.CreatedAt, reader)
 	return nil
 }
 
-func GetTelegramFileReader(ctx context.Context, file database.File, cfg *config.Config) (io.ReadSeeker, error) {
+func GetTelegramFileReader(ctx context.Context, file database.File, cfg *config.Config) (io.ReadSeekCloser, error) {
 	// Check if this file has multiple parts
 	parts, err := database.GetFileParts(file.ID)
 	if err == nil && len(parts) > 1 {
+		ctx, cancel := context.WithCancel(ctx)
 		return &multiPartReader{
-			ctx:   ctx,
-			parts: parts,
-			size:  file.Size,
-			cfg:   cfg,
+			ctx:    ctx,
+			cancel: cancel,
+			parts:  parts,
+			size:   file.Size,
+			cfg:    cfg,
 		}, nil
 	}
 
@@ -177,7 +238,9 @@ func GetTelegramFileReader(ctx context.Context, file database.File, cfg *config.
 	return getSinglePartReader(ctx, *file.MessageID, file.Size, cfg)
 }
 
-var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *config.Config) (io.ReadSeeker, error) {
+var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *config.Config) (io.ReadSeekCloser, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
 	// Check cache first
 	cacheMutex.RLock()
 	cached, ok := locationCache[msgID]
@@ -185,16 +248,18 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 
 	if ok && time.Now().Before(cached.expiresAt) {
 		return &tgFileReader{
-			ctx:  ctx,
-			api:  GetAPI(),
-			loc:  cached.loc,
-			size: size,
+			ctx:    ctx,
+			cancel: cancel,
+			api:    cached.api, // Reuse the same API client that resolved this location
+			loc:    cached.loc,
+			size:   size,
 		}, nil
 	}
 
 	api := GetAPI()
 	peer, err := resolveLogGroup(ctx, api, cfg.LogGroupID)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -209,6 +274,7 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 			ID:      []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}},
 		})
 		if err != nil {
+			cancel()
 			return nil, err
 		}
 		if m, ok := res.(*tg.MessagesChannelMessages); ok {
@@ -217,6 +283,7 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 	} else {
 		res, err := api.MessagesGetMessages(ctx, []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}})
 		if err != nil {
+			cancel()
 			return nil, err
 		}
 		if m, ok := res.(*tg.MessagesMessages); ok {
@@ -227,39 +294,45 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 	}
 
 	if len(msgs) == 0 {
+		cancel()
 		return nil, fmt.Errorf("message not found")
 	}
 
 	msg, ok := msgs[0].(*tg.Message)
 	if !ok || msg.Media == nil {
+		cancel()
 		return nil, fmt.Errorf("message has no media")
 	}
 
 	docMedia, ok := msg.Media.(*tg.MessageMediaDocument)
 	if !ok {
+		cancel()
 		return nil, fmt.Errorf("media is not a document")
 	}
 
 	doc, ok := docMedia.Document.(*tg.Document)
 	if !ok {
+		cancel()
 		return nil, fmt.Errorf("document is empty")
 	}
 
 	loc := doc.AsInputDocumentFileLocation()
 	
-	// Cache the location for 1 hour
+	// Cache the location AND the API client for 1 hour
 	cacheMutex.Lock()
 	locationCache[msgID] = &cachedLocation{
 		loc:       loc,
+		api:       api,
 		expiresAt: time.Now().Add(1 * time.Hour),
 	}
 	cacheMutex.Unlock()
 
 	reader := &tgFileReader{
-		ctx:  ctx,
-		api:  api,
-		loc:  loc,
-		size: size,
+		ctx:    ctx,
+		cancel: cancel,
+		api:    api,
+		loc:    loc,
+		size:   size,
 	}
 
 	return reader, nil
@@ -267,13 +340,24 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 
 type multiPartReader struct {
 	ctx    context.Context
+	cancel context.CancelFunc
 	parts  []database.FilePart
 	size   int64
 	offset int64
 	cfg    *config.Config
 
-	currentReader io.ReadSeeker
+	currentReader io.ReadSeekCloser
 	currentIndex  int
+}
+
+func (r *multiPartReader) Close() error {
+	if r.currentReader != nil {
+		r.currentReader.Close()
+	}
+	if r.cancel != nil {
+		r.cancel()
+	}
+	return nil
 }
 
 func (r *multiPartReader) Read(p []byte) (int, error) {
@@ -315,6 +399,7 @@ func (r *multiPartReader) Read(p []byte) (int, error) {
 			return n, nil
 		}
 		if err == io.EOF {
+			r.currentReader.Close()
 			r.currentReader = nil
 			r.currentIndex++
 			if r.currentIndex >= len(r.parts) {
@@ -346,7 +431,10 @@ func (r *multiPartReader) Seek(offset int64, whence int) (int64, error) {
 
 	if newOffset != r.offset {
 		r.offset = newOffset
-		r.currentReader = nil // Force re-acquisition and seek of the correct part
+		if r.currentReader != nil {
+			r.currentReader.Close()
+			r.currentReader = nil
+		}
 	}
 	return r.offset, nil
 }

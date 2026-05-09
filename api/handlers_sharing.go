@@ -16,7 +16,7 @@ import (
 func (h *Handler) handleGetSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ?", token); err != nil {
+	if err := database.RODB.Get(&item, "SELECT filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ?", token); err != nil {
 		c.HTML(http.StatusNotFound, "error.html", gin.H{
 			"error_message": "File not found or link has been revoked.",
 			"version":       h.cfg.Version,
@@ -55,7 +55,7 @@ func (h *Handler) handleGetSharedFile(c *gin.Context) {
 func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !item.IsFolder {
+	if err := database.RODB.Get(&item, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !item.IsFolder {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Folder not found"})
 		return
 	}
@@ -79,14 +79,14 @@ func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 	}
 
 	var files []database.File
-	err := database.DB.Select(&files, "SELECT id, filename, path, size, created_at, is_folder, mime_type, thumb_path FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC", targetPath)
+	err := database.RODB.Select(&files, "SELECT id, filename, path, size, created_at, is_folder, mime_type, thumb_path FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC", targetPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	var totalSize int64
-	database.DB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", targetPath, targetPath+"/%")
+	database.RODB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", targetPath, targetPath+"/%")
 
 	for i := range files {
 		if files[i].ThumbPath != nil {
@@ -101,7 +101,7 @@ func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 func (h *Handler) handleStreamSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil || item.MessageID == nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil || item.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -114,13 +114,16 @@ func (h *Handler) handleStreamSharedFile(c *gin.Context) {
 		c.Header("Content-Type", mime)
 	}
 
-	tgclient.ServeTelegramFile(c.Request, c.Writer, item, h.cfg)
+	if err := tgclient.ServeTelegramFile(c.Request, c.Writer, item, h.cfg); err != nil {
+		fmt.Printf("[SharedStream] Error serving file %s: %v\n", token, err)
+	}
+
 }
 
 func (h *Handler) handleDownloadSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -137,7 +140,7 @@ func (h *Handler) handleDownloadSharedFile(c *gin.Context) {
 func (h *Handler) handleGetSharedThumb(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT thumb_path FROM files WHERE share_token = ?", token); err != nil || item.ThumbPath == nil {
+	if err := database.RODB.Get(&item, "SELECT thumb_path FROM files WHERE share_token = ?", token); err != nil || item.ThumbPath == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -149,7 +152,7 @@ func (h *Handler) handleStreamSharedFileInFolder(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 
 	var folder database.File
-	if err := database.DB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -160,7 +163,7 @@ func (h *Handler) handleStreamSharedFileInFolder(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -186,7 +189,7 @@ func (h *Handler) handleDownloadSharedFileInFolder(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 
 	var folder database.File
-	if err := database.DB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -197,7 +200,7 @@ func (h *Handler) handleDownloadSharedFileInFolder(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -221,7 +224,7 @@ func (h *Handler) handleGetSharedFileThumbInFolder(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 
 	var folder database.File
-	if err := database.DB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -232,7 +235,7 @@ func (h *Handler) handleGetSharedFileThumbInFolder(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT thumb_path, path FROM files WHERE id = ?", id); err != nil || item.ThumbPath == nil {
+	if err := database.RODB.Get(&item, "SELECT thumb_path, path FROM files WHERE id = ?", id); err != nil || item.ThumbPath == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -254,7 +257,7 @@ func (h *Handler) handleGetDirectDownload(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE share_token = ?", *shareToken); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ?", *shareToken); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 		return
 	}

@@ -204,6 +204,7 @@ const sqliteSchema = `
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+	CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
 	CREATE INDEX IF NOT EXISTS idx_file_parts_file_id ON file_parts(file_id);
@@ -321,6 +322,7 @@ func migrateSQLite() error {
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_enabled INTEGER DEFAULT 1")
 	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_child_accounts_s3_key ON child_accounts(s3_access_key)")
 
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename)")
 	DB.Exec("CREATE TABLE IF NOT EXISTS tg_sessions (session_id TEXT PRIMARY KEY, data BLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
 	DB.Exec("ALTER TABLE upload_tasks ADD COLUMN overwrite BOOLEAN DEFAULT 0")
 	// Ensure foreign keys are enabled
@@ -384,6 +386,9 @@ func migrateMySQL() error {
 	}
 
 	if err := createIndexMySQL("idx_files_path", "files", "path", false); err != nil {
+		return err
+	}
+	if err := createIndexMySQL("idx_files_owner_path", "files", "owner, path, filename", false); err != nil {
 		return err
 	}
 	if err := createIndexMySQL("idx_files_message_id", "files", "message_id", false); err != nil {
@@ -669,11 +674,11 @@ func EnsureFoldersExist(dbPath string, owner string) error {
 		}
 
 		var id int
-		err := DB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", currentPath, part, owner)
+		err := RODB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", currentPath, part, owner)
 		if err != nil {
 			var count int
 			if currentPath == "/" {
-				DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", part)
+				RODB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", part)
 			}
 
 			if count == 0 {
@@ -709,4 +714,46 @@ func CloseDB() error {
 		return fmt.Errorf("failed to close database: %s", strings.Join(errs, ", "))
 	}
 	return nil
+}
+
+// GetOrphanedMessages identifies Telegram Message IDs that are only used by the provided file IDs.
+// It ensures that if other files still reference a message (e.g. via copy), that message is not deleted.
+func GetOrphanedMessages(fileIDs []int) ([]int, error) {
+	if len(fileIDs) == 0 {
+		return nil, nil
+	}
+
+	// Create placeholders for the file IDs
+	placeholders := make([]string, len(fileIDs))
+	args := make([]interface{}, len(fileIDs))
+	for i, id := range fileIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	idList := strings.Join(placeholders, ",")
+
+	// We want message_ids that exist in the set of files being deleted,
+	// BUT do NOT exist in the set of files NOT being deleted.
+	
+	query := fmt.Sprintf(`
+		SELECT DISTINCT message_id FROM (
+			SELECT message_id FROM files WHERE id IN (%s) AND message_id IS NOT NULL
+			UNION
+			SELECT message_id FROM file_parts WHERE file_id IN (%s)
+		) AS to_delete
+		WHERE message_id NOT IN (
+			SELECT message_id FROM files WHERE id NOT IN (%s) AND message_id IS NOT NULL
+			UNION
+			SELECT message_id FROM file_parts WHERE file_id NOT IN (%s)
+		)`, idList, idList, idList, idList)
+
+	// Combine args: we need the same fileIDs list 4 times
+	fullArgs := make([]interface{}, 0, len(fileIDs)*4)
+	for i := 0; i < 4; i++ {
+		fullArgs = append(fullArgs, args...)
+	}
+
+	var orphanedIDs []int
+	err := RODB.Select(&orphanedIDs, query, fullArgs...)
+	return orphanedIDs, err
 }

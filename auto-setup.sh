@@ -705,14 +705,18 @@ stop_app() {
         # Tắt Tmux session (Tmux gửi SIGHUP, app đã được cấu hình để bắt SIGHUP và tắt sạch sẽ)
         tmux kill-session -t $SESSION 2>/dev/null || true
         
-        # Chờ 1 chút cho app dọn dẹp
-        sleep 1
+        # Chờ tiến trình thoát hoàn toàn (tối đa 15s)
+        local timeout=15
+        while pgrep -x telecloud > /dev/null && [ $timeout -gt 0 ]; do
+            sleep 1
+            timeout=$((timeout - 1))
+        done
         
         # Cưỡng chế tắt các script bảo vệ và binary nếu vẫn còn sót (fallback)
         pkill -f "$BASE_DIR/run.sh" 2>/dev/null || true
         pkill -f "$BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
-        pkill -x telecloud 2>/dev/null || true
-        pkill -f "cloudflared tunnel run" 2>/dev/null || true
+        pkill -9 -x telecloud 2>/dev/null || true
+        pkill -9 -f "cloudflared tunnel run" 2>/dev/null || true
     fi
     echo "✅ Đã dừng toàn bộ."
 }

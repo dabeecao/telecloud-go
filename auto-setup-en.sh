@@ -705,14 +705,18 @@ stop_app() {
         # Stop Tmux session (Tmux sends SIGHUP; app is configured to catch SIGHUP and shut down cleanly)
         tmux kill-session -t $SESSION 2>/dev/null || true
         
-        # Wait a bit for the app to clean up
-        sleep 1
+        # Wait for the process to exit completely (max 15s)
+        local timeout=15
+        while pgrep -x telecloud > /dev/null && [ $timeout -gt 0 ]; do
+            sleep 1
+            timeout=$((timeout - 1))
+        done
         
         # Force stop if anything remains (fallback)
         pkill -f "$BASE_DIR/run.sh" 2>/dev/null || true
         pkill -f "$BASE_DIR/run-cloudflared.sh" 2>/dev/null || true
-        pkill -x telecloud 2>/dev/null || true
-        pkill -f "cloudflared tunnel run" 2>/dev/null || true
+        pkill -9 -x telecloud 2>/dev/null || true
+        pkill -9 -f "cloudflared tunnel run" 2>/dev/null || true
     fi
     echo "✅ Stopped everything."
 }

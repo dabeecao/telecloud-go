@@ -49,13 +49,24 @@ func InitUploader(cfg *config.Config) {
 }
 
 type UploadStatus struct {
-	Status        string `json:"status"`
-	Percent       int    `json:"percent"`
-	Message       string `json:"message,omitempty"`
-	Filename      string `json:"filename,omitempty"`
-	Owner         string `json:"owner,omitempty"`
-	Size          int64  `json:"size,omitempty"`
-	UploadedBytes int64  `json:"uploaded_bytes,omitempty"`
+	Status        string  `json:"status"`
+	Percent       int     `json:"percent"`
+	Phase         string  `json:"phase,omitempty"`
+	Progress      float64 `json:"progress"`
+	UploadedBytes int64   `json:"uploaded"`
+	Size          int64   `json:"total"`
+	Speed         int64   `json:"speed,omitempty"`
+	ETA           int     `json:"eta,omitempty"`
+	Filename      string  `json:"filename,omitempty"`
+	Owner         string  `json:"owner,omitempty"`
+	FileID        int64   `json:"file_id,omitempty"`
+	Message       string  `json:"message,omitempty"`
+
+	// Legacy support for web UI
+	OldSize          int64 `json:"size,omitempty"`
+	OldUploadedBytes int64 `json:"uploaded_bytes,omitempty"`
+
+	startTime time.Time
 }
 
 func UpdateTask(taskID string, status string, percent int, msg string, owner string) {
@@ -66,6 +77,24 @@ func UpdateTaskWithSize(taskID string, status string, percent int, msg string, s
 	UpdateTaskWithFile(taskID, status, percent, msg, "", owner, size, uploaded)
 }
 
+func UpdateTaskWithFileID(taskID string, status string, percent int, msg string, fileID int64, filename string, owner string) {
+	taskMutex.Lock()
+	if t, ok := UploadTasks[taskID]; ok {
+		t.FileID = fileID
+		if filename != "" {
+			t.Filename = filename
+		}
+	} else {
+		UploadTasks[taskID] = &UploadStatus{
+			FileID:   fileID,
+			Filename: filename,
+			Owner:    owner,
+		}
+	}
+	taskMutex.Unlock()
+	UpdateTaskWithFile(taskID, status, percent, msg, filename, owner, 0, 0)
+}
+
 func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64, uploaded int64) {
 	taskMutex.Lock()
 	defer taskMutex.Unlock()
@@ -73,6 +102,13 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 	var finalFilename string
 	var finalOwner string
 	if existing, ok := UploadTasks[taskID]; ok {
+		// Prevent terminal statuses (done, cancelled) from being overwritten
+		// by late-arriving updates. We allow 'error' to be overwritten so that
+		// manual retries from the UI can still show progress correctly.
+		if (existing.Status == "done" || existing.Status == "cancelled") &&
+			(status != "done" && status != "error" && status != "cancelled") {
+			return
+		}
 		finalFilename = filename
 		if filename == "" {
 			finalFilename = existing.Filename
@@ -89,39 +125,95 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 		finalOwner = owner
 	}
 
-	var finalSize int64
-	if size > 0 {
-		finalSize = size
-	} else if existing, ok := UploadTasks[taskID]; ok {
-		finalSize = existing.Size
+	var fs int64
+	var fu int64
+	var st time.Time
+
+	if existing, ok := UploadTasks[taskID]; ok {
+		fs = size
+		if size <= 0 {
+			fs = existing.Size
+		}
+		fu = uploaded
+		if uploaded <= 0 {
+			fu = existing.UploadedBytes
+		}
+		st = existing.startTime
+	} else {
+		fs = size
+		fu = uploaded
+		st = time.Now()
 	}
 
-	var finalUploaded int64
-	if uploaded > 0 {
-		finalUploaded = uploaded
-	} else if existing, ok := UploadTasks[taskID]; ok {
-		finalUploaded = existing.UploadedBytes
+	if st.IsZero() {
+		st = time.Now()
 	}
 
-	UploadTasks[taskID] = &UploadStatus{
-		Status:        status,
-		Percent:       percent,
-		Message:       msg,
-		Filename:      finalFilename,
-		Owner:        finalOwner,
-		Size:          finalSize,
-		UploadedBytes: finalUploaded,
+	var speed int64
+	var eta int
+	duration := time.Since(st).Seconds()
+	if duration > 1 && fu > 0 {
+		speed = int64(float64(fu) / duration)
+		if speed > 0 && fs > fu {
+			eta = int(float64(fs-fu) / float64(speed))
+		}
 	}
-	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, finalSize, finalUploaded)
+
+	phase := status
+	switch status {
+	case "telegram":
+		phase = "telegram_upload"
+	case "downloading":
+		phase = "remote_download"
+	case "uploading_to_server":
+		phase = "server_upload"
+	}
+
+	progress := float64(percent)
+	if fs > 0 {
+		progress = (float64(fu) / float64(fs)) * 100
+	}
+
+	statusObj := &UploadStatus{
+		Status:           status,
+		Phase:            phase,
+		Percent:          percent,
+		Progress:         progress,
+		Message:          msg,
+		Filename:         finalFilename,
+		Owner:            finalOwner,
+		Size:             fs,
+		UploadedBytes:    fu,
+		OldSize:          fs,
+		OldUploadedBytes: fu,
+		Speed:            speed,
+		ETA:              eta,
+		startTime:        st,
+	}
+
+	if existing, ok := UploadTasks[taskID]; ok {
+		statusObj.FileID = existing.FileID
+		if filename == "" {
+			statusObj.Filename = existing.Filename
+		}
+		if fs == 0 {
+			statusObj.Size = existing.Size
+			statusObj.OldSize = existing.OldSize
+		}
+		if fu == 0 {
+			statusObj.UploadedBytes = existing.UploadedBytes
+			statusObj.OldUploadedBytes = existing.OldUploadedBytes
+			statusObj.Progress = existing.Progress
+		}
+	}
+
+	UploadTasks[taskID] = statusObj
+	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, fs, fu, speed, eta)
 
 	// Auto-cleanup: remove task from memory once terminal
-	if status == "done" || status == "error" {
+	if status == "done" || status == "error" || status == "cancelled" {
 		go func() {
-			if status == "done" {
-				time.Sleep(5 * time.Second)
-			} else {
-				time.Sleep(5 * time.Minute)
-			}
+			time.Sleep(1 * time.Hour)
 			taskMutex.Lock()
 			delete(UploadTasks, taskID)
 			taskMutex.Unlock()
@@ -135,7 +227,7 @@ func GetTask(taskID string) *UploadStatus {
 	if t, ok := UploadTasks[taskID]; ok {
 		return t
 	}
-	return &UploadStatus{Status: "pending", Percent: 0}
+	return nil
 }
 
 func CancelTask(taskID string, username string) bool {
@@ -151,7 +243,7 @@ func CancelTask(taskID string, username string) bool {
 	// If not in memory, verify owner from database (for chunked uploads still in progress)
 	if !ok {
 		var dbOwner string
-		err := database.DB.Get(&dbOwner, "SELECT owner FROM upload_tasks WHERE id = ?", taskID)
+		err := database.RODB.Get(&dbOwner, "SELECT owner FROM upload_tasks WHERE id = ?", taskID)
 		if err == nil && dbOwner != username {
 			taskMutex.Unlock()
 			return false
@@ -165,7 +257,7 @@ func CancelTask(taskID string, username string) bool {
 	taskMutex.Unlock()
 
 	// Call UpdateTask in a separate goroutine to avoid deadlock
-	go UpdateTask(taskID, "error", 0, "upload_cancelled_waiting", username)
+	go UpdateTask(taskID, "cancelled", 0, "", username)
 	return true
 }
 
@@ -240,12 +332,12 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename
 	if !overwrite || existingID == 0 {
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
 	api := GetAPI()
@@ -267,7 +359,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			}
 			break
 		}
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -286,12 +378,6 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			database.DB.Exec("DELETE FROM files WHERE id = ?", fileID)
 		}
 	}()
-
-	// Prepare for upload
-	up := uploader.NewUploader(api).
-		WithPartSize(uploader.MaximumPartSize).
-		WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: 0, owner: owner}).
-		WithThreads(cfg.UploadThreads)
 
 	numParts := int((fileSize + cfg.MaxPartSize - 1) / cfg.MaxPartSize)
 	if numParts == 0 {
@@ -323,26 +409,27 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 		UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("uploading_part_%d_of_%d", i+1, numParts), "")
 
-		// Update progress state for current part
-		up = up.WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start, owner: owner})
-
 		var msgID int
 		var uploadErr error
 		for attempt := 1; attempt <= 3; attempt++ {
 			if attempt > 1 {
 				UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("retrying_part_%d_attempt_%d", i+1, attempt), "")
 				time.Sleep(5 * time.Second)
+				if _, err := sectionReader.Seek(0, io.SeekStart); err != nil {
+					log.Printf("[Upload] Failed to seek section reader: %v", err)
+				}
 			}
-			msgID, uploadErr = uploadFilePart(ctx, api, up, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			// Fresh uploader per attempt: avoids reusing a session that
+			// Telegram may have already invalidated after a partial upload.
+			freshUp := uploader.NewUploader(api).
+				WithPartSize(uploader.MaximumPartSize).
+				WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start, owner: owner}).
+				WithThreads(cfg.UploadThreads)
+			msgID, uploadErr = uploadFilePart(ctx, api, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
 			if uploadErr == nil {
 				break
 			}
 			log.Printf("[Upload] Task %s part %d attempt %d failed: %v", taskID, i+1, attempt, uploadErr)
-			
-			// Reset section reader for retry
-			if _, err := sectionReader.Seek(0, io.SeekStart); err != nil {
-				log.Printf("[Upload] Failed to seek section reader: %v", err)
-			}
 		}
 
 		if uploadErr != nil {
@@ -371,22 +458,18 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	// Overwrite cleanup
 	if overwrite && existingID > 0 {
-		// Delete parts of the old file
-		var oldParts []int
-		database.DB.Select(&oldParts, "SELECT message_id FROM file_parts WHERE file_id = ?", existingID)
+		// Identify messages to delete from Telegram safely
+		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
 
 		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
-		// file_parts should be deleted by CASCADE, but we still need to delete Telegram messages
 
-		if len(oldParts) > 0 {
-			DeleteMessages(context.Background(), cfg, oldParts)
-		} else if existingMsgID != nil {
-			DeleteMessages(context.Background(), cfg, []int{*existingMsgID})
+		if len(msgIDsToDelete) > 0 {
+			go DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 		}
 
 		if existingThumb != nil {
 			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
+			database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
 			if count == 0 {
 				os.Remove(*existingThumb)
 			}
@@ -400,7 +483,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	}
 
 	// Signal done to user after thumbnail is ready
-	UpdateTaskWithSize(taskID, "done", 100, "", fileSize, fileSize, owner)
+	UpdateTaskWithFileID(taskID, "done", 100, "", fileID, uniqueFilename, owner)
 	success = true
 
 	// Cooldown before releasing the semaphore slot
@@ -565,12 +648,12 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename
 	if !overwrite || existingID == 0 {
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
 	api := GetAPI()
@@ -592,7 +675,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 			}
 			break
 		}
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -614,29 +697,14 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 	// Allow unlimited file size for remote uploads since we split it
 	bodyReader := resp.Body
-	
-	up := uploader.NewUploader(api).
-		WithPartSize(uploader.MaximumPartSize).
-		WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: 0, owner: owner}).
-		WithThreads(cfg.UploadThreads)
 
 	partIndex := 0
 	totalUploaded := int64(0)
 	var firstMsgID int
 
 	for {
-		// Use a counting reader to know the exact size of this part
+		// Dùng CountingReader và LimitReader để stream trực tiếp không qua đĩa
 		pr := &utils.CountingReader{R: io.LimitReader(bodyReader, cfg.MaxPartSize)}
-		
-		// For remote streaming, we might not know the exact part size if it's the last part and size is unknown
-		expectedPartSize := int64(0)
-		if size > 0 {
-			expectedPartSize = cfg.MaxPartSize
-			remaining := size - totalUploaded
-			if remaining < expectedPartSize {
-				expectedPartSize = remaining
-			}
-		}
 
 		partFilename := uniqueFilename
 		if size > cfg.MaxPartSize || size == -1 {
@@ -645,20 +713,19 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1), "")
 
-		up = up.WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner})
+		up := uploader.NewUploader(api).
+			WithPartSize(uploader.MaximumPartSize).
+			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
+			WithThreads(cfg.UploadThreads)
 
-		var msgID int
-		var uploadErr error
-		// Note: For remote streaming uploads, we can't easily retry the same part 
-		// because the bodyReader is consumed. We would need to restart the whole download.
-		// For now, we try once. If it's a critical error, we fail.
-		msgID, uploadErr = uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg, expectedPartSize)
+		// Truyền size = -1 để gotd xử lý dưới dạng stream, tránh FILE_PART_INVALID do size mismatch
+		msgID, uploadErr := uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
 		if uploadErr != nil {
 			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
 			return
 		}
-		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
 
+		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
 		if partIndex == 0 {
 			firstMsgID = msgID
 		}
@@ -682,7 +749,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		if size > 0 && totalUploaded >= size {
 			break
 		}
-		// If size unknown, check if we read less than the limit (means EOF reached)
+		// If size unknown or last part was smaller than max limit
 		if size <= 0 && partSize < cfg.MaxPartSize {
 			break
 		}
@@ -693,20 +760,15 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 	// Overwrite cleanup
 	if overwrite && existingID > 0 {
-		var oldParts []int
-		database.DB.Select(&oldParts, "SELECT message_id FROM file_parts WHERE file_id = ?", existingID)
-
+		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
 		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
-
-		if len(oldParts) > 0 {
-			DeleteMessages(context.Background(), cfg, oldParts)
-		} else if existingMsgID != nil {
-			DeleteMessages(context.Background(), cfg, []int{*existingMsgID})
+		if len(msgIDsToDelete) > 0 {
+			DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 		}
 
 		if existingThumb != nil {
 			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
+			database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
 			if count == 0 {
 				os.Remove(*existingThumb)
 			}
@@ -716,13 +778,13 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	// Note: Remote uploads usually don't have a local file for thumbnail generation 
 	// unless we download it first. Since this is a streaming upload, we skip local thumb for now.
 	// But we signal done so the UI refreshes.
-	UpdateTask(taskID, "done", 100, "", "")
+	UpdateTaskWithFileID(taskID, "done", 100, "", fileID, uniqueFilename, owner)
 	success = true
 }
 
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
-func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType string, cfg *config.Config, overwrite bool, owner string) (fileID int64, finalName string, err error) {
+func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool, owner string) (fileID int64, finalName string, err error) {
 	database.EnsureFoldersExist(path, owner)
 
 	// Wait for a slot in the upload queue
@@ -738,12 +800,12 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	var existingMsgID *int
 	var existingThumb *string
 	if overwrite {
-		database.DB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
 	}
 
 	uniqueFilename := filename
 	if !overwrite || existingID == 0 {
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
 	fileInfo, _ := os.Stat(filePath)
@@ -770,7 +832,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 			}
 			break
 		}
-		uniqueFilename = database.GetUniqueFilename(database.DB, path, filename, false, 0, owner)
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 		time.Sleep(100 * time.Millisecond)
 	}
 	if dbErr != nil {
@@ -799,10 +861,6 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	}
 	defer f.Close()
 
-	up := uploader.NewUploader(api).
-		WithPartSize(uploader.MaximumPartSize).
-		WithThreads(cfg.UploadThreads)
-
 	var firstMsgID int
 	for i := 0; i < numParts; i++ {
 		start := int64(i) * cfg.MaxPartSize
@@ -824,13 +882,17 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		for attempt := 1; attempt <= 3; attempt++ {
 			if attempt > 1 {
 				time.Sleep(5 * time.Second)
+				_, _ = sectionReader.Seek(0, io.SeekStart)
 			}
-			msgID, uploadErr = uploadFilePart(ctx, api, up, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			// Fresh uploader per attempt to avoid stale session state.
+			freshUp := uploader.NewUploader(api).
+				WithPartSize(uploader.MaximumPartSize).
+				WithThreads(cfg.UploadThreads)
+			msgID, uploadErr = uploadFilePart(ctx, api, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
 			if uploadErr == nil {
 				break
 			}
 			log.Printf("[UploadSync] Part %d attempt %d failed: %v", i+1, attempt, uploadErr)
-			_, _ = sectionReader.Seek(0, io.SeekStart)
 		}
 
 		if uploadErr != nil {
@@ -856,20 +918,15 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 
 	// Clean up old file if overwriting
 	if overwrite && existingID > 0 {
-		var oldParts []int
-		database.DB.Select(&oldParts, "SELECT message_id FROM file_parts WHERE file_id = ?", existingID)
-
+		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
 		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
-
-		if len(oldParts) > 0 {
-			DeleteMessages(context.Background(), cfg, oldParts)
-		} else if existingMsgID != nil {
-			DeleteMessages(context.Background(), cfg, []int{*existingMsgID})
+		if len(msgIDsToDelete) > 0 {
+			DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 		}
 
 		if existingThumb != nil {
 			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
+			database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *existingThumb)
 			if count == 0 {
 				os.Remove(*existingThumb)
 			}
@@ -972,4 +1029,206 @@ func uploadFilePart(ctx context.Context, api *tg.Client, up *uploader.Uploader, 
 		return 0, fmt.Errorf("could not get message ID")
 	}
 	return msgID, nil
+}
+
+func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg *config.Config, overwrite bool, owner string) (int64, string, error) {
+	if taskID != "" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		taskMutex.Lock()
+		TaskCancels[taskID] = cancel
+		taskMutex.Unlock()
+		defer func() {
+			taskMutex.Lock()
+			delete(TaskCancels, taskID)
+			taskMutex.Unlock()
+			cancel()
+		}()
+	}
+
+	filename := filepath.Base(url)
+	if idx := strings.Index(filename, "?"); idx != -1 {
+		filename = filename[:idx]
+	}
+
+	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0, 0)
+
+	// 1. Wait for a slot in the remote upload queue (HTTP download limit)
+	select {
+	case remoteUploadSemaphore <- struct{}{}:
+		defer func() { <-remoteUploadSemaphore }()
+	case <-ctx.Done():
+		return 0, "", fmt.Errorf("cancelled while waiting for remote slot")
+	}
+
+	client := &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, "", fmt.Errorf("remote server returned status %d", resp.StatusCode)
+	}
+
+	size := resp.ContentLength
+	filename = filepath.Base(resp.Request.URL.Path)
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if f, ok := params["filename"]; ok {
+				filename = f
+			}
+		}
+	}
+	filename = filepath.Base(filename)
+	if filename == "" || filename == "." || filename == "/" {
+		filename = "downloaded_file"
+	}
+
+	mimeType := resp.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	if filepath.Ext(filename) == "" && mimeType != "application/octet-stream" {
+		exts, _ := mime.ExtensionsByType(mimeType)
+		if len(exts) > 0 {
+			filename += exts[0]
+		}
+	}
+
+	database.EnsureFoldersExist(path, owner)
+
+	// Wait for a slot in the upload queue
+	select {
+	case uploadSemaphore <- struct{}{}:
+		defer func() { <-uploadSemaphore }()
+	case <-ctx.Done():
+		return 0, "", fmt.Errorf("cancelled while waiting for upload slot")
+	}
+
+	// Handle overwriting
+	var existingID int
+	var existingMsgID *int
+	var existingThumb *string
+	if overwrite {
+		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+	}
+
+	uniqueFilename := filename
+	if !overwrite || existingID == 0 {
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
+	}
+
+	api := GetAPI()
+
+	// Create main record
+	var fileID int64
+	var dbErr error
+	for i := 0; i < 5; i++ {
+		var res sql.Result
+		res, dbErr = database.DB.Exec(
+			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+			uniqueFilename, path, size, mimeType, owner,
+		)
+		if dbErr == nil {
+			fileID, _ = res.LastInsertId()
+			break
+		}
+		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if dbErr != nil {
+		return 0, "", dbErr
+	}
+
+	success := false
+	var uploadedMsgIDs []int
+	defer func() {
+		if !success {
+			if len(uploadedMsgIDs) > 0 {
+				go DeleteMessages(context.Background(), cfg, uploadedMsgIDs)
+			}
+			database.DB.Exec("DELETE FROM files WHERE id = ?", fileID)
+		}
+	}()
+
+	bodyReader := resp.Body
+
+	partIndex := 0
+	totalUploaded := int64(0)
+	var firstMsgID int
+
+	for {
+		pr := &utils.CountingReader{R: io.LimitReader(bodyReader, cfg.MaxPartSize)}
+
+		partFilename := uniqueFilename
+		if size > cfg.MaxPartSize || size == -1 {
+			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, partIndex+1)
+		}
+
+		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1), "")
+
+		up := uploader.NewUploader(api).
+			WithPartSize(uploader.MaximumPartSize).
+			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
+			WithThreads(cfg.UploadThreads)
+
+		msgID, uploadErr := uploadFilePart(ctx, api, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+		if uploadErr != nil {
+			return 0, "", fmt.Errorf("upload_part_failed: %w", uploadErr)
+		}
+
+		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
+		if partIndex == 0 {
+			firstMsgID = msgID
+		}
+
+		partSize := pr.N
+		totalUploaded += partSize
+
+		_, err = database.DB.Exec(
+			"INSERT INTO file_parts (file_id, message_id, part_index, size) VALUES (?, ?, ?, ?)",
+			fileID, msgID, partIndex, partSize,
+		)
+		if err != nil {
+			return 0, "", fmt.Errorf("err_db_part_insert: %w", err)
+		}
+
+		partIndex++
+
+		if size > 0 && totalUploaded >= size {
+			break
+		}
+		if size <= 0 && partSize < cfg.MaxPartSize {
+			break
+		}
+	}
+
+	database.DB.Exec("UPDATE files SET message_id = ?, size = ? WHERE id = ?", firstMsgID, totalUploaded, fileID)
+
+	if overwrite && existingID > 0 {
+		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
+		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		if len(msgIDsToDelete) > 0 {
+			DeleteMessages(context.Background(), cfg, msgIDsToDelete)
+		}
+	}
+
+	success = true
+	return fileID, uniqueFilename, nil
 }

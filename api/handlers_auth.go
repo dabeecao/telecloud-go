@@ -21,7 +21,7 @@ func (h *Handler) handleGetLogin(c *gin.Context) {
 	token, _ := c.Cookie("session_token")
 	var sessionUsername string
 	if token != "" {
-		database.DB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
+		database.RODB.Get(&sessionUsername, "SELECT username FROM sessions WHERE token = ?", token)
 	}
 	if token != "" && sessionUsername != "" {
 		c.Redirect(http.StatusFound, "/")
@@ -60,7 +60,7 @@ func (h *Handler) handlePostLogin(c *gin.Context) {
 			Hash        string `db:"password_hash"`
 			ForceChange int    `db:"force_password_change"`
 		}
-		err := database.DB.Get(&child, "SELECT password_hash, force_password_change FROM child_accounts WHERE username = ?", username)
+		err := database.RODB.Get(&child, "SELECT password_hash, force_password_change FROM child_accounts WHERE username = ?", username)
 		if err == nil && bcrypt.CompareHashAndPassword([]byte(child.Hash), []byte(password)) == nil {
 			authSuccess = true
 			forceChange = child.ForceChange == 1

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"telecloud/database"
@@ -22,22 +23,59 @@ var (
 )
 
 func InitWebAuthn(rpid string, origins []string) {
+	// Fallback logic: if parameters are empty, try to get from database or site_url
+	if rpid == "" {
+		rpid = database.GetSetting("webauthn_rpid")
+	}
+
+	if (rpid == "" || rpid == "localhost") {
+		siteURL := database.GetSetting("site_url")
+		if siteURL != "" {
+			if u, err := url.Parse(siteURL); err == nil {
+				rpid = u.Hostname()
+			}
+		}
+	}
+
+	// Still empty? Last resort
 	if rpid == "" {
 		rpid = "localhost"
 	}
-	if len(origins) == 0 {
-		origins = []string{"http://localhost:8091", "http://localhost:8080"}
+
+	resolvedOrigins := origins
+	if len(resolvedOrigins) == 0 {
+		rporigin := database.GetSetting("webauthn_rporigin")
+		if rporigin != "" {
+			resolvedOrigins = strings.Split(rporigin, ",")
+		} else {
+			siteURL := database.GetSetting("site_url")
+			if siteURL != "" {
+				resolvedOrigins = []string{siteURL}
+			}
+		}
+	}
+
+	// Still empty? Last resort
+	if len(resolvedOrigins) == 0 {
+		resolvedOrigins = []string{"http://localhost:8091", "http://localhost:8080"}
 	}
 
 	var err error
 	webAuthn, err = webauthn.New(&webauthn.Config{
 		RPDisplayName: "TeleCloud",
 		RPID:          rpid,
-		RPOrigins:     origins,
+		RPOrigins:     resolvedOrigins,
 	})
 	if err != nil {
 		panic(err)
 	}
+}
+
+func GetWebAuthnConfig() (string, []string) {
+	if webAuthn == nil {
+		return "", nil
+	}
+	return webAuthn.Config.RPID, webAuthn.Config.RPOrigins
 }
 
 type WebAuthnUser struct {
@@ -257,7 +295,7 @@ func LoginPasskeyFinish(c *gin.Context) {
 	if len(sessionData.UserID) == 0 {
 		handler := func(rawID, userHandle []byte) (webauthn.User, error) {
 			var uName string
-			err := database.DB.Get(&uName, "SELECT username FROM passkeys WHERE credential_id = ?", rawID)
+			err := database.RODB.Get(&uName, "SELECT username FROM passkeys WHERE credential_id = ?", rawID)
 			if err != nil {
 				return nil, fmt.Errorf("user not found for this passkey")
 			}
@@ -265,7 +303,7 @@ func LoginPasskeyFinish(c *gin.Context) {
 			adminUser := database.GetSetting("admin_username")
 			if uName != adminUser {
 				var count int
-				database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", uName)
+				database.RODB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", uName)
 				if count == 0 {
 					return nil, fmt.Errorf("user no longer exists")
 				}
@@ -284,7 +322,7 @@ func LoginPasskeyFinish(c *gin.Context) {
 		adminUser := database.GetSetting("admin_username")
 		if username != adminUser {
 			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", username)
+			database.RODB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", username)
 			if count == 0 {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "user no longer exists"})
 				return
@@ -319,7 +357,7 @@ func LoginPasskeyFinish(c *gin.Context) {
 
 	var forceChange int
 	if username != database.GetSetting("admin_username") {
-		database.DB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", username)
+		database.RODB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", username)
 	}
 
 	if forceChange == 1 {
@@ -337,7 +375,7 @@ func ListPasskeys(c *gin.Context) {
 		Name      *string   `db:"name" json:"name"`
 		CreatedAt time.Time `db:"created_at" json:"created_at"`
 	}, 0)
-	err := database.DB.Select(&pks, "SELECT id, name, created_at FROM passkeys WHERE username = ? ORDER BY created_at DESC", username)
+	err := database.RODB.Select(&pks, "SELECT id, name, created_at FROM passkeys WHERE username = ? ORDER BY created_at DESC", username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list passkeys"})
 		return

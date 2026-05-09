@@ -25,15 +25,17 @@ func (h *Handler) handlePostPassword(c *gin.Context) {
 	if isAdmin {
 		dbHash = database.GetSetting("admin_password_hash")
 	} else {
-		err := database.DB.Get(&dbHash, "SELECT password_hash FROM child_accounts WHERE username = ?", username)
+		err := database.RODB.Get(&dbHash, "SELECT password_hash FROM child_accounts WHERE username = ?", username)
 		if err != nil {
 			c.JSON(http.StatusForbidden, gin.H{"error": "user_not_found"})
 			return
 		}
-		database.DB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", username)
+		database.RODB.Get(&forceChange, "SELECT force_password_change FROM child_accounts WHERE username = ?", username)
 	}
 
-	if oldPassword != "" || forceChange == 0 {
+	// Only verify old password when NOT in force-change mode.
+	// When forceChange==1, admin has already reset the password so we skip verification.
+	if forceChange == 0 {
 		if bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(oldPassword)) != nil {
 			c.JSON(http.StatusForbidden, gin.H{"error": "incorrect_old_password"})
 			return
@@ -194,7 +196,7 @@ func (h *Handler) handleGetChildAPIKey(c *gin.Context) {
 	}
 	username := c.GetString("username")
 	var apiKey *string
-	err := database.DB.Get(&apiKey, "SELECT api_key FROM child_accounts WHERE username = ?", username)
+	err := database.RODB.Get(&apiKey, "SELECT api_key FROM child_accounts WHERE username = ?", username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -296,6 +298,7 @@ func (h *Handler) handlePostWebAuthn(c *gin.Context) {
 	if origins != "" {
 		originList = strings.Split(origins, ",")
 	}
+
 	InitWebAuthn(rpid, originList)
 
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
@@ -307,7 +310,7 @@ func (h *Handler) handleGetUsers(c *gin.Context) {
 		return
 	}
 	var users []database.User
-	err := database.DB.Select(&users, "SELECT id, username, created_at FROM child_accounts ORDER BY id DESC")
+	err := database.RODB.Select(&users, "SELECT id, username, created_at FROM child_accounts ORDER BY id DESC")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -316,9 +319,9 @@ func (h *Handler) handleGetUsers(c *gin.Context) {
 	for i := range users {
 		var fileCount int
 		var totalSize int64
-		prefix := "/" + users[i].Username
-		database.DB.Get(&fileCount, "SELECT COUNT(*) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
-		database.DB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
+		owner := users[i].Username
+		database.RODB.Get(&fileCount, "SELECT COUNT(*) FROM files WHERE owner = ? AND is_folder = 0", owner)
+		database.RODB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE owner = ? AND is_folder = 0", owner)
 		users[i].FileCount = fileCount
 		users[i].TotalSize = totalSize
 	}
@@ -338,7 +341,7 @@ func (h *Handler) handlePostUser(c *gin.Context) {
 		return
 	}
 	if password == "" {
-		password = "abc123"
+		password = utils.GenerateRandomString(16)
 	}
 
 	validUsername := regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -413,7 +416,7 @@ func (h *Handler) handlePostUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "success"})
+	c.JSON(http.StatusOK, gin.H{"status": "success", "temp_password": password})
 }
 
 func (h *Handler) handleDeleteUser(c *gin.Context) {
@@ -465,8 +468,16 @@ func (h *Handler) handleDeleteUser(c *gin.Context) {
 		return
 	}
 
-	tx.Exec("DELETE FROM sessions WHERE username = ?", username)
-	tx.Exec("DELETE FROM passkeys WHERE username = ?", username)
+	if _, err = tx.Exec("DELETE FROM sessions WHERE username = ?", username); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user sessions"})
+		return
+	}
+	if _, err = tx.Exec("DELETE FROM passkeys WHERE username = ?", username); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user passkeys"})
+		return
+	}
 
 	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit transaction"})
@@ -483,7 +494,8 @@ func (h *Handler) handlePostUserResetPass(c *gin.Context) {
 	}
 	username := c.Param("username")
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("abc123"), bcrypt.DefaultCost)
+	tempPassword := utils.GenerateRandomString(16)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(tempPassword), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
 		return
@@ -497,5 +509,5 @@ func (h *Handler) handlePostUserResetPass(c *gin.Context) {
 
 	database.DB.Exec("DELETE FROM sessions WHERE username = ?", username)
 
-	c.JSON(http.StatusOK, gin.H{"status": "success"})
+	c.JSON(http.StatusOK, gin.H{"status": "success", "temp_password": tempPassword})
 }

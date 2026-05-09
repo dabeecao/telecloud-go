@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"telecloud/config"
@@ -23,12 +24,20 @@ const (
 	isAdminKey  contextKey = "is_admin"
 )
 
+type dirCacheEntry struct {
+	items     []os.FileInfo
+	expiresAt time.Time
+}
+
 type telecloudFS struct {
-	cfg *config.Config
+	cfg      *config.Config
+	dirCache sync.Map // map[string]*dirCacheEntry keyed by username + ":" + path
 }
 
 func NewTelecloudFS(cfg *config.Config) webdav.FileSystem {
-	return &telecloudFS{cfg: cfg}
+	return &telecloudFS{
+		cfg: cfg,
+	}
 }
 
 // cleanPath ensures paths start with / and don't end with /
@@ -82,41 +91,26 @@ func getUserInfo(ctx context.Context) (string, bool) {
 	return username, isAdmin
 }
 
-func isChildAccountPath(path string) bool {
-	dir, base := splitPath(path)
-	var rootFolder string
-	if dir == "/" {
-		rootFolder = base
-	} else {
-		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-		rootFolder = parts[0]
-	}
-
-	if rootFolder == "" {
-		return false
-	}
-
-	var exists int
-	database.DB.Get(&exists, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
-	return exists > 0
-}
-
 func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
 	username, isAdmin := getUserInfo(ctx)
 	dbName := mapPath(name, username, isAdmin)
 
-	// Admin isolation check
-	if isAdmin && isChildAccountPath(dbName) {
-		return os.ErrPermission
-	}
-
 	dir, base := splitPath(dbName)
+
+	// Admin root collision check
+	if isAdmin && dir == "/" {
+		var count int
+		database.RODB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", base)
+		if count > 0 {
+			return os.ErrPermission
+		}
+	}
 
 	// Check if parent directory exists
 	if dir != "/" {
 		var parent database.File
 		pDir, pBase := splitPath(dir)
-		err := database.DB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", pDir, pBase, username)
+		err := database.RODB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", pDir, pBase, username)
 		if err != nil {
 			return os.ErrNotExist // maps to 409 Conflict in webdav
 		}
@@ -130,15 +124,10 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 	username, isAdmin := getUserInfo(ctx)
 	dbName := mapPath(name, username, isAdmin)
 
-	// Admin isolation check
-	if isAdmin && isChildAccountPath(dbName) {
-		return nil, os.ErrPermission
-	}
-
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username)
+	err := database.RODB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username)
 
 	// Writing a new file
 	if err != nil && (flag&os.O_CREATE) != 0 {
@@ -154,6 +143,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 				name:     "/",
 				isAdmin:  isAdmin,
 				username: username,
+				fs:       fs,
 			}, nil
 		}
 		return nil, os.ErrNotExist
@@ -172,6 +162,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 			mtime:    item.CreatedAt,
 			isAdmin:  isAdmin,
 			username: username,
+			fs:       fs,
 		}, nil
 	}
 
@@ -181,7 +172,15 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 	}
 
 	// Reading an existing file
-	var rs io.ReadSeeker
+	// If file has no message_id and no file_parts, it's still being uploaded to Telegram
+	if item.MessageID == nil {
+		parts, err := database.GetFileParts(item.ID)
+		if err != nil || len(parts) == 0 {
+			return nil, os.ErrNotExist
+		}
+	}
+
+	var rs io.ReadSeekCloser
 	rs, err = tgclient.GetTelegramFileReader(ctx, item, fs.cfg)
 	if err != nil {
 		return nil, err
@@ -196,6 +195,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 		rs:       rs,
 		isAdmin:  isAdmin,
 		username: username,
+		fs:       fs,
 	}, nil
 }
 
@@ -207,105 +207,58 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 		return fmt.Errorf("cannot delete root")
 	}
 
-	// Admin isolation check
-	if isAdmin && isChildAccountPath(dbName) {
-		return os.ErrPermission
-	}
-
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username); err != nil {
 		return os.ErrNotExist
 	}
 
+	var fileIDs []int
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
 			oldPrefix = "/" + item.Filename
 		}
-		var children []database.File
-		database.DB.Select(&children, "SELECT * FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", username)
+		database.RODB.Select(&fileIDs, "SELECT id FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", username)
+	}
+	fileIDs = append(fileIDs, item.ID)
 
-		var msgIDsToDelete []int
-		for _, child := range children {
-			// Collect parts
-			var partMsgIDs []int
-			database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", child.ID)
-			for _, pm := range partMsgIDs {
-				var count int
-				database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
-				if count <= 1 {
-					msgIDsToDelete = append(msgIDsToDelete, pm)
-				}
-			}
+	// Identify messages to delete from Telegram before removing files from DB
+	msgIDsToDelete, _ := database.GetOrphanedMessages(fileIDs)
 
-			if child.MessageID != nil {
-				var count int
-				database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *child.MessageID)
-				if count <= 1 {
-					// Check if not already added from parts
-					found := false
-					for _, m := range msgIDsToDelete {
-						if m == *child.MessageID {
-							found = true
-							break
-						}
-					}
-					if !found {
-						msgIDsToDelete = append(msgIDsToDelete, *child.MessageID)
-					}
-				}
-			}
-			if child.ThumbPath != nil {
-				os.Remove(*child.ThumbPath)
-			}
+	// Delete thumbnails — single query: only get thumb paths exclusively owned by files being deleted
+	if len(fileIDs) > 0 {
+		placeholders := make([]string, len(fileIDs))
+		args := make([]interface{}, len(fileIDs))
+		for i, id := range fileIDs {
+			placeholders[i] = "?"
+			args[i] = id
 		}
+		var thumbsToDelete []string
+		database.RODB.Select(&thumbsToDelete, fmt.Sprintf(
+			`SELECT thumb_path FROM files WHERE id IN (%s) AND thumb_path IS NOT NULL
+			 AND (SELECT COUNT(*) FROM files f2 WHERE f2.thumb_path = files.thumb_path) = 1`,
+			strings.Join(placeholders, ","),
+		), args...)
+		for _, tp := range thumbsToDelete {
+			os.Remove(tp)
+		}
+	}
 
+	// Delete from DB
+	if item.IsFolder {
+		oldPrefix := item.Path + "/" + item.Filename
+		if item.Path == "/" {
+			oldPrefix = "/" + item.Filename
+		}
 		database.DB.Exec("DELETE FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", username)
-		database.DB.Exec("DELETE FROM files WHERE id = ?", item.ID)
+	}
+	database.DB.Exec("DELETE FROM files WHERE id = ?", item.ID)
 
-		if len(msgIDsToDelete) > 0 {
-			tgclient.DeleteMessages(ctx, fs.cfg, msgIDsToDelete)
-		}
-	} else {
-		var msgIDsToDelete []int
-
-		// Collect parts
-		var partMsgIDs []int
-		database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", item.ID)
-		for _, pm := range partMsgIDs {
-			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
-			if count <= 1 {
-				msgIDsToDelete = append(msgIDsToDelete, pm)
-			}
-		}
-
-		if item.MessageID != nil {
-			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *item.MessageID)
-			if count <= 1 {
-				// Check if not already added from parts
-				found := false
-				for _, m := range msgIDsToDelete {
-					if m == *item.MessageID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					msgIDsToDelete = append(msgIDsToDelete, *item.MessageID)
-				}
-			}
-		}
-		if len(msgIDsToDelete) > 0 {
-			tgclient.DeleteMessages(ctx, fs.cfg, msgIDsToDelete)
-		}
-		if item.ThumbPath != nil {
-			os.Remove(*item.ThumbPath)
-		}
-		database.DB.Exec("DELETE FROM files WHERE id = ?", item.ID)
+	// Delete from Telegram
+	if len(msgIDsToDelete) > 0 {
+		tgclient.DeleteMessages(ctx, fs.cfg, msgIDsToDelete)
 	}
 
 	return nil
@@ -316,13 +269,17 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 	dbOldName := mapPath(oldName, username, isAdmin)
 	dbNewName := mapPath(newName, username, isAdmin)
 
-	// Admin isolation check
-	if isAdmin && (isChildAccountPath(dbOldName) || isChildAccountPath(dbNewName)) {
-		return os.ErrPermission
-	}
-
 	oldDir, oldBase := splitPath(dbOldName)
 	newDir, newBase := splitPath(dbNewName)
+
+	// Admin root collision check
+	if isAdmin && newDir == "/" {
+		var count int
+		database.RODB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", newBase)
+		if count > 0 {
+			return os.ErrPermission
+		}
+	}
 
 	tx, err := database.DB.Beginx()
 	if err != nil {
@@ -370,11 +327,6 @@ func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, erro
 	username, isAdmin := getUserInfo(ctx)
 	dbName := mapPath(name, username, isAdmin)
 
-	// Admin isolation check
-	if isAdmin && isChildAccountPath(dbName) {
-		return nil, os.ErrPermission
-	}
-
 	if dbName == "/" || name == "/" || name == "" {
 		return &telecloudFileInfo{
 			name:  "/",
@@ -386,7 +338,7 @@ func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, erro
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username); err != nil {
 		return nil, os.ErrNotExist
 	}
 
@@ -405,7 +357,7 @@ func (fs *telecloudFS) GetThumbnailPath(ctx context.Context, name string) (strin
 	dir, base := splitPath(dbName)
 
 	var thumbPath *string
-	err := database.DB.Get(&thumbPath, "SELECT thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dir, base, username)
+	err := database.RODB.Get(&thumbPath, "SELECT thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dir, base, username)
 	if err != nil {
 		return "", err
 	}

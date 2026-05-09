@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -55,6 +56,13 @@ func (h *Handler) handleGetIndex(c *gin.Context) {
 		webdavUser = sessionUsername
 	}
 
+	var forcePasswordChange bool
+	if !isAdmin {
+		var fc int
+		database.RODB.Get(&fc, "SELECT force_password_change FROM child_accounts WHERE username = ?", sessionUsername)
+		forcePasswordChange = fc == 1
+	}
+
 	var userStorageUsed int64
 	if isAdmin {
 		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0")
@@ -78,7 +86,7 @@ func (h *Handler) handleGetIndex(c *gin.Context) {
 			AccessKey *string `db:"s3_access_key"`
 			SecretKey *string `db:"s3_secret_key"`
 		}
-		err := database.DB.Get(&childS3, "SELECT s3_enabled, s3_access_key, s3_secret_key FROM child_accounts WHERE username = ?", sessionUsername)
+		err := database.RODB.Get(&childS3, "SELECT s3_enabled, s3_access_key, s3_secret_key FROM child_accounts WHERE username = ?", sessionUsername)
 		if err == nil {
 			s3Enabled = childS3.Enabled == 1 && database.GetSetting("s3_enabled") == "true"
 			if childS3.AccessKey != nil {
@@ -89,6 +97,9 @@ func (h *Handler) handleGetIndex(c *gin.Context) {
 			}
 		}
 	}
+
+	currentRPID, currentOrigins := GetWebAuthnConfig()
+	originsStr := strings.Join(currentOrigins, ",")
 
 	c.HTML(http.StatusOK, "index.html", gin.H{
 		"webdav_enabled":        webdavEnabled,
@@ -101,13 +112,14 @@ func (h *Handler) handleGetIndex(c *gin.Context) {
 		"upload_api_enabled":    uploadAPIEnabled,
 		"global_api_enabled":    globalUploadAPIEnabled,
 		"upload_api_key":        uploadAPIKey,
-		"webauthn_rpid":         database.GetSetting("webauthn_rpid"),
-		"webauthn_rporigin":     database.GetSetting("webauthn_rporigin"),
+		"webauthn_rpid":         currentRPID,
+		"webauthn_rporigin":     originsStr,
 		"version":               h.cfg.Version,
 		"is_admin":              isAdmin,
 		"username":              sessionUsername,
 		"storage_used":          userStorageUsed,
 		"theme":                 database.GetUserSetting(sessionUsername, "theme"),
+		"force_change":          forcePasswordChange,
 	})
 }
 
@@ -133,7 +145,7 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 			parts := strings.Split(strings.TrimPrefix(dbPath, "/"), "/")
 			rootFolder := parts[0]
 			var isChild int
-			database.DB.Get(&isChild, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
+			database.RODB.Get(&isChild, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", rootFolder)
 
 			effectiveOwner := username
 			if isChild > 0 {
@@ -150,7 +162,7 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 
 	if isAdmin && dbPath == "/" {
 		var activeUsers []string
-		database.DB.Select(&activeUsers, "SELECT username FROM child_accounts")
+		database.RODB.Select(&activeUsers, "SELECT username FROM child_accounts")
 		userMap := make(map[string]bool)
 		for _, u := range activeUsers {
 			userMap[u] = true
@@ -167,7 +179,7 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 
 	for i := range files {
 		files[i].Path = unmapPath(files[i].Path, username, isAdmin)
-		if files[i].ShareToken != nil {
+		if files[i].ShareToken != nil && !files[i].IsFolder {
 			files[i].DirectToken = utils.GenerateDirectToken(*files[i].ShareToken)
 		}
 		if files[i].ThumbPath != nil {
@@ -204,14 +216,14 @@ func (h *Handler) handlePostFolders(c *gin.Context) {
 
 	if isAdmin && dbPath == "/" {
 		var count int
-		database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", name)
+		database.RODB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", name)
 		if count > 0 {
 			c.JSON(http.StatusForbidden, gin.H{"error": "folder_collides_child"})
 			return
 		}
 	}
 
-	uniqueName := database.GetUniqueFilename(database.DB, dbPath, name, true, 0, username)
+	uniqueName := database.GetUniqueFilename(database.RODB, dbPath, name, true, 0, username)
 	_, err := database.DB.Exec("INSERT INTO files (filename, path, is_folder, owner) VALUES (?, ?, 1, ?)", uniqueName, dbPath, username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -241,7 +253,7 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 
 	if isAdmin && dbPath == "/" {
 		var count int
-		database.DB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", filename)
+		database.RODB.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", filename)
 		if count > 0 {
 			c.JSON(http.StatusForbidden, gin.H{"error": "filename_collides_child"})
 			return
@@ -291,6 +303,7 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 
 	chunkData, err := io.ReadAll(file)
 	if err != nil {
+		log.Printf("UPLOAD ERROR: Failed to read chunk: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_read_chunk"})
 		return
 	}
@@ -300,18 +313,21 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 
 	out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		log.Printf("UPLOAD ERROR: Failed to open temp file %s: %v", tempFilePath, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_open_temp_file"})
 		return
 	}
 	_, err = out.WriteAt(chunkData, offset)
 	out.Close()
 	if err != nil {
+		log.Printf("UPLOAD ERROR: Failed to write chunk to %s: %v", tempFilePath, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_write_chunk"})
 		return
 	}
 
 	_, err = database.DB.Exec(database.InsertIgnoreSQL("upload_chunks", "task_id, chunk_index", "?, ?"), taskID, chunkIndex)
 	if err != nil {
+		log.Printf("UPLOAD ERROR: Failed to record chunk in DB: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_record_chunk"})
 		return
 	}
@@ -320,10 +336,14 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 	state.received[chunkIndex] = true
 
 	var actualReceived int
-	database.DB.Get(&actualReceived, "SELECT COUNT(*) FROM upload_chunks WHERE task_id = ?", taskID)
+	database.RODB.Get(&actualReceived, "SELECT COUNT(*) FROM upload_chunks WHERE task_id = ?", taskID)
 
-	isDone := actualReceived == totalChunks
+	// uploadStarted guards against double-trigger: two goroutines can both see
+	// COUNT == totalChunks if their INSERTs land before either grabs the lock.
+	// Only the first goroutine to set uploadStarted=true will trigger the upload.
+	isDone := actualReceived == totalChunks && !state.uploadStarted
 	if isDone {
+		state.uploadStarted = true
 		chunkTrackerSync.Delete(taskID)
 		database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskID)
 		database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskID)
@@ -338,10 +358,12 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 			mimeType = "application/octet-stream"
 		}
 
+		// Capture overwriteFlag from this request directly.
+		// Do NOT re-read from upload_tasks: that row was deleted above,
+		// so the old code always read false (silent bug).
+		ov := overwriteFlag
 		go func() {
 			defer os.Remove(tempFilePath)
-			var ov bool
-			database.DB.Get(&ov, "SELECT overwrite FROM upload_tasks WHERE id = ?", taskID)
 			tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, ov, username)
 		}()
 
@@ -386,7 +408,7 @@ func (h *Handler) handlePostRemoteUpload(c *gin.Context) {
 
 	if dbPath != "/" {
 		var folder database.File
-		err = database.DB.Get(&folder, "SELECT is_folder FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", filepath.Dir(dbPath), filepath.Base(dbPath), username)
+		err = database.RODB.Get(&folder, "SELECT is_folder FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", filepath.Dir(dbPath), filepath.Base(dbPath), username)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "folder_not_found"})
 			return
@@ -489,15 +511,14 @@ func (h *Handler) handleCancelUpload(c *gin.Context) {
 	username := c.GetString("username")
 
 	if taskID != "" {
-		if !tgclient.CancelTask(taskID, username) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		// Validate taskID format before any operation to prevent path traversal
+		if strings.Contains(taskID, "..") || strings.ContainsAny(taskID, "/\\") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_task_id"})
 			return
 		}
-	}
 
-	if taskID != "" {
-		if taskID == "" || strings.Contains(taskID, "..") || strings.ContainsAny(taskID, "/\\") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_task_id"})
+		if !tgclient.CancelTask(taskID, username) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
 		}
 
@@ -549,16 +570,8 @@ func (h *Handler) handlePostPaste(c *gin.Context) {
 
 	for _, id := range req.ItemIDs {
 		var item database.File
-		err := tx.Get(&item, "SELECT * FROM files WHERE id = ?", id)
+		err := tx.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ?", id, username)
 		if err != nil {
-			continue
-		}
-
-		if !verifyItemAccess(c, item.Path) {
-			continue
-		}
-
-		if isAdmin && isChildAccountPathQuery(tx, item.Path) {
 			continue
 		}
 
@@ -599,7 +612,7 @@ func (h *Handler) handlePostPaste(c *gin.Context) {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
-				_, err = tx.Exec("UPDATE files SET path = "+database.ConcatPathSQL()+" WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+				_, err = tx.Exec("UPDATE files SET path = "+database.ConcatPathSQL()+" WHERE (path = ? OR path LIKE ?) AND owner = ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%", item.Owner)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
@@ -691,106 +704,57 @@ func (h *Handler) handleDeleteFile(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
 
-	isAdmin := c.GetBool("is_admin")
-	if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-		return
-	}
-
+	var fileIDs []int
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
 			oldPrefix = "/" + item.Filename
 		}
-		var children []database.File
-		database.DB.Select(&children, "SELECT * FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", item.Owner)
+		database.RODB.Select(&fileIDs, "SELECT id FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", item.Owner)
+	}
+	fileIDs = append(fileIDs, id)
 
-		var msgIDsToDelete []int
-		for _, child := range children {
-			var partMsgIDs []int
-			database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", child.ID)
-			for _, pm := range partMsgIDs {
-				var count int
-				database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
-				if count <= 1 {
-					msgIDsToDelete = append(msgIDsToDelete, pm)
-				}
-			}
+	// Identify messages to delete from Telegram before removing files from DB
+	msgIDsToDelete, _ := database.GetOrphanedMessages(fileIDs)
 
-			if child.MessageID != nil {
-				var count int
-				database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *child.MessageID)
-				if count <= 1 {
-					found := false
-					for _, m := range msgIDsToDelete {
-						if m == *child.MessageID {
-							found = true
-							break
-						}
-					}
-					if !found {
-						msgIDsToDelete = append(msgIDsToDelete, *child.MessageID)
-					}
-				}
-			}
-			if child.ThumbPath != nil {
-				var count int
-				database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *child.ThumbPath)
-				if count <= 1 {
-					os.Remove(*child.ThumbPath)
-				}
-			}
+	// Delete thumbnails — single query: only get thumb paths exclusively owned by files being deleted
+	if len(fileIDs) > 0 {
+		placeholders := make([]string, len(fileIDs))
+		args := make([]interface{}, len(fileIDs))
+		for i, id := range fileIDs {
+			placeholders[i] = "?"
+			args[i] = id
 		}
+		var thumbsToDelete []string
+		database.RODB.Select(&thumbsToDelete, fmt.Sprintf(
+			`SELECT thumb_path FROM files WHERE id IN (%s) AND thumb_path IS NOT NULL
+			 AND (SELECT COUNT(*) FROM files f2 WHERE f2.thumb_path = files.thumb_path) = 1`,
+			strings.Join(placeholders, ","),
+		), args...)
+		for _, tp := range thumbsToDelete {
+			os.Remove(tp)
+		}
+	}
 
+	// Delete from DB
+	if item.IsFolder {
+		oldPrefix := item.Path + "/" + item.Filename
+		if item.Path == "/" {
+			oldPrefix = "/" + item.Filename
+		}
 		database.DB.Exec("DELETE FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", item.Owner)
-		database.DB.Exec("DELETE FROM files WHERE id = ?", id)
-		if len(msgIDsToDelete) > 0 {
-			tgclient.DeleteMessages(context.Background(), h.cfg, msgIDsToDelete)
-		}
-	} else {
-		var msgIDsToDelete []int
-		var partMsgIDs []int
-		database.DB.Select(&partMsgIDs, "SELECT message_id FROM file_parts WHERE file_id = ?", item.ID)
-		for _, pm := range partMsgIDs {
-			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM file_parts WHERE message_id = ?", pm)
-			if count <= 1 {
-				msgIDsToDelete = append(msgIDsToDelete, pm)
-			}
-		}
+	}
+	database.DB.Exec("DELETE FROM files WHERE id = ?", id)
 
-		if item.MessageID != nil {
-			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE message_id = ?", *item.MessageID)
-			if count <= 1 {
-				found := false
-				for _, m := range msgIDsToDelete {
-					if m == *item.MessageID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					msgIDsToDelete = append(msgIDsToDelete, *item.MessageID)
-				}
-			}
-		}
-		if item.ThumbPath != nil {
-			var count int
-			database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *item.ThumbPath)
-			if count <= 1 {
-				os.Remove(*item.ThumbPath)
-			}
-		}
-		database.DB.Exec("DELETE FROM files WHERE id = ?", id)
-		if len(msgIDsToDelete) > 0 {
-			tgclient.DeleteMessages(context.Background(), h.cfg, msgIDsToDelete)
-		}
+	// Delete from Telegram
+	if len(msgIDsToDelete) > 0 {
+		tgclient.DeleteMessages(context.Background(), h.cfg, msgIDsToDelete)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
@@ -812,15 +776,10 @@ func (h *Handler) handleRenameFile(c *gin.Context) {
 	defer tx.Rollback()
 
 	var item database.File
-	err = tx.Get(&item, "SELECT filename, path, is_folder FROM files WHERE id = ?", id)
+	username := c.GetString("username")
+	err = tx.Get(&item, "SELECT filename, path, is_folder, owner FROM files WHERE id = ? AND owner = ?", id, username)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-
-	isAdmin := c.GetBool("is_admin")
-	if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPathQuery(tx, item.Path)) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -832,7 +791,6 @@ func (h *Handler) handleRenameFile(c *gin.Context) {
 		}
 	}
 
-	username := c.GetString("username")
 	uniqueName := database.GetUniqueFilename(tx, item.Path, newName, item.IsFolder, id, username)
 
 	if item.IsFolder {
@@ -845,7 +803,7 @@ func (h *Handler) handleRenameFile(c *gin.Context) {
 		if basePath == "/" {
 			newPrefix = "/" + uniqueName
 		}
-		_, err = tx.Exec("UPDATE files SET path = "+database.ConcatPathSQL()+" WHERE path = ? OR path LIKE ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%")
+		_, err = tx.Exec("UPDATE files SET path = "+database.ConcatPathSQL()+" WHERE (path = ? OR path LIKE ?) AND owner = ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%", item.Owner)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -879,18 +837,19 @@ func (h *Handler) handleShareFile(c *gin.Context) {
 		return
 	}
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT path FROM files WHERE id = ?", id); err != nil {
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT path, is_folder FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	isAdmin := c.GetBool("is_admin")
-	if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	token := uuid.New().String()
 	database.DB.Exec("UPDATE files SET share_token = ? WHERE id = ?", token, id)
-	c.JSON(http.StatusOK, gin.H{"share_token": token, "direct_token": utils.GenerateDirectToken(token)})
+	
+	resp := gin.H{"share_token": token}
+	if !item.IsFolder {
+		resp["direct_token"] = utils.GenerateDirectToken(token)
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *Handler) handleRevokeShare(c *gin.Context) {
@@ -900,13 +859,9 @@ func (h *Handler) handleRevokeShare(c *gin.Context) {
 		return
 	}
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT path FROM files WHERE id = ?", id); err != nil {
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT path FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	isAdminDel := c.GetBool("is_admin")
-	if !verifyItemAccess(c, item.Path) || (isAdminDel && isChildAccountPath(item.Path)) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	database.DB.Exec("UPDATE files SET share_token = NULL WHERE id = ?", id)
@@ -920,13 +875,9 @@ func (h *Handler) handleGetThumb(c *gin.Context) {
 		return
 	}
 	var item database.File
-	if err := database.DB.Get(&item, "SELECT path, thumb_path FROM files WHERE id = ?", id); err != nil || item.ThumbPath == nil {
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT path, thumb_path FROM files WHERE id = ? AND owner = ?", id, username); err != nil || item.ThumbPath == nil {
 		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-	isAdmin := c.GetBool("is_admin")
-	if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
-		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 	c.File(*item.ThumbPath)
@@ -939,17 +890,15 @@ func (h *Handler) handleStreamFile(c *gin.Context) {
 		return
 	}
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil || item.MessageID == nil {
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ?", id, username); err != nil || item.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	isAdminStream := c.GetBool("is_admin")
-	if !verifyItemAccess(c, item.Path) || (isAdminStream && isChildAccountPath(item.Path)) {
-		c.AbortWithStatus(http.StatusForbidden)
-		return
-	}
 
-	tgclient.ServeTelegramFile(c.Request, c.Writer, item, h.cfg)
+	if err := tgclient.ServeTelegramFile(c.Request, c.Writer, item, h.cfg); err != nil {
+		fmt.Printf("[Stream] Error serving file %d: %v\n", id, err)
+	}
 }
 
 func (h *Handler) handleDownloadFile(c *gin.Context) {
@@ -959,14 +908,9 @@ func (h *Handler) handleDownloadFile(c *gin.Context) {
 		return
 	}
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
-		return
-	}
-
-	isAdmin := c.GetBool("is_admin")
-	if !verifyItemAccess(c, item.Path) || (isAdmin && isChildAccountPath(item.Path)) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
 		return
 	}
 
@@ -993,14 +937,14 @@ func (h *Handler) handleGetUploadCheck(c *gin.Context) {
 	var task struct {
 		ID string `db:"id"`
 	}
-	err := database.DB.Get(&task, "SELECT id FROM upload_tasks WHERE id = ? AND owner = ?", taskID, username)
+	err := database.RODB.Get(&task, "SELECT id FROM upload_tasks WHERE id = ? AND owner = ?", taskID, username)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"chunks": []int{}})
 		return
 	}
 
 	var chunks []int
-	database.DB.Select(&chunks, "SELECT chunk_index FROM upload_chunks WHERE task_id = ? ORDER BY chunk_index ASC", taskID)
+	database.RODB.Select(&chunks, "SELECT chunk_index FROM upload_chunks WHERE task_id = ? ORDER BY chunk_index ASC", taskID)
 	c.JSON(http.StatusOK, gin.H{"chunks": chunks})
 }
 
@@ -1019,7 +963,7 @@ func (h *Handler) handlePostCheckExists(c *gin.Context) {
 	existing := make([]string, 0)
 	for _, fn := range filenames {
 		var count int
-		err := database.DB.Get(&count, "SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dbPath, fn, username)
+		err := database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dbPath, fn, username)
 		if err == nil && count > 0 {
 			existing = append(existing, fn)
 		}
@@ -1032,47 +976,52 @@ func (h *Handler) handleWebSocket(c *gin.Context) {
 	ws.HandleWebSocket(c.Writer, c.Request, username)
 }
 
-func (h *Handler) handlePublicUploadAPI(c *gin.Context) {
+func (h *Handler) authenticatePublicAPI(c *gin.Context) (string, bool, error) {
 	if database.GetSetting("upload_api_enabled") != "true" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Upload API is disabled"})
-		return
+		return "", false, fmt.Errorf("Upload API is disabled")
 	}
 
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing Authorization header"})
-		return
+		return "", false, fmt.Errorf("Invalid or missing Authorization header")
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 
-	var username string
-	var isAdmin bool
-
 	adminKey := database.GetSetting("upload_api_key")
 	if token == adminKey && adminKey != "" {
-		isAdmin = true
-	} else {
-		var userStatus struct {
-			Username    string `db:"username"`
-			Enabled     int    `db:"api_enabled"`
-			ForceChange int    `db:"force_password_change"`
-		}
-		err := database.DB.Get(&userStatus, "SELECT username, api_enabled, force_password_change FROM child_accounts WHERE api_key = ?", token)
-		if err != nil || userStatus.Username == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			return
-		}
-		if userStatus.Enabled == 0 {
-			c.JSON(http.StatusForbidden, gin.H{"error": "API is disabled for this account"})
-			return
-		}
-		if userStatus.ForceChange == 1 {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Password change required via web interface before using API"})
-			return
-		}
+		return database.GetSetting("admin_username"), true, nil
+	}
 
-		username = userStatus.Username
-		isAdmin = false
+	var userStatus struct {
+		Username    string `db:"username"`
+		Enabled     int    `db:"api_enabled"`
+		ForceChange int    `db:"force_password_change"`
+	}
+	err := database.RODB.Get(&userStatus, "SELECT username, api_enabled, force_password_change FROM child_accounts WHERE api_key = ?", token)
+	if err != nil || userStatus.Username == "" {
+		return "", false, fmt.Errorf("Invalid API key")
+	}
+	if userStatus.Enabled == 0 {
+		return "", false, fmt.Errorf("API is disabled for this account")
+	}
+	if userStatus.ForceChange == 1 {
+		return "", false, fmt.Errorf("Password change required via web interface before using API")
+	}
+
+	return userStatus.Username, false, nil
+}
+
+func (h *Handler) handlePublicUploadAPI(c *gin.Context) {
+	username, isAdmin, err := h.authenticatePublicAPI(c)
+	if err != nil {
+		if strings.Contains(err.Error(), "Authorization") || strings.Contains(err.Error(), "key") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		} else if strings.Contains(err.Error(), "disabled") || strings.Contains(err.Error(), "required") {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
 	}
 
 	file, header, err := c.Request.FormFile("file")
@@ -1121,10 +1070,26 @@ func (h *Handler) handlePublicUploadAPI(c *gin.Context) {
 	async := c.PostForm("async") == "true"
 	overwrite := c.PostForm("overwrite") == "true"
 
-	if async && shareMode != "public" {
+	if async {
+		origin := getRequestOrigin(c)
+		
+		var fileSize int64
+		if stat, err := os.Stat(tempFilePath); err == nil {
+			fileSize = stat.Size()
+		}
+		tgclient.UpdateTaskWithFile(taskID, "processing", 0, "uploading_to_telegram", filename, username, fileSize, 0)
+		
 		go func() {
-			tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, overwrite, username)
-			os.Remove(tempFilePath)
+			defer os.Remove(tempFilePath)
+			fileID, finalName, err := tgclient.ProcessCompleteUploadSync(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, overwrite, username)
+			if err == nil {
+				if shareMode == "public" || shareMode == "folder" {
+					h.publicShareItem(origin, fileID, shareMode, dbPath, username, make(gin.H))
+				}
+				tgclient.UpdateTaskWithFileID(taskID, "done", 100, "", fileID, finalName, username)
+			} else {
+				tgclient.UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error(), username)
+			}
 		}()
 
 		c.JSON(http.StatusOK, gin.H{
@@ -1137,8 +1102,9 @@ func (h *Handler) handlePublicUploadAPI(c *gin.Context) {
 	}
 
 	defer os.Remove(tempFilePath)
-	fileID, finalName, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, filename, dbPath, mimeType, h.cfg, overwrite, username)
+	fileID, finalName, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, overwrite, username)
 	if err != nil {
+		tgclient.UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error(), username)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed: " + err.Error()})
 		return
 	}
@@ -1150,21 +1116,258 @@ func (h *Handler) handlePublicUploadAPI(c *gin.Context) {
 		"file_id":  fileID,
 	}
 
-	if shareMode == "public" {
-		shareToken := uuid.New().String()
-		directToken := utils.GenerateDirectToken(shareToken)
-		database.DB.Exec("UPDATE files SET share_token = ? WHERE id = ?", shareToken, fileID)
-
-		scheme := "http"
-		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
-			scheme = "https"
-		}
-		origin := scheme + "://" + c.Request.Host
-
-		resp["share_token"] = shareToken
-		resp["share_link"] = origin + "/s/" + shareToken
-		resp["direct_link"] = origin + "/dl/" + directToken
+	if shareMode == "public" || shareMode == "folder" {
+		h.publicShareItem(getRequestOrigin(c), fileID, shareMode, dbPath, username, resp)
 	}
 
+	tgclient.UpdateTaskWithFileID(taskID, "done", 100, "", fileID, finalName, username)
+	c.JSON(http.StatusOK, resp)
+}
+
+type PublicRemoteUploadRequest struct {
+	URL       string      `json:"url"`
+	Path      string      `json:"path"`
+	Share     interface{} `json:"share"`
+	Overwrite bool        `json:"overwrite"`
+	Async     bool        `json:"async"`
+}
+
+func (h *Handler) handlePublicRemoteUploadAPI(c *gin.Context) {
+	username, isAdmin, err := h.authenticatePublicAPI(c)
+	if err != nil {
+		if strings.Contains(err.Error(), "Authorization") || strings.Contains(err.Error(), "key") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		} else if strings.Contains(err.Error(), "disabled") || strings.Contains(err.Error(), "required") {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	var req PublicRemoteUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if req.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
+		return
+	}
+
+	parsedURL, parseErr := url.ParseRequestURI(req.URL)
+	if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_url"})
+		return
+	}
+
+	if utils.IsPrivateIP(req.URL) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden_url"})
+		return
+	}
+
+	dbPath := mapPath(req.Path, username, isAdmin)
+	if isAdmin && isChildAccountPath(dbPath) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin cannot upload to child account directory"})
+		return
+	}
+
+	taskID := uuid.New().String()
+	shareMode := ""
+	if s, ok := req.Share.(string); ok {
+		shareMode = s
+	} else if b, ok := req.Share.(bool); ok && b {
+		shareMode = "public"
+	}
+
+	if req.Async {
+		origin := getRequestOrigin(c)
+		
+		// Initialize task in memory
+		filename := filepath.Base(req.URL)
+		if idx := strings.Index(filename, "?"); idx != -1 {
+			filename = filename[:idx]
+		}
+		tgclient.UpdateTaskWithFile(taskID, "processing", 0, "remote_download_queued", filename, username, 0, 0)
+
+		go func() {
+			fileID, finalName, err := tgclient.ProcessRemoteUploadSync(context.Background(), req.URL, dbPath, taskID, h.cfg, req.Overwrite, username)
+			if err == nil {
+				if shareMode == "public" || shareMode == "folder" {
+					h.publicShareItem(origin, fileID, shareMode, dbPath, username, make(gin.H))
+				}
+				tgclient.UpdateTaskWithFileID(taskID, "done", 100, "", fileID, finalName, username)
+			} else {
+				tgclient.UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error(), username)
+			}
+		}()
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "processing",
+			"task_id": taskID,
+		})
+		return
+	}
+
+	fileID, finalName, err := tgclient.ProcessRemoteUploadSync(c.Request.Context(), req.URL, dbPath, taskID, h.cfg, req.Overwrite, username)
+	if err != nil {
+		tgclient.UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error(), username)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Remote upload failed: " + err.Error()})
+		return
+	}
+
+	resp := gin.H{
+		"status":   "done",
+		"filename": finalName,
+		"path":     req.Path,
+		"file_id":  fileID,
+	}
+
+	if shareMode == "public" || shareMode == "folder" {
+		h.publicShareItem(getRequestOrigin(c), fileID, shareMode, dbPath, username, resp)
+	}
+
+	tgclient.UpdateTaskWithFileID(taskID, "done", 100, "", fileID, finalName, username)
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) handleGetPublicTaskStatusAPI(c *gin.Context) {
+	username, _, err := h.authenticatePublicAPI(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	taskID := c.Param("task_id")
+	task := tgclient.GetTask(taskID)
+	if task == nil || task.Owner != username {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		return
+	}
+
+	// Enrich if done
+	if task.Status == "done" && task.FileID != 0 {
+		var file database.File
+		err := database.RODB.Get(&file, "SELECT * FROM files WHERE id = ?", task.FileID)
+		if err == nil {
+			resp := gin.H{
+				"status":   "done",
+				"file_id":  task.FileID,
+				"filename": file.Filename,
+				"path":     file.Path,
+			}
+
+			if file.ShareToken != nil {
+				origin := getRequestOrigin(c)
+				resp["share_token"] = *file.ShareToken
+				resp["share_link"] = origin + "/s/" + *file.ShareToken
+				if !file.IsFolder {
+					resp["direct_link"] = origin + "/dl/" + utils.GenerateDirectToken(*file.ShareToken)
+				}
+			}
+			c.JSON(http.StatusOK, resp)
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, task)
+}
+
+func (h *Handler) handleDeletePublicTaskAPI(c *gin.Context) {
+	username, _, err := h.authenticatePublicAPI(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	taskID := c.Param("task_id")
+	if tgclient.CancelTask(taskID, username) {
+		c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+	} else {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found or already completed"})
+	}
+}
+
+func (h *Handler) publicShareItem(origin string, fileID int64, shareMode, dbPath, username string, resp gin.H) {
+	targetID := fileID
+	actualShareMode := shareMode
+
+	if shareMode == "folder" {
+		userHome := "/" + username
+		// Prevent sharing system root or user home folder automatically
+		if dbPath != "/" && dbPath != userHome && dbPath != "." && dbPath != "" {
+			var parent struct {
+				ID int64 `db:"id"`
+			}
+			parentPath := filepath.Dir(dbPath)
+			parentName := filepath.Base(dbPath)
+			err := database.RODB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", parentPath, parentName, username)
+			if err == nil {
+				targetID = parent.ID
+			} else {
+				actualShareMode = "public"
+			}
+		} else {
+			actualShareMode = "public"
+		}
+	}
+
+	shareToken := uuid.New().String()
+	_, err := database.DB.Exec("UPDATE files SET share_token = ? WHERE id = ?", shareToken, targetID)
+	if err != nil {
+		fmt.Printf("[PublicAPI] Failed to update share token: %v\n", err)
+		return
+	}
+
+	resp["share_token"] = shareToken
+	resp["share_link"] = origin + "/s/" + shareToken
+	if actualShareMode != "folder" {
+		resp["direct_link"] = origin + "/dl/" + utils.GenerateDirectToken(shareToken)
+	}
+}
+
+type PublicShareRequest struct {
+	Path string `json:"path"`
+}
+
+func (h *Handler) handlePublicShareAPI(c *gin.Context) {
+	username, isAdmin, err := h.authenticatePublicAPI(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	var req PublicShareRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if req.Path == "" || req.Path == "/" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+		return
+	}
+
+	fullPath := mapPath(req.Path, username, isAdmin)
+	dbPath := filepath.Dir(fullPath)
+	filename := filepath.Base(fullPath)
+
+	var item struct {
+		ID       int64 `db:"id"`
+		IsFolder bool  `db:"is_folder"`
+	}
+	err = database.RODB.Get(&item, "SELECT id, is_folder FROM files WHERE path = ? AND filename = ? AND owner = ?", dbPath, filename, username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Item not found"})
+		return
+	}
+
+	shareMode := "public"
+	if item.IsFolder {
+		shareMode = "folder"
+	}
+
+	resp := gin.H{"status": "done"}
+	h.publicShareItem(getRequestOrigin(c), item.ID, shareMode, dbPath, username, resp)
 	c.JSON(http.StatusOK, resp)
 }

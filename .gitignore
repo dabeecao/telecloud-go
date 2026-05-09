@@ -57,3 +57,5 @@ static/css/*.min.css
 # Build test folder
 build/*
 
+# Docs
+ARCHITECTURE.md

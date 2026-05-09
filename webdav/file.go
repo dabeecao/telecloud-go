@@ -102,11 +102,11 @@ func (f *telecloudFile) Readdir(count int) ([]os.FileInfo, error) {
 				})
 			}
 
-			// Update cache (10 seconds TTL)
+			// Update cache (3 seconds TTL)
 			if f.fs != nil {
 				f.fs.dirCache.Store(cacheKey, &dirCacheEntry{
 					items:     f.dirItems,
-					expiresAt: time.Now().Add(10 * time.Second),
+					expiresAt: time.Now().Add(3 * time.Second),
 				})
 			}
 		}

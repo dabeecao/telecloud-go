@@ -290,7 +290,9 @@ func Run(ctx context.Context, cfg *config.Config, cb func(ctx context.Context) e
 					}
 				}
 				cfg.IsPremium = isPremium
-				if isPremium && len(BotPool) == 0 {
+				if len(BotPool) > 0 {
+					cfg.MaxPartSize = 500 * 1024 * 1024
+				} else if isPremium {
 					cfg.MaxPartSize = 3900 * 1024 * 1024
 				} else {
 					cfg.MaxPartSize = 1900 * 1024 * 1024

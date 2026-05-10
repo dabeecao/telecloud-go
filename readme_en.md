@@ -32,7 +32,7 @@ This project has been **completely rewritten in Golang** from the original proje
 
 ## ✨ Features
 
-* 📁 Store files directly on Telegram with **unlimited file size** (Automatically splits large files into 2GB/4GB parts).
+* 📁 Store files directly on Telegram with **unlimited file size** (Automatically splits large files into optimized chunks from 500MB up to 4GB).
 * 🎬 Stream videos and music directly in the web interface and shared links (Seamless streaming of split files).
 * 🔗 Share links with options for normal links, direct download links, and **Folder Sharing**.
 * 🗂️ Intuitive file management interface (File Browser) with **Grid** and **List** view modes.
@@ -44,7 +44,7 @@ This project has been **completely rewritten in Golang** from the original proje
 * 🎥 **Media Downloader**: Supports downloading Videos and Music from various platforms (YouTube, TikTok, Facebook...) using **yt-dlp** directly in the UI.
 * ⚡ **Background Download**: Supports background URL downloads with real-time progress notifications, no browser session required.
 * 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
-* 🤖 **Multi-Bot (Bot Pool)**: Supports using secondary bots to increase upload/download throughput and avoid Telegram rate limits (FloodWait).
+* 🤖 **Multi-Bot (Bot Pool)**: Supports using secondary bots to increase throughput. The system automatically optimizes chunk sizes (500MB) to balance the load across bots, maximizing stability and recovery during network drops.
 * 🔐 **Passkey**: Supports secure login using biometrics (TouchID/FaceID) or security keys (WebAuthn).
 * 🗄️ **MySQL Support**: In addition to SQLite, TeleCloud now supports **MySQL** for storing its database, suitable for large-scale deployments requiring high stability.
 * 🌐 **Multi-language**: Supports multiple languages (English, Vietnamese, Chinese, Japanese, Russian, Arabic, Hindi, and Khmer).

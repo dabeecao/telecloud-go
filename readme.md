@@ -32,7 +32,7 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 
 ## ✨ Tính năng
 
-* 📁 Lưu trữ file trực tiếp trên Telegram **không giới hạn dung lượng** (Tự động chia nhỏ file siêu lớn thành các mảnh 2GB/4GB).
+* 📁 Lưu trữ file trực tiếp trên Telegram **không giới hạn dung lượng** (Tự động chia nhỏ file siêu lớn thành các mảnh tối ưu từ 500MB đến 4GB).
 * 🎬 Phát video và nhạc trực tiếp trong trang quản lý và liên kết chia sẻ (Hỗ trợ phát mượt mà các file đã chia nhỏ).
 * 🔗 Liên kết chia sẻ có thể chọn liên kết thường hoặc link tải trực tiếp (Direct Link), hỗ trợ chia sẻ cả **Thư mục**.
 * 🗂️ Giao diện quản lý (File Browser) trực quan, hỗ trợ chế độ xem **Lưới (Grid)** và **Danh sách (List)**.
@@ -44,7 +44,7 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 🎥 **Tải đa phương tiện**: Hỗ trợ tải Video, Nhạc từ các nền tảng (YouTube, TikTok, Facebook...) bằng **yt-dlp** ngay trong giao diện.
 * ⚡ **Tải trong nền**: Hỗ trợ tải tệp từ URL trong nền, không cần treo trình duyệt, có thông báo tiến trình real-time.
 * 👥 **Quản lý đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
-* 🤖 **Multi-Bot (Bot Pool)**: Hỗ trợ sử dụng nhiều Bot phụ để tăng tốc độ tải lên/tải xuống và tránh bị giới hạn (FloodWait) từ Telegram.
+* 🤖 **Multi-Bot (Bot Pool)**: Hỗ trợ sử dụng nhiều Bot phụ để tăng tốc độ. Hệ thống tự động tối ưu hóa kích thước mảnh (500MB) để chia đều tải trọng cho các Bot, tăng tối đa độ ổn định và khả năng phục hồi khi rớt mạng.
 * 🔐 **Passkey**: Hỗ trợ đăng nhập bảo mật bằng vân tay, khuôn mặt hoặc khóa bảo mật (WebAuthn).
 * 🗄️ **Hỗ trợ MySQL**: Ngoài SQLite, TeleCloud hiện đã hỗ trợ **MySQL** để lưu trữ cơ sở dữ liệu cho các hệ thống lớn và yêu cầu tính ổn định cao.
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ nhiều ngôn ngữ (Tiếng Việt, Tiếng Anh, Tiếng Trung, Tiếng Nhật, Tiếng Nga, Tiếng Ả Rập, Tiếng Hindi và Tiếng Khmer).

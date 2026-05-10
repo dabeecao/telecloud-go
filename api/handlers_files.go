@@ -1102,7 +1102,7 @@ func (h *Handler) handlePublicUploadAPI(c *gin.Context) {
 	}
 
 	defer os.Remove(tempFilePath)
-	fileID, finalName, err := tgclient.ProcessCompleteUploadSync(c.Request.Context(), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, overwrite, username)
+	fileID, finalName, err := tgclient.ProcessCompleteUploadSync(context.WithoutCancel(c.Request.Context()), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, overwrite, username)
 	if err != nil {
 		tgclient.UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error(), username)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed: " + err.Error()})
@@ -1209,7 +1209,7 @@ func (h *Handler) handlePublicRemoteUploadAPI(c *gin.Context) {
 		return
 	}
 
-	fileID, finalName, err := tgclient.ProcessRemoteUploadSync(c.Request.Context(), req.URL, dbPath, taskID, h.cfg, req.Overwrite, username)
+	fileID, finalName, err := tgclient.ProcessRemoteUploadSync(context.WithoutCancel(c.Request.Context()), req.URL, dbPath, taskID, h.cfg, req.Overwrite, username)
 	if err != nil {
 		tgclient.UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error(), username)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Remote upload failed: " + err.Error()})

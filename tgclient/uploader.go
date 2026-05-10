@@ -430,13 +430,28 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 		var msgID int
 		var uploadErr error
-		for attempt := 1; attempt <= 3; attempt++ {
+		for attempt := 1; attempt <= 15; attempt++ {
+			if ctx.Err() != nil {
+				uploadErr = ctx.Err()
+				break
+			}
 			// Fresh API client per attempt to rotate through the bot pool on failure.
 			currentApi := GetAPI()
 			
 			if attempt > 1 {
 				UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("retrying_part_%d_attempt_%d", i+1, attempt), "")
-				time.Sleep(5 * time.Second)
+				
+				// Wait with increasing backoff, but return early if context is canceled
+				select {
+				case <-ctx.Done():
+					uploadErr = ctx.Err()
+					break
+				case <-time.After(time.Duration(attempt*2) * time.Second):
+				}
+				
+				if ctx.Err() != nil {
+					break
+				}
 				if _, err := sectionReader.Seek(0, io.SeekStart); err != nil {
 					log.Printf("[Upload] Failed to seek section reader: %v", err)
 				}
@@ -455,6 +470,9 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		}
 
 		if uploadErr != nil {
+			if ctx.Err() != nil {
+				return // Intentionally canceled by user, don't overwrite "cancelled" state
+			}
 			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
 			return
 		}
@@ -747,6 +765,9 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
 		
 		if uploadErr != nil {
+			if ctx.Err() != nil {
+				return // Intentionally canceled by user
+			}
 			// For remote uploads, if we already read data, we can't easily retry this part 
 			// without Range support from the source. So we fail fast to avoid corruption.
 			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
@@ -813,6 +834,20 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
 func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool, owner string) (fileID int64, finalName string, err error) {
+	if taskID != "" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		taskMutex.Lock()
+		TaskCancels[taskID] = cancel
+		taskMutex.Unlock()
+		defer func() {
+			taskMutex.Lock()
+			delete(TaskCancels, taskID)
+			taskMutex.Unlock()
+			cancel()
+		}()
+	}
+
 	database.EnsureFoldersExist(path, owner)
 
 	// Wait for a slot in the upload queue
@@ -907,10 +942,22 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 
 		var msgID int
 		var uploadErr error
-		for attempt := 1; attempt <= 3; attempt++ {
+		for attempt := 1; attempt <= 15; attempt++ {
+			if ctx.Err() != nil {
+				uploadErr = ctx.Err()
+				break
+			}
 			currentApi := GetAPI()
 			if attempt > 1 {
-				time.Sleep(5 * time.Second)
+				select {
+				case <-ctx.Done():
+					uploadErr = ctx.Err()
+					break
+				case <-time.After(time.Duration(attempt*2) * time.Second):
+				}
+				if ctx.Err() != nil {
+					break
+				}
 				_, _ = sectionReader.Seek(0, io.SeekStart)
 			}
 			// Fresh uploader per attempt to avoid stale session state.
@@ -925,7 +972,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		}
 
 		if uploadErr != nil {
-			return 0, "", fmt.Errorf("upload part %d (3 attempts): %w", i+1, uploadErr)
+			return 0, "", fmt.Errorf("upload part %d (15 attempts): %w", i+1, uploadErr)
 		}
 		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
 

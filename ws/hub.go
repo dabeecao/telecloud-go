@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -62,17 +63,29 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 // BroadcastToUser sends a message only to clients belonging to a specific user.
+// The mutex is released before writing to avoid blocking the hub if a client is slow.
 func (h *Hub) BroadcastToUser(ctx context.Context, username string, message []byte) {
+	// Snapshot the target clients first, then release the lock before writing.
+	// This prevents a slow/stalled connection from blocking the entire hub.
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	for client := range h.clients {
-		if client.username == username {
-			err := client.conn.Write(ctx, websocket.MessageText, message)
-			if err != nil {
-				log.Printf("websocket write error for user %s: %v", username, err)
-				client.conn.Close(websocket.StatusInternalError, "")
-				delete(h.clients, client)
+	var targets []*client
+	for c := range h.clients {
+		if c.username == username {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.Unlock()
+
+	for _, c := range targets {
+		err := c.conn.Write(ctx, websocket.MessageText, message)
+		if err != nil {
+			log.Printf("websocket write error for user %s: %v", username, err)
+			h.mu.Lock()
+			if _, ok := h.clients[c]; ok {
+				delete(h.clients, c)
+				c.conn.Close(websocket.StatusInternalError, "")
 			}
+			h.mu.Unlock()
 		}
 	}
 }
@@ -114,6 +127,24 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request, username string) {
 
 	// Keep connection alive and handle disconnection
 	ctx := r.Context()
+
+	// Ping every 30s to keep connection alive through idle-killing proxies/firewalls.
+	// This is critical for long uploads (large files waiting in semaphore queue).
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := c.Ping(ctx); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	for {
 		_, _, err := c.Read(ctx)
 		if err != nil {

@@ -16,7 +16,7 @@ import (
 func (h *Handler) handleGetSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ?", token); err != nil {
+	if err := database.RODB.Get(&item, "SELECT id, filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ?", token); err != nil {
 		c.HTML(http.StatusNotFound, "error.html", gin.H{
 			"error_message": "File not found or link has been revoked.",
 			"version":       h.cfg.Version,

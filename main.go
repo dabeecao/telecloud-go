@@ -79,7 +79,7 @@ func restartApp() {
 }
 
 var (
-	version = "v3.2.3"
+	version = "v3.2.5"
 	commit  = "none"
 	date    = "unknown"
 )

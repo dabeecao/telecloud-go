@@ -505,10 +505,13 @@ func (h *Handler) handlePostRemoteUploadCheck(c *gin.Context) {
 		}
 	}
 
+	rangeSupport := resp.Header.Get("Accept-Ranges") == "bytes" || resp.StatusCode == http.StatusPartialContent
+
 	c.JSON(http.StatusOK, gin.H{
 		"content_type":   contentType,
 		"content_length": contentLength,
 		"filename":       filename,
+		"range_support":  rangeSupport,
 	})
 }
 

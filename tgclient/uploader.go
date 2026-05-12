@@ -662,6 +662,12 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		mimeType = "application/octet-stream"
 	}
 
+	rangeSupport := resp.Header.Get("Accept-Ranges") == "bytes"
+	rangeNote := ""
+	if !rangeSupport {
+		rangeNote = " [No Resume Support]"
+	}
+
 	// Guess extension if missing
 	if filepath.Ext(filename) == "" && mimeType != "application/octet-stream" {
 		exts, _ := mime.ExtensionsByType(mimeType)
@@ -671,7 +677,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		}
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, size, 0)
+	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot"+rangeNote, filename, owner, size, 0)
 
 	// Wait for a slot in the upload queue
 	select {
@@ -683,7 +689,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		return
 	}
 
-	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, size, 0)
+	UpdateTaskWithFile(taskID, "telegram", 0, rangeNote, filename, owner, size, 0)
 
 	// Handle overwriting: identify and remove old record before inserting new one to avoid UNIQUE constraint conflict
 	var existingID int
@@ -743,16 +749,19 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	}()
 
 	// Allow unlimited file size for remote uploads since we split it
-	bodyReader := resp.Body
+	var bodyReader io.ReadCloser = resp.Body
+	defer func() {
+		if bodyReader != nil {
+			bodyReader.Close()
+		}
+	}()
 
 	partIndex := 0
 	totalUploaded := int64(0)
 	var firstMsgID int
+	var lastPartSize int64
 
 	for {
-		// Dùng CountingReader và LimitReader để stream trực tiếp không qua đĩa
-		pr := &utils.CountingReader{R: io.LimitReader(bodyReader, cfg.MaxPartSize)}
-
 		partFilename := uniqueFilename
 		if size > cfg.MaxPartSize || size == -1 {
 			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, partIndex+1)
@@ -760,42 +769,88 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 		var msgID int
 		var uploadErr error
-		// Remote upload: we pick a bot for this part
-		currentApi := GetAPI()
 		
-		up := uploader.NewUploader(currentApi).
-			WithPartSize(uploader.MaximumPartSize).
-			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
-			WithThreads(cfg.UploadThreads)
-
-		// Truyền size = -1 để gotd xử lý dưới dạng stream
-		msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+		// Determine max attempts: reduce if no range support and deep into the file
+		maxAttempts := 3
+		if !rangeSupport && totalUploaded > 0 {
+			maxAttempts = 2 // Only 1 retry if we have to discard data manually
+		}
 		
-		if uploadErr != nil {
+		// Retry loop for each part
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			if ctx.Err() != nil {
-				return // Intentionally canceled by user
+				return // Intentionally canceled
 			}
-			// For remote uploads, if we already read data, we can't easily retry this part 
-			// without Range support from the source. So we fail fast to avoid corruption.
+
+			// If this is a retry, we need to re-open the body and skip to the current offset
+			if attempt > 1 {
+				if bodyReader != nil {
+					bodyReader.Close()
+				}
+				
+				// Re-connect to source with Range header
+				newReq, _ := http.NewRequestWithContext(ctx, "GET", resp.Request.URL.String(), nil)
+				newReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+				newReq.Header.Set("Range", fmt.Sprintf("bytes=%d-", totalUploaded))
+				
+				newResp, err := client.Do(newReq)
+				if err != nil {
+					uploadErr = err
+					time.Sleep(time.Duration(attempt) * time.Second)
+					continue
+				}
+				
+				if newResp.StatusCode == http.StatusOK || newResp.StatusCode == http.StatusPartialContent {
+					bodyReader = newResp.Body
+					if newResp.StatusCode == http.StatusOK && totalUploaded > 0 {
+						// Source doesn't support Range, must discard prefix manually
+						io.CopyN(io.Discard, bodyReader, totalUploaded)
+					}
+				} else {
+					newResp.Body.Close()
+					uploadErr = fmt.Errorf("remote server status %d on retry", newResp.StatusCode)
+					time.Sleep(time.Duration(attempt) * time.Second)
+					continue
+				}
+			}
+
+			// Wrap current stream part
+			pr := &utils.CountingReader{R: io.LimitReader(bodyReader, cfg.MaxPartSize)}
+			currentApi := GetAPI()
+			up := uploader.NewUploader(currentApi).
+				WithPartSize(uploader.MaximumPartSize).
+				WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
+				WithThreads(cfg.UploadThreads)
+
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+			
+			if uploadErr == nil {
+				// Successfully uploaded this part
+				lastPartSize = pr.N
+				totalUploaded += lastPartSize
+				uploadedMsgIDs = append(uploadedMsgIDs, msgID)
+				if partIndex == 0 {
+					firstMsgID = msgID
+				}
+
+				// Insert part record
+				_, err = database.DB.Exec(
+					"INSERT INTO file_parts (file_id, message_id, part_index, size) VALUES (?, ?, ?, ?)",
+					fileID, msgID, partIndex, lastPartSize,
+				)
+				if err != nil {
+					UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error(), "")
+					return
+				}
+				break // Success, break retry loop
+			}
+
+			log.Printf("[RemoteUpload] Part %d attempt %d failed: %v", partIndex+1, attempt, uploadErr)
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+
+		if uploadErr != nil {
 			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
-			return
-		}
-
-		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
-		if partIndex == 0 {
-			firstMsgID = msgID
-		}
-
-		partSize := pr.N
-		totalUploaded += partSize
-
-		// Insert part record
-		_, err = database.DB.Exec(
-			"INSERT INTO file_parts (file_id, message_id, part_index, size) VALUES (?, ?, ?, ?)",
-			fileID, msgID, partIndex, partSize,
-		)
-		if err != nil {
-			UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error(), "")
 			return
 		}
 
@@ -805,8 +860,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		if size > 0 && totalUploaded >= size {
 			break
 		}
-		// If size unknown or last part was smaller than max limit
-		if size <= 0 && partSize < cfg.MaxPartSize {
+		if size <= 0 && lastPartSize < cfg.MaxPartSize {
 			break
 		}
 	}
@@ -1003,7 +1057,6 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	// Update main file record
 	database.DB.Exec("UPDATE files SET message_id = ? WHERE id = ?", firstMsgID, fileID)
 
-	// Clean up old file if overwriting
 	// Clean up old file if overwriting (Telegram messages and old thumbnail)
 	if overwrite && existingID > 0 {
 		if len(msgIDsToDelete) > 0 {
@@ -1189,6 +1242,12 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 		mimeType = "application/octet-stream"
 	}
 
+	rangeSupport := resp.Header.Get("Accept-Ranges") == "bytes"
+	rangeNote := ""
+	if !rangeSupport {
+		rangeNote = " [No Resume Support]"
+	}
+
 	if filepath.Ext(filename) == "" && mimeType != "application/octet-stream" {
 		exts, _ := mime.ExtensionsByType(mimeType)
 		if len(exts) > 0 {
@@ -1197,6 +1256,9 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 	}
 
 	database.EnsureFoldersExist(path, owner)
+	if taskID != "" {
+		UpdateTask(taskID, "telegram", 0, "waiting_slot"+rangeNote, "")
+	}
 
 	// Wait for a slot in the upload queue
 	select {
@@ -1259,15 +1321,19 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 		}
 	}()
 
-	bodyReader := resp.Body
+	var bodyReader io.ReadCloser = resp.Body
+	defer func() {
+		if bodyReader != nil {
+			bodyReader.Close()
+		}
+	}()
 
 	partIndex := 0
 	totalUploaded := int64(0)
 	var firstMsgID int
+	var lastPartSize int64
 
 	for {
-		pr := &utils.CountingReader{R: io.LimitReader(bodyReader, cfg.MaxPartSize)}
-
 		partFilename := uniqueFilename
 		if size > cfg.MaxPartSize || size == -1 {
 			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, partIndex+1)
@@ -1275,41 +1341,97 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 
 		UpdateTask(taskID, "telegram", 0, fmt.Sprintf("uploading_part_%d", partIndex+1), "")
 
-		// Remote upload sync: pick a bot for this part
-		currentApi := GetAPI()
+		var msgID int
+		var uploadErr error
 		
-		up := uploader.NewUploader(currentApi).
-			WithPartSize(uploader.MaximumPartSize).
-			WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
-			WithThreads(cfg.UploadThreads)
+		// Determine max attempts: reduce if no range support and deep into the file
+		maxAttempts := 3
+		if !rangeSupport && totalUploaded > 0 {
+			maxAttempts = 2
+		}
+		
+		// Retry loop for each part
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			if ctx.Err() != nil {
+				return 0, "", ctx.Err()
+			}
 
-		msgID, uploadErr := uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+			if attempt > 1 {
+				if bodyReader != nil {
+					bodyReader.Close()
+				}
+				
+				// Re-connect to source with Range header
+				newReq, _ := http.NewRequestWithContext(ctx, "GET", resp.Request.URL.String(), nil)
+				newReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+				newReq.Header.Set("Range", fmt.Sprintf("bytes=%d-", totalUploaded))
+				
+				newResp, err := client.Do(newReq)
+				if err != nil {
+					uploadErr = err
+					time.Sleep(time.Duration(attempt) * time.Second)
+					continue
+				}
+				
+				if newResp.StatusCode == http.StatusOK || newResp.StatusCode == http.StatusPartialContent {
+					bodyReader = newResp.Body
+					if newResp.StatusCode == http.StatusOK && totalUploaded > 0 {
+						// Source doesn't support Range, must discard prefix manually
+						io.CopyN(io.Discard, bodyReader, totalUploaded)
+					}
+				} else {
+					newResp.Body.Close()
+					uploadErr = fmt.Errorf("remote server status %d on retry", newResp.StatusCode)
+					time.Sleep(time.Duration(attempt) * time.Second)
+					continue
+				}
+			}
+
+			// Wrap current stream part
+			pr := &utils.CountingReader{R: io.LimitReader(bodyReader, cfg.MaxPartSize)}
+			currentApi := GetAPI()
+			up := uploader.NewUploader(currentApi).
+				WithPartSize(uploader.MaximumPartSize).
+				WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
+				WithThreads(cfg.UploadThreads)
+
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+			
+			if uploadErr == nil {
+				// Successfully uploaded this part
+				lastPartSize = pr.N
+				totalUploaded += lastPartSize
+				uploadedMsgIDs = append(uploadedMsgIDs, msgID)
+				if partIndex == 0 {
+					firstMsgID = msgID
+				}
+
+				// Insert part record
+				_, err = database.DB.Exec(
+					"INSERT INTO file_parts (file_id, message_id, part_index, size) VALUES (?, ?, ?, ?)",
+					fileID, msgID, partIndex, lastPartSize,
+				)
+				if err != nil {
+					return 0, "", fmt.Errorf("err_db_part_insert: %w", err)
+				}
+				break // Success, break retry loop
+			}
+
+			log.Printf("[RemoteUploadSync] Part %d attempt %d failed: %v", partIndex+1, attempt, uploadErr)
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+
 		if uploadErr != nil {
 			return 0, "", fmt.Errorf("upload_part_failed: %w", uploadErr)
 		}
 
-		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
-		if partIndex == 0 {
-			firstMsgID = msgID
-		}
-
-		partSize := pr.N
-		totalUploaded += partSize
-
-		_, err = database.DB.Exec(
-			"INSERT INTO file_parts (file_id, message_id, part_index, size) VALUES (?, ?, ?, ?)",
-			fileID, msgID, partIndex, partSize,
-		)
-		if err != nil {
-			return 0, "", fmt.Errorf("err_db_part_insert: %w", err)
-		}
-
 		partIndex++
 
+		// Check if we finished
 		if size > 0 && totalUploaded >= size {
 			break
 		}
-		if size <= 0 && partSize < cfg.MaxPartSize {
+		if size <= 0 && lastPartSize < cfg.MaxPartSize {
 			break
 		}
 	}

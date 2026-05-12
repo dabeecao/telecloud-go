@@ -347,19 +347,24 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, fileSize, 0)
 
-	// Handle overwriting: single query instead of two
+	// Handle overwriting: identify and remove old record before inserting new one to avoid UNIQUE constraint conflict
 	var existingID int
 	var existingMsgID *int
 	var existingThumb *string
+	var msgIDsToDelete []int
 	if overwrite {
 		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+		if existingID > 0 {
+			// Identify messages to delete from Telegram BEFORE deleting the DB record
+			msgIDsToDelete, _ = database.GetOrphanedMessages([]int{existingID})
+			database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		}
 	}
 
 	uniqueFilename := filename
 	if !overwrite || existingID == 0 {
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
-
 
 	// Create the main file record first so we have an ID for parts
 	var fileID int64
@@ -378,6 +383,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			}
 			break
 		}
+		// If it still fails, fallback to unique name
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -496,13 +502,8 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	// Update main file record with the first message ID for backward compatibility/previews
 	database.DB.Exec("UPDATE files SET message_id = ? WHERE id = ?", firstMsgID, fileID)
 
-	// Overwrite cleanup
+	// Overwrite cleanup (Telegram messages and old thumbnail)
 	if overwrite && existingID > 0 {
-		// Identify messages to delete from Telegram safely
-		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
-
-		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
-
 		if len(msgIDsToDelete) > 0 {
 			go DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 		}
@@ -684,12 +685,18 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, size, 0)
 
-	// Handle overwriting
+	// Handle overwriting: identify and remove old record before inserting new one to avoid UNIQUE constraint conflict
 	var existingID int
 	var existingMsgID *int
 	var existingThumb *string
+	var msgIDsToDelete []int
 	if overwrite {
 		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+		if existingID > 0 {
+			// Identify messages to delete from Telegram BEFORE deleting the DB record
+			msgIDsToDelete, _ = database.GetOrphanedMessages([]int{existingID})
+			database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		}
 	}
 
 	uniqueFilename := filename
@@ -807,10 +814,8 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	// Update main file record
 	database.DB.Exec("UPDATE files SET message_id = ?, size = ? WHERE id = ?", firstMsgID, totalUploaded, fileID)
 
-	// Overwrite cleanup
+	// Overwrite cleanup (Telegram messages and old thumbnail)
 	if overwrite && existingID > 0 {
-		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
-		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
 		if len(msgIDsToDelete) > 0 {
 			DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 		}
@@ -859,12 +864,18 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		return 0, "", fmt.Errorf("upload cancelled while waiting for queue")
 	}
 
-	// Handle overwriting: single query instead of two
+	// Handle overwriting: identify and remove old record before inserting new one to avoid UNIQUE constraint conflict
 	var existingID int
 	var existingMsgID *int
 	var existingThumb *string
+	var msgIDsToDelete []int
 	if overwrite {
 		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+		if existingID > 0 {
+			// Identify messages to delete from Telegram BEFORE deleting the DB record
+			msgIDsToDelete, _ = database.GetOrphanedMessages([]int{existingID})
+			database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		}
 	}
 
 	uniqueFilename := filename
@@ -993,9 +1004,8 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	database.DB.Exec("UPDATE files SET message_id = ? WHERE id = ?", firstMsgID, fileID)
 
 	// Clean up old file if overwriting
+	// Clean up old file if overwriting (Telegram messages and old thumbnail)
 	if overwrite && existingID > 0 {
-		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
-		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
 		if len(msgIDsToDelete) > 0 {
 			DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 		}
@@ -1197,12 +1207,18 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 		return 0, "", fmt.Errorf("cancelled while waiting for upload slot")
 	}
 
-	// Handle overwriting
+	// Handle overwriting: identify and remove old record before inserting new one to avoid UNIQUE constraint conflict
 	var existingID int
 	var existingMsgID *int
 	var existingThumb *string
+	var msgIDsToDelete []int
 	if overwrite {
 		database.RODB.QueryRow("SELECT id, message_id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingMsgID, &existingThumb)
+		if existingID > 0 {
+			// Identify messages to delete from Telegram BEFORE deleting the DB record
+			msgIDsToDelete, _ = database.GetOrphanedMessages([]int{existingID})
+			database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
+		}
 	}
 
 	uniqueFilename := filename
@@ -1300,9 +1316,8 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 
 	database.DB.Exec("UPDATE files SET message_id = ?, size = ? WHERE id = ?", firstMsgID, totalUploaded, fileID)
 
+	// Overwrite cleanup (Telegram messages)
 	if overwrite && existingID > 0 {
-		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
-		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
 		if len(msgIDsToDelete) > 0 {
 			DeleteMessages(context.Background(), cfg, msgIDsToDelete)
 		}

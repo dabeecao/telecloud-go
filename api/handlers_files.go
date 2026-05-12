@@ -65,10 +65,10 @@ func (h *Handler) handleGetIndex(c *gin.Context) {
 
 	var userStorageUsed int64
 	if isAdmin {
-		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0")
+		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0 AND message_id IS NOT NULL")
 	} else {
 		prefix := "/" + sessionUsername
-		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
+		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL", prefix, prefix+"/%")
 	}
 
 	// S3 for the current session user
@@ -135,11 +135,11 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 	}
 
 	var files []database.File
-	query := "SELECT * FROM files WHERE path = ? AND owner = ? ORDER BY is_folder DESC, id DESC"
+	query := "SELECT * FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
 	args := []interface{}{dbPath, username}
 	if isAdmin {
 		if dbPath == "/" {
-			query = "SELECT * FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC"
+			query = "SELECT * FROM files WHERE path = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
 			args = []interface{}{dbPath}
 		} else {
 			parts := strings.Split(strings.TrimPrefix(dbPath, "/"), "/")
@@ -151,6 +151,7 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 			if isChild > 0 {
 				effectiveOwner = rootFolder
 			}
+			query = "SELECT * FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
 			args = []interface{}{dbPath, effectiveOwner}
 		}
 	}
@@ -190,10 +191,10 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 	}
 	var storageUsed int64
 	if isAdmin {
-		database.RODB.Get(&storageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0")
+		database.RODB.Get(&storageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0 AND message_id IS NOT NULL")
 	} else {
 		prefix := "/" + username
-		database.RODB.Get(&storageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", prefix, prefix+"/%")
+		database.RODB.Get(&storageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL", prefix, prefix+"/%")
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -293,13 +294,24 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 		return
 	}
 
-	const chunkSize = 10 * 1024 * 1024
+	chunkSize, err := strconv.ParseInt(c.PostForm("chunk_size"), 10, 64)
+	if err != nil || chunkSize <= 0 {
+		chunkSize = 50 * 1024 * 1024 // Default fallback
+	}
 	offset := int64(chunkIndex) * int64(chunkSize)
+
+	totalSize, _ := strconv.ParseInt(c.PostForm("total_size"), 10, 64)
+	if totalSize <= 0 {
+		totalSize = int64(totalChunks) * int64(chunkSize) // Fallback estimation
+	}
 
 	val, _ := chunkTrackerSync.LoadOrStore(taskID, &chunkState{
 		received: make(map[int]bool),
 	})
 	state := val.(*chunkState)
+
+	// Update temporary file path with taskID and safe filename
+	tempFilePath = filepath.Join(tempDir, taskID+"_"+safeFilename)
 
 	chunkData, err := io.ReadAll(file)
 	if err != nil {
@@ -338,9 +350,15 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 	var actualReceived int
 	database.RODB.Get(&actualReceived, "SELECT COUNT(*) FROM upload_chunks WHERE task_id = ?", taskID)
 
-	// uploadStarted guards against double-trigger: two goroutines can both see
-	// COUNT == totalChunks if their INSERTs land before either grabs the lock.
-	// Only the first goroutine to set uploadStarted=true will trigger the upload.
+	// Update task with current progress to show speed in backend
+	uploadedBytes := int64(actualReceived) * int64(chunkSize)
+	if uploadedBytes > totalSize {
+		uploadedBytes = totalSize
+	}
+	serverPercent := int((float64(actualReceived) / float64(totalChunks)) * 100)
+	tgclient.UpdateTaskWithFile(taskID, "uploading_to_server", serverPercent, "pushing_to_server", "", username, totalSize, uploadedBytes)
+
+	// uploadStarted guards against double-trigger
 	isDone := actualReceived == totalChunks && !state.uploadStarted
 	if isDone {
 		state.uploadStarted = true
@@ -359,8 +377,6 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 		}
 
 		// Capture overwriteFlag from this request directly.
-		// Do NOT re-read from upload_tasks: that row was deleted above,
-		// so the old code always read false (silent bug).
 		ov := overwriteFlag
 		go func() {
 			defer os.Remove(tempFilePath)
@@ -370,9 +386,6 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "pushing_to_tg"})
 		return
 	}
-
-	serverPercent := int((float64(actualReceived) / float64(totalChunks)) * 100)
-	tgclient.UpdateTask(taskID, "uploading_to_server", serverPercent, "", username)
 
 	c.JSON(http.StatusOK, gin.H{"status": "chunk_received", "chunk": chunkIndex})
 }

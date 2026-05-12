@@ -16,7 +16,7 @@ import (
 func (h *Handler) handleGetSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT id, filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ?", token); err != nil {
+	if err := database.RODB.Get(&item, "SELECT id, filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ? AND (is_folder = 1 OR message_id IS NOT NULL)", token); err != nil {
 		c.HTML(http.StatusNotFound, "error.html", gin.H{
 			"error_message": "File not found or link has been revoked.",
 			"version":       h.cfg.Version,
@@ -79,14 +79,14 @@ func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 	}
 
 	var files []database.File
-	err := database.RODB.Select(&files, "SELECT id, filename, path, size, created_at, is_folder, mime_type, thumb_path FROM files WHERE path = ? ORDER BY is_folder DESC, id DESC", targetPath)
+	err := database.RODB.Select(&files, "SELECT id, filename, path, size, created_at, is_folder, mime_type, thumb_path FROM files WHERE path = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC", targetPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	var totalSize int64
-	database.RODB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0", targetPath, targetPath+"/%")
+	database.RODB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL", targetPath, targetPath+"/%")
 
 	for i := range files {
 		if files[i].ThumbPath != nil {

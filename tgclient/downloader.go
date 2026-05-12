@@ -195,9 +195,9 @@ func ServeTelegramFile(c *http.Request, w http.ResponseWriter, file database.Fil
 				mime = "application/epub+zip"
 			}
 		}
-		// Special handling for MKV to ensure browser compatibility
+		// Special handling for MKV to ensure browser compatibility (especially Safari)
 		if strings.HasSuffix(lowerName, ".mkv") {
-			mime = "video/webm"
+			mime = "video/mp4"
 		}
 		w.Header().Set("Content-Type", mime)
 	}

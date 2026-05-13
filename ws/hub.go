@@ -161,13 +161,14 @@ type TaskUpdate struct {
 	Progress      float64 `json:"progress"`
 	Percent       int     `json:"percent"`
 	Message       string  `json:"message,omitempty"`
+	Filename      string  `json:"filename,omitempty"`
 	Size          int64   `json:"size,omitempty"`
 	UploadedBytes int64   `json:"uploaded_bytes,omitempty"`
 	Speed         int64   `json:"speed,omitempty"`
 	ETA           int     `json:"eta,omitempty"`
 }
 
-func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, size int64, uploadedBytes int64, speed int64, eta int) {
+func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, filename string, size int64, uploadedBytes int64, speed int64, eta int) {
 	phase := status
 	switch status {
 	case "telegram":
@@ -190,6 +191,7 @@ func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, 
 		Progress:      progress,
 		Percent:       percent,
 		Message:       msg,
+		Filename:      filename,
 		Size:          size,
 		UploadedBytes: uploadedBytes,
 		Speed:         speed,

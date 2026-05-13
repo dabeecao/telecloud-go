@@ -85,6 +85,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 	r.GET("/s/:token/stream/:filename", h.handleStreamSharedFile)
 	r.POST("/s/:token/dl", h.handleDownloadSharedFile)
 	r.GET("/s/:token/thumb", h.handleGetSharedThumb)
+	r.POST("/s/:token/verify", h.handleVerifySharePassword)
 	r.GET("/s/:token/file/:id/stream", h.handleStreamSharedFileInFolder)
 	r.GET("/s/:token/file/:id/stream/:filename", h.handleStreamSharedFileInFolder)
 	r.GET("/s/:token/file/:id/dl", h.handleDownloadSharedFileInFolder)
@@ -136,7 +137,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.GET("/tasks", h.handleGetTasks)
 		api.POST("/cancel_upload", h.handleCancelUpload)
 		api.POST("/actions/paste", h.handlePostPaste)
+		api.GET("/trash", h.handleGetTrashFiles)
+		api.DELETE("/trash", h.handleEmptyTrash)
 		api.DELETE("/files/:id", h.handleDeleteFile)
+		api.POST("/files/:id/restore", h.handleRestoreFile)
+		api.DELETE("/files/:id/permanent", h.handlePermanentDeleteFile)
 		api.PUT("/files/:id/rename", h.handleRenameFile)
 		api.POST("/files/:id/share", h.handleShareFile)
 		api.DELETE("/files/:id/share", h.handleRevokeShare)
@@ -155,6 +160,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.GET("/proxy/image", h.handleGetProxyImage)
 		api.POST("/ytdlp/formats", h.handlePostYTDLPFormats)
 		api.POST("/ytdlp/download", h.handlePostYTDLPDownload)
+
+		// Torrent
+		api.GET("/torrent/status", h.handleGetTorrentStatus)
+		api.POST("/torrent/add", h.handlePostTorrentAdd)
+		api.POST("/torrent/upload", h.handlePostTorrentUpload)
+
 
 		// WebSocket
 		api.GET("/ws", h.handleWebSocket)

@@ -33,6 +33,8 @@ type Config struct {
 	IsPremium        bool
 	BotTokens        []string
 	Warnings         []string
+	TorrentEnabled   bool
+	TorrentPath      string
 }
 
 func Load() (*Config, error) {
@@ -77,6 +79,19 @@ func Load() (*Config, error) {
 		}
 	}
 
+	torrentPath := getEnv("TORRENT_PATH", "disabled")
+	torrentEnabled := false
+	if torrentPath != "disabled" && torrentPath != "disable" {
+		resolvedPath, ok := findExecutable(torrentPath)
+		if !ok {
+			warnings = append(warnings, "WARNING: TORRENT_PATH '"+torrentPath+"' not found or not executable. Disabling torrent support.")
+			torrentPath = "disabled"
+		} else {
+			torrentPath = resolvedPath
+			torrentEnabled = true
+		}
+	}
+
 	return &Config{
 		APIID:            apiID,
 		APIHash:          apiHash,
@@ -97,6 +112,8 @@ func Load() (*Config, error) {
 		CookiesDir:       getEnv("COOKIES_DIR", "data/cookies"),
 		BotTokens:        strings.Split(os.Getenv("BOT_TOKENS"), ","),
 		Warnings:         warnings,
+		TorrentEnabled:   torrentEnabled,
+		TorrentPath:      torrentPath,
 	}, nil
 }
 

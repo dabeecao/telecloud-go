@@ -43,10 +43,13 @@ This project has been **completely rewritten in Golang** from the original proje
 * 📥 **URL Download**: Supports downloading files directly from a URL to your storage.
 * 🎥 **Media Downloader**: Supports downloading Videos and Music from various platforms (YouTube, TikTok, Facebook...) using **yt-dlp** directly in the UI.
 * ⚡ **Background Download**: Supports background URL downloads with real-time progress notifications, no browser session required.
+* 🧲 **Torrent Support**: Supports downloading Torrent and Magnet links directly to Telegram via **aria2c**.
 * 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
 * 🤖 **Multi-Bot (Bot Pool)**: Supports using secondary bots to increase throughput. The system automatically optimizes chunk sizes (500MB) to balance the load across bots, maximizing stability and recovery during network drops.
 * 🔐 **Passkey**: Supports secure login using biometrics (TouchID/FaceID) or security keys (WebAuthn).
 * 🗄️ **MySQL Support**: In addition to SQLite, TeleCloud now supports **MySQL** for storing its database, suitable for large-scale deployments requiring high stability.
+* 🗑️ **Trash**: Supports storing and recovering deleted files, protecting your data from accidental deletion.
+* 🔒 **Locked Shares**: Allows setting password protection for file and folder share links.
 * 🌐 **Multi-language**: Supports multiple languages (English, Vietnamese, Chinese, Japanese, Russian, Arabic, Hindi, and Khmer).
 
 ---
@@ -112,10 +115,10 @@ You need to install **FFmpeg** and **yt-dlp** for the system to generate thumbna
 
 * **Ubuntu/Debian:** `sudo apt install ffmpeg python3` and download yt-dlp binary.
 * **Redhat-based:** `sudo yum install ffmpeg python3` via [RPM Fusion](https://rpmfusion.org/)
-* **Alpine Linux:** `apk add ffmpeg python3 yt-dlp`
-* **Windows:** Download a prebuilt version from [ffmpeg.org](https://ffmpeg.org/download.html) and [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) and add them to PATH.
+* **Alpine Linux:** `apk add ffmpeg python3 yt-dlp aria2`
+* **Windows:** Download a prebuilt version from [ffmpeg.org](https://ffmpeg.org/download.html), [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) and [aria2](https://github.com/aria2/aria2/releases) and add them to PATH.
 
-If FFmpeg or yt-dlp are not installed, the project will still run, but thumbnail generation and URL media downloading will not work.
+If FFmpeg, yt-dlp, or aria2 are not installed, the project will still run, but the corresponding features will be disabled.
 
 ---
 
@@ -149,6 +152,7 @@ Main fields in `.env`:
 * `PROXY_URL`: (Optional) Proxy to connect MTProto, supports HTTP and SOCKS5 (e.g. `socks5://127.0.0.1:1080`)
 * `FFMPEG_PATH`: (Optional) Path to FFmpeg (default: `ffmpeg`). Set to "disabled" to skip video/audio thumbnails if FFmpeg is not installed or causing crashes.
 * `YTDLP_PATH`: (Optional) Path to yt-dlp (default: `yt-dlp`). Set to "disabled" to skip URL media downloading if yt-dlp is not installed.
+* `TORRENT_PATH`: (Optional) Path to aria2c (default: `aria2c`). Torrent support is automatically enabled if the executable is found. Set to "disabled" to disable.
 
 * **Note on Priority**: If you provide values for `API_ID`, `API_HASH`, or `LOG_GROUP_ID` in the `.env` file, the system will **prioritize** these values and ignore any configuration stored in the database. If they are left empty in `.env`, the system will prompt you to set them up via the Web Setup wizard on the first run.
 * **Note on Themes**: The application supports multiple UI themes (Neon, Cyberpunk, Lavender, Forest) and a System theme mode. These are configured directly in the Web UI Settings after logging in, and do not require any environment variables.
@@ -549,9 +553,11 @@ This project uses amazing libraries:
 * [AlpineJS](https://github.com/alpinejs/alpine): Minimal JS framework
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): Utility-first CSS framework
 * [plyr](https://github.com/sampotts/plyr): HTML5 media player
+* [Artplayer.js](https://github.com/zhw2590582/ArtPlayer): ArtPlayer.js is a modern and full-featured HTML5 video player.
 * [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter — used for code highlighting in file preview.
 * [FontAwesome](https://fontawesome.com): The world's most popular icon set.
 * [yt-dlp](https://github.com/yt-dlp/yt-dlp): A feature-rich command-line audio/video downloader.
+* [aria2](https://github.com/aria2/aria2): A lightweight multi-protocol & multi-source command-line download utility.
 * [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): A modern and clean sans-serif typeface.
 
 Thanks to all contributors for their great tools.

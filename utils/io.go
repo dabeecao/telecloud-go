@@ -1,6 +1,8 @@
 package utils
 
-import "io"
+import (
+	"io"
+)
 
 type CountingReader struct {
 	R io.Reader

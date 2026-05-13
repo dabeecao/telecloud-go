@@ -105,6 +105,35 @@ if exist "yt-dlp.exe" (
     echo [v] Da tai xong yt-dlp.exe.
 ) else (
     echo [!] Tai yt-dlp.exe that bai.
+echo [+] Dang kiem tra aria2c...
+where aria2c >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [v] aria2c da duoc cai dat tren he thong.
+) else (
+    if exist "aria2c.exe" (
+        echo [v] Tim thay aria2c.exe trong thu muc hien tai.
+    ) else (
+        set /p install_aria2="[?] Ban co muon cai dat aria2 (Torrent) khong? (y/n): "
+        if /i "!install_aria2!"=="y" (
+            echo [+] Dang tai aria2...
+            for /f "tokens=*" %%a in ('powershell -Command "$r = Invoke-RestMethod -Uri 'https://api.github.com/repos/aria2/aria2/releases/latest'; $r.assets | Where-Object { $_.name -like '*win-64bit-build1.zip*' } | Select-Object -ExpandProperty browser_download_url"') do set "ARIA2_URL=%%a"
+            if "!ARIA2_URL!"=="" (
+                echo [!] Khong tim thay ban aria2 cho Windows.
+            ) else (
+                powershell -Command "$progressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '!ARIA2_URL!' -OutFile 'aria2.zip'"
+                echo [+] Dang giai nen aria2...
+                powershell -Command "Expand-Archive -Path 'aria2.zip' -DestinationPath 'aria2_temp' -Force"
+                for /r "aria2_temp" %%i in (aria2c.exe) do move /y "%%i" . >nul
+                del aria2.zip
+                rd /s /q aria2_temp
+                if exist "aria2c.exe" (
+                    echo [v] Da tai xong aria2c.exe.
+                ) else (
+                    echo [!] Giai nen aria2c.exe that bai.
+                )
+            )
+        )
+    )
 )
 
 :DOWNLOAD_APP
@@ -143,6 +172,9 @@ if not exist ".env" (
     )
     if exist "yt-dlp.exe" (
         powershell -Command "(Get-Content .env) -replace '^#?YTDLP_PATH=.*', 'YTDLP_PATH=yt-dlp' | Set-Content .env"
+    )
+    if exist "aria2c.exe" (
+        powershell -Command "(Get-Content .env) -replace '^#?TORRENT_PATH=.*', 'TORRENT_PATH=aria2c' | Set-Content .env"
     )
 
     echo [v] Cai dat hoan tat!

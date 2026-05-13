@@ -236,6 +236,11 @@ install_dependencies() {
             fi
         fi
 
+        echo ""
+        echo "[!] Torrent support cho phép tải Magnet link và file .torrent trực tiếp."
+        read -p "[?] Bạn có muốn cài đặt aria2 (Torrent) không? (y/n): " install_torrent
+        [ "$install_torrent" == "y" ] && pkg_install "aria2"
+
         # Chỉ cài Cloudflared nếu dùng Cloudflare Tunnel
         if [ "${TUNNEL_METHOD:-}" == "cloudflare" ]; then
             if ! command -v cloudflared &>/dev/null; then
@@ -269,6 +274,11 @@ install_dependencies() {
         MAIN_PACKAGES="wget curl tar unzip tmux jq nano python procps"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
+
+        echo ""
+        echo "[!] Torrent support cho phép tải Magnet link và file .torrent trực tiếp."
+        read -p "[?] Bạn có muốn cài đặt aria2 (Torrent) không? (y/n): " install_torrent
+        [ "$install_torrent" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES aria2"
 
         for pkg in $MAIN_PACKAGES; do
             pkg_install "$pkg"
@@ -359,6 +369,12 @@ EOF
             echo "YTDLP_PATH=yt-dlp" >> "$BASE_DIR/.env"
         else
             echo "YTDLP_PATH=disabled" >> "$BASE_DIR/.env"
+        fi
+
+        if command -v aria2c &> /dev/null; then
+            echo "TORRENT_PATH=aria2c" >> "$BASE_DIR/.env"
+        else
+            echo "TORRENT_PATH=disabled" >> "$BASE_DIR/.env"
         fi
 
         chmod 600 "$BASE_DIR/.env"

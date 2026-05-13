@@ -51,7 +51,6 @@ func IsValidURL(u string) bool {
 	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
 }
 
-var ytdlpSemaphore = make(chan struct{}, 2)
 
 // YTDLPInfo represents the structure of yt-dlp -J output
 type YTDLPInfo struct {
@@ -203,12 +202,12 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		taskMutex.Unlock()
 	}()
 
-	UpdateTaskWithFile(taskID, "downloading", 0, "waiting_slot", "", owner, 0, 0)
+	UpdateTaskWithFile(taskID, "waiting_slot", 0, "waiting_slot", "", owner, 0, 0)
 
-	// Wait for a slot in the ytdlp queue
+	// Wait for a slot in the global download queue
 	select {
-	case ytdlpSemaphore <- struct{}{}:
-		defer func() { <-ytdlpSemaphore }()
+	case globalDownloadSemaphore <- struct{}{}:
+		defer func() { <-globalDownloadSemaphore }()
 	case <-ctx.Done():
 		UpdateTaskWithFile(taskID, "error", 0, "cancelled", "", owner, 0, 0)
 		return

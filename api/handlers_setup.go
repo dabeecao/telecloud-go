@@ -8,6 +8,7 @@ import (
 	"strings"
 	"telecloud/database"
 	"telecloud/tgclient"
+	"telecloud/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -179,10 +180,13 @@ func (h *Handler) handleSetupRestart(c *gin.Context) {
 }
 
 func (h *Handler) handleSystemStatus(c *gin.Context) {
+	total, free, _ := utils.GetDiskSpace(".")
 	c.JSON(http.StatusOK, gin.H{
-		"authorized": tgclient.IsAuthorized(),
-		"ready":      tgclient.IsSystemReady(),
-		"running":    tgclient.IsRunning(),
+		"authorized":    tgclient.IsAuthorized(),
+		"ready":         tgclient.IsSystemReady(),
+		"running":       tgclient.IsRunning(),
+		"storage_total": total,
+		"storage_free":  free,
 	})
 }
 

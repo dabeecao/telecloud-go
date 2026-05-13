@@ -43,10 +43,13 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 📥 **Tải từ URL**: Hỗ trợ tải tệp trực tiếp từ đường dẫn URL về bộ lưu trữ.
 * 🎥 **Tải đa phương tiện**: Hỗ trợ tải Video, Nhạc từ các nền tảng (YouTube, TikTok, Facebook...) bằng **yt-dlp** ngay trong giao diện.
 * ⚡ **Tải trong nền**: Hỗ trợ tải tệp từ URL trong nền, không cần treo trình duyệt, có thông báo tiến trình real-time.
+* 🧲 **Tải Torrent**: Hỗ trợ tải Torrent và Magnet link trực tiếp về Telegram thông qua **aria2c**.
 * 👥 **Quản lý đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
 * 🤖 **Multi-Bot (Bot Pool)**: Hỗ trợ sử dụng nhiều Bot phụ để tăng tốc độ. Hệ thống tự động tối ưu hóa kích thước mảnh (500MB) để chia đều tải trọng cho các Bot, tăng tối đa độ ổn định và khả năng phục hồi khi rớt mạng.
 * 🔐 **Passkey**: Hỗ trợ đăng nhập bảo mật bằng vân tay, khuôn mặt hoặc khóa bảo mật (WebAuthn).
 * 🗄️ **Hỗ trợ MySQL**: Ngoài SQLite, TeleCloud hiện đã hỗ trợ **MySQL** để lưu trữ cơ sở dữ liệu cho các hệ thống lớn và yêu cầu tính ổn định cao.
+* 🗑️ **Thùng rác**: Hỗ trợ lưu trữ và khôi phục các tệp đã xóa, giúp bảo vệ dữ liệu khỏi việc xóa nhầm.
+* 🔒 **Khóa tệp/thư mục khi chia sẻ**: Cho phép thiết lập mật khẩu bảo vệ cho các liên kết chia sẻ tệp và thư mục.
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ nhiều ngôn ngữ (Tiếng Việt, Tiếng Anh, Tiếng Trung, Tiếng Nhật, Tiếng Nga, Tiếng Ả Rập, Tiếng Hindi và Tiếng Khmer).
 
 ---
@@ -111,10 +114,10 @@ Bạn cần cài đặt **FFmpeg** và **yt-dlp** để hệ thống có thể t
 
 *   **Ubuntu/Debian:** `sudo apt install ffmpeg python3` và tải file binary của yt-dlp.
 *   **Redhat-base:** `sudo yum install ffmpeg python3` thông qua [Fedora and Red Hat Enterprise Linux packages](https://rpmfusion.org/)
-*   **Alpine Linux:** `apk add ffmpeg python3 yt-dlp`
-*   **Windows:** Tải bản build sẵn tại [ffmpeg.org](https://ffmpeg.org/download.html) và [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) rồi thêm vào PATH.
+*   **Alpine Linux**: `apk add ffmpeg python3 yt-dlp aria2`
+*   **Windows**: Tải bản build sẵn tại [ffmpeg.org](https://ffmpeg.org/download.html), [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) và [aria2](https://github.com/aria2/aria2/releases) rồi thêm vào PATH.
 
-Nếu bạn không cài FFmpeg hoặc yt-dlp, dự án vẫn có thể hoạt động nhưng tính năng tạo ảnh thu nhỏ và tải tệp phương tiện từ URL sẽ không hoạt động.
+Nếu bạn không cài FFmpeg, yt-dlp hoặc aria2, dự án vẫn có thể hoạt động nhưng các tính năng tương ứng sẽ bị vô hiệu hóa.
 
 ### 2. Tải về TeleCloud
 Truy cập mục [**Releases**](https://github.com/dabeecao/telecloud-go/releases) và tải về phiên bản phù hợp với hệ điều hành của bạn (Linux, Windows, hoặc macOS).
@@ -141,6 +144,7 @@ Nội dung chính trong tệp `.env`:
 *   `PROXY_URL`: (Tùy chọn) Proxy để kết nối MTProto, hỗ trợ HTTP và SOCKS5 (VD: `socks5://127.0.0.1:1080`).
 *   `FFMPEG_PATH`: (Tùy chọn) Đường dẫn tới file FFmpeg (mặc định: `ffmpeg`). Đặt thành "disabled" để bỏ qua hình thu nhỏ video/âm thanh nếu FFmpeg không được cài đặt hoặc gây ra lỗi.
 *   `YTDLP_PATH`: (Tùy chọn) Đường dẫn tới yt-dlp (mặc định: `yt-dlp`). Đặt thành "disabled" để bỏ qua chức năng tải tệp phương tiện nếu yt-dlp không được cài đặt.
+*   `TORRENT_PATH`: (Tùy chọn) Đường dẫn tới aria2c (mặc định: `aria2c`). Hệ thống tự động bật tính năng Torrent nếu tìm thấy file thực thi. Đặt thành "disabled" để tắt.
 
 *   **Lưu ý về Thứ tự ưu tiên**: Nếu bạn điền các thông số như `API_ID`, `API_HASH` hay `LOG_GROUP_ID` trong tệp `.env`, hệ thống sẽ **ưu tiên** sử dụng các giá trị này và bỏ qua cấu hình trong cơ sở dữ liệu. Nếu để trống trong `.env`, hệ thống sẽ yêu cầu thiết lập qua giao diện Web Setup ở lần đầu khởi chạy.
 *   **Lưu ý về Theme (Giao diện)**: Ứng dụng hỗ trợ nhiều theme giao diện khác nhau (Neon, Cyberpunk, Lavender, Forest) cũng như chế độ hệ thống (System). Việc cấu hình Theme được thực hiện trực tiếp trong phần Cài đặt của Giao diện Web sau khi đăng nhập và không yêu cầu bất kỳ biến môi trường nào.
@@ -525,9 +529,11 @@ Dự án sử dụng các thư viện tuyệt vời:
 * [AlpineJS](https://github.com/alpinejs/alpine): A rugged, minimal framework for composing JavaScript behavior in your markup.
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): A utility-first CSS framework for rapid UI development.
 * [plyr](https://github.com/sampotts/plyr): A simple HTML5, YouTube and Vimeo player
+* [Artplayer.js](https://github.com/zhw2590582/ArtPlayer): ArtPlayer.js is a modern and full-featured HTML5 video player.
 * [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter — dùng để tô màu code trong tính năng xem trước tệp.
 * [FontAwesome](https://fontawesome.com): Bộ biểu tượng phổ biến nhất thế giới.
 * [yt-dlp](https://github.com/yt-dlp/yt-dlp): A feature-rich command-line audio/video downloader.
+* [aria2](https://github.com/aria2/aria2): A lightweight multi-protocol & multi-source command-line download utility.
 * [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): Một bộ font chữ sans-serif hiện đại và dễ đọc.
 
 Xin cảm ơn các đội ngũ phát triển đã cung cấp những công cụ hữu ích cho cộng đồng.

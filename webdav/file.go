@@ -87,7 +87,7 @@ func (f *telecloudFile) Readdir(count int) ([]os.FileInfo, error) {
 			var files []database.File
 			// Optimized query: message_id IS NOT NULL is sufficient for visibility as it's set as soon as the first part is uploaded.
 			// This avoids the expensive subquery on file_parts.
-			err := database.RODB.Select(&files, "SELECT filename, size, is_folder, created_at FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, filename ASC", searchPath, f.username)
+			err := database.RODB.Select(&files, "SELECT filename, size, is_folder, created_at FROM files WHERE path = ? AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, filename ASC", searchPath, f.username)
 			if err != nil {
 				return nil, err
 			}

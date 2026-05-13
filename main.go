@@ -79,7 +79,7 @@ func restartApp() {
 }
 
 var (
-	version = "v3.2.6"
+	version = "v3.3.0-beta.1"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -174,6 +174,7 @@ func main() {
 	api.InitWebAuthn("", nil)
 
 	startCleanupTask(cfg)
+	startTrashCleanupTask(cfg)
 
 	// cancelCtx is used to signal the Telegram client to stop
 	appCtx, cancelApp := context.WithCancel(context.Background())
@@ -361,6 +362,11 @@ func printStartupBox(cfg *config.Config) {
 		proxyStatus = "Enabled"
 	}
 
+	torrentStatus := "Disabled"
+	if cfg.TorrentEnabled {
+		torrentStatus = "Enabled"
+	}
+
 	// Print table
 	fmt.Println("  ┌──────────────────────────────────────────────────────────────────┐")
 	fmt.Println("  │                      SYSTEM CONFIGURATION                        │")
@@ -374,6 +380,7 @@ func printStartupBox(cfg *config.Config) {
 	fmt.Println("  ├────────────────────────────┼─────────────────────────────────────┤")
 	fmt.Printf("  │ %-26s │ %-35s │\n", "FFmpeg Support", ffmpegStatus)
 	fmt.Printf("  │ %-26s │ %-35s │\n", "YouTube-DLP Support", ytdlpStatus)
+	fmt.Printf("  │ %-26s │ %-35s │\n", "Torrent Support", torrentStatus)
 	fmt.Printf("  │ %-26s │ %-35s │\n", "Proxy Connection", proxyStatus)
 	fmt.Println("  └────────────────────────────┴─────────────────────────────────────┘")
 	fmt.Println()
@@ -420,11 +427,61 @@ func startCleanupTask(cfg *config.Config) {
 	}()
 }
 
+func startTrashCleanupTask(cfg *config.Config) {
+	go func() {
+		// Run every 24 hours
+		ticker := time.NewTicker(24 * time.Hour)
+		for range ticker.C {
+			log.Println("[Trash] Checking for expired files (older than 30 days)...")
+			threshold := time.Now().AddDate(0, 0, -30)
+
+			var files []database.File
+			err := database.RODB.Select(&files, "SELECT * FROM files WHERE deleted_at IS NOT NULL AND deleted_at < ?", threshold)
+			if err != nil {
+				log.Printf("[Trash] Error querying expired files: %v\n", err)
+				continue
+			}
+
+			for _, item := range files {
+				// Re-check if item still exists
+				var exists int
+				database.RODB.Get(&exists, "SELECT COUNT(*) FROM files WHERE id = ?", item.ID)
+				if exists == 0 {
+					continue
+				}
+
+				var fileIDs []int
+				if item.IsFolder {
+					oldPrefix := item.Path + "/" + item.Filename
+					if item.Path == "/" {
+						oldPrefix = "/" + item.Filename
+					}
+					database.RODB.Select(&fileIDs, "SELECT id FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", item.Owner)
+				}
+				fileIDs = append(fileIDs, item.ID)
+
+				msgIDsToDelete, _ := database.GetOrphanedMessages(fileIDs)
+
+				// Delete from DB
+				if item.IsFolder {
+					oldPrefix := item.Path + "/" + item.Filename
+					if item.Path == "/" {
+						oldPrefix = "/" + item.Filename
+					}
+					database.DB.Exec("DELETE FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", item.Owner)
+				}
+				database.DB.Exec("DELETE FROM files WHERE id = ?", item.ID)
+
+				if len(msgIDsToDelete) > 0 {
+					tgclient.DeleteMessages(context.Background(), cfg, msgIDsToDelete)
+				}
+				log.Printf("[Trash] Permanently deleted %s (owner: %s)\n", item.Filename, item.Owner)
+			}
+		}
+	}()
+}
+
 func fixTermuxEnvironment() {
-	// Only proceed if we are on Android or TERMUX_VERSION is set
-	if runtime.GOOS != "android" && os.Getenv("TERMUX_VERSION") == "" {
-		return
-	}
 
 	prefix := os.Getenv("PREFIX")
 	if prefix == "" && runtime.GOOS == "android" {

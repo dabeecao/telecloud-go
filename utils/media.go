@@ -116,3 +116,7 @@ func resizeImage(source, target string) error {
 
 	return jpeg.Encode(out, dst, &jpeg.Options{Quality: 85})
 }
+
+func HasTorrentExtension(filename string) bool {
+	return strings.ToLower(filepath.Ext(filename)) == ".torrent"
+}

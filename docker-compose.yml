@@ -16,10 +16,11 @@ services:
       - DATABASE_PATH=/app/data/database.db
       - THUMBS_DIR=/app/data/thumbs
       - TEMP_DIR=/app/data/temp
-      # Optional: Paths to FFmpeg and yt-dlp. These are built into the Docker image,
+      # Optional: Paths to FFmpeg, yt-dlp and aria2c. These are built into the Docker image,
       # but you can override them here if you want to use external binaries.
       - FFMPEG_PATH=/usr/bin/ffmpeg
       - YTDLP_PATH=/usr/local/bin/yt-dlp
+      - TORRENT_PATH=/usr/bin/aria2c
     volumes:
       # Persist database, thumbnails, temp files, and Telegram session
       - ./data:/app/data

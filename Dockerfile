@@ -48,10 +48,15 @@ WORKDIR /app
 # Create a non-root user
 RUN addgroup -g 65532 nonroot && adduser -u 65532 -G nonroot -D nonroot
 
-# Install required packages: ca-certificates, tzdata, ffmpeg, python3
-RUN apk add --no-cache ca-certificates tzdata ffmpeg python3 \
+# Install required packages: ca-certificates, tzdata, ffmpeg, python3, aria2
+RUN apk add --no-cache ca-certificates tzdata ffmpeg python3 aria2 \
     && wget -qO /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
+
+# Set default environment variables for external tools
+ENV TORRENT_PATH=/usr/bin/aria2c
+ENV YTDLP_PATH=/usr/local/bin/yt-dlp
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 # Copy the compiled binary (assets are embedded via go:embed)
 COPY --from=builder /app/telecloud /app/telecloud

@@ -110,7 +110,7 @@ func (fs *telecloudFS) Mkdir(ctx context.Context, name string, perm os.FileMode)
 	if dir != "/" {
 		var parent database.File
 		pDir, pBase := splitPath(dir)
-		err := database.RODB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", pDir, pBase, username)
+		err := database.RODB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ? AND deleted_at IS NULL", pDir, pBase, username)
 		if err != nil {
 			return os.ErrNotExist // maps to 409 Conflict in webdav
 		}
@@ -127,7 +127,7 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	err := database.RODB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username)
+	err := database.RODB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL", dir, base, username)
 
 	// Writing a new file
 	if err != nil && (flag&os.O_CREATE) != 0 {
@@ -214,52 +214,15 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 		return os.ErrNotExist
 	}
 
-	var fileIDs []int
+	now := time.Now()
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
 			oldPrefix = "/" + item.Filename
 		}
-		database.RODB.Select(&fileIDs, "SELECT id FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", username)
+		database.DB.Exec("UPDATE files SET deleted_at = ? WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL", now, oldPrefix, oldPrefix+"/%", username)
 	}
-	fileIDs = append(fileIDs, item.ID)
-
-	// Identify messages to delete from Telegram before removing files from DB
-	msgIDsToDelete, _ := database.GetOrphanedMessages(fileIDs)
-
-	// Delete thumbnails — single query: only get thumb paths exclusively owned by files being deleted
-	if len(fileIDs) > 0 {
-		placeholders := make([]string, len(fileIDs))
-		args := make([]interface{}, len(fileIDs))
-		for i, id := range fileIDs {
-			placeholders[i] = "?"
-			args[i] = id
-		}
-		var thumbsToDelete []string
-		database.RODB.Select(&thumbsToDelete, fmt.Sprintf(
-			`SELECT thumb_path FROM files WHERE id IN (%s) AND thumb_path IS NOT NULL
-			 AND (SELECT COUNT(*) FROM files f2 WHERE f2.thumb_path = files.thumb_path) = 1`,
-			strings.Join(placeholders, ","),
-		), args...)
-		for _, tp := range thumbsToDelete {
-			os.Remove(tp)
-		}
-	}
-
-	// Delete from DB
-	if item.IsFolder {
-		oldPrefix := item.Path + "/" + item.Filename
-		if item.Path == "/" {
-			oldPrefix = "/" + item.Filename
-		}
-		database.DB.Exec("DELETE FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", username)
-	}
-	database.DB.Exec("DELETE FROM files WHERE id = ?", item.ID)
-
-	// Delete from Telegram
-	if len(msgIDsToDelete) > 0 {
-		tgclient.DeleteMessages(ctx, fs.cfg, msgIDsToDelete)
-	}
+	database.DB.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, item.ID)
 
 	return nil
 }
@@ -288,7 +251,7 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 	defer tx.Rollback()
 
 	var item database.File
-	if err := tx.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", oldDir, oldBase, username); err != nil {
+	if err := tx.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL", oldDir, oldBase, username); err != nil {
 		return os.ErrNotExist
 	}
 
@@ -309,7 +272,7 @@ func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) erro
 		if newDir == "/" {
 			newPrefix = "/" + uniqueName
 		}
-		_, err = tx.Exec("UPDATE files SET path = "+database.ConcatPathSQL()+" WHERE (path = ? OR path LIKE ?) AND owner = ?", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%", username)
+		_, err = tx.Exec("UPDATE files SET path = "+database.ConcatPathSQL()+" WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL", newPrefix, len(oldPrefix)+1, oldPrefix, oldPrefix+"/%", username)
 		if err != nil {
 			return err
 		}
@@ -338,7 +301,7 @@ func (fs *telecloudFS) Stat(ctx context.Context, name string) (os.FileInfo, erro
 	dir, base := splitPath(dbName)
 
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?", dir, base, username); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL", dir, base, username); err != nil {
 		return nil, os.ErrNotExist
 	}
 
@@ -357,7 +320,7 @@ func (fs *telecloudFS) GetThumbnailPath(ctx context.Context, name string) (strin
 	dir, base := splitPath(dbName)
 
 	var thumbPath *string
-	err := database.RODB.Get(&thumbPath, "SELECT thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dir, base, username)
+	err := database.RODB.Get(&thumbPath, "SELECT thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ? AND deleted_at IS NULL", dir, base, username)
 	if err != nil {
 		return "", err
 	}

@@ -11,6 +11,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// JoinPath joins path elements and ensures the result is a clean, absolute path starting with /.
+func JoinPath(elem ...string) string {
+	return path.Join("/", path.Join(elem...))
+}
+
 type File struct {
 	ID         int       `db:"id" json:"id"`
 	MessageID  *int      `db:"message_id" json:"message_id"`
@@ -21,8 +26,10 @@ type File struct {
 	ShareToken *string   `db:"share_token" json:"share_token"`
 	IsFolder   bool      `db:"is_folder" json:"is_folder"`
 	ThumbPath  *string   `db:"thumb_path" json:"thumb_path"`
-	Owner      string    `db:"owner" json:"owner"`
-	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+	Owner         string    `db:"owner" json:"owner"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	DeletedAt     *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+	SharePassword *string   `db:"share_password" json:"-"`
 
 	// Virtual fields
 	DirectToken string `db:"-" json:"direct_token,omitempty"`
@@ -108,8 +115,8 @@ func InitDB(driver, dbPath, dbDSN string) error {
 		}
 		// Deduplicate files to avoid "UNIQUE constraint failed" when creating the index
 		DB.Exec("DELETE FROM files WHERE id NOT IN (SELECT MIN(id) FROM files GROUP BY path, filename, owner)")
-		// Create unique index for SQLite after backfill
-		if _, err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path_filename_owner ON files (path, filename, owner)"); err != nil {
+		// Create unique index for active files only (SQLite 3.8.0+)
+		if _, err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_active_files ON files (path, filename, owner) WHERE deleted_at IS NULL"); err != nil {
 			return fmt.Errorf("failed to create unique index: %v", err)
 		}
 	}
@@ -128,7 +135,9 @@ const sqliteSchema = `
 		is_folder BOOLEAN DEFAULT 0,
 		thumb_path TEXT,
 		owner TEXT DEFAULT '',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		deleted_at DATETIME,
+		share_password TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS settings (
@@ -222,7 +231,9 @@ const mysqlSchema = `
 		is_folder TINYINT(1) DEFAULT 0,
 		thumb_path VARCHAR(1024),
 		owner VARCHAR(191) DEFAULT '',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		deleted_at DATETIME,
+		share_password TEXT
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 	CREATE TABLE IF NOT EXISTS settings (
@@ -325,6 +336,8 @@ func migrateSQLite() error {
 	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename)")
 	DB.Exec("CREATE TABLE IF NOT EXISTS tg_sessions (session_id TEXT PRIMARY KEY, data BLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
 	DB.Exec("ALTER TABLE upload_tasks ADD COLUMN overwrite BOOLEAN DEFAULT 0")
+	DB.Exec("ALTER TABLE files ADD COLUMN deleted_at DATETIME")
+	DB.Exec("ALTER TABLE files ADD COLUMN share_password TEXT")
 	// Ensure foreign keys are enabled
 	DB.Exec("PRAGMA foreign_keys = ON")
 	return nil
@@ -402,7 +415,7 @@ func migrateMySQL() error {
 	}
 	// Deduplicate files for MySQL
 	DB.Exec("DELETE FROM files WHERE id NOT IN (SELECT * FROM (SELECT MIN(id) FROM files GROUP BY path, filename, owner) AS t)")
-	if err := createIndexMySQL("idx_files_path_filename_owner", "files", "path, filename, owner", true); err != nil {
+	if err := createIndexMySQL("idx_files_path_filename_owner", "files", "path, filename, owner", false); err != nil {
 		return err
 	}
 	if err := alterTableMySQL("child_accounts", "ADD COLUMN s3_access_key VARCHAR(191)"); err != nil {
@@ -423,6 +436,12 @@ func migrateMySQL() error {
 	}
 
 	if err := alterTableMySQL("upload_tasks", "ADD COLUMN overwrite TINYINT(1) DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("files", "ADD COLUMN deleted_at DATETIME"); err != nil {
+		return err
+	}
+	if err := alterTableMySQL("files", "ADD COLUMN share_password TEXT"); err != nil {
 		return err
 	}
 
@@ -630,7 +649,7 @@ func GetUniqueFilename(q Queryer, path, filename string, isFolder bool, excludeI
 
 	for counter <= 1000 {
 		var id int
-		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND owner = ? AND id != ? LIMIT 1", path, finalName, owner, excludeID)
+		err := q.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND owner = ? AND id != ? AND deleted_at IS NULL LIMIT 1", path, finalName, owner, excludeID)
 		if err != nil { // Not found or error
 			break
 		}
@@ -697,6 +716,47 @@ func EnsureFoldersExist(dbPath string, owner string) error {
 	}
 	return nil
 }
+
+func EnsureFoldersExistTx(tx *sqlx.Tx, dbPath string, owner string) error {
+	cleanPath := path.Clean(dbPath)
+	if cleanPath == "/" {
+		return nil
+	}
+
+	parts := strings.Split(cleanPath, "/")
+	currentPath := "/"
+
+	for i := 1; i < len(parts); i++ {
+		part := parts[i]
+		if part == "" {
+			continue
+		}
+
+		var id int
+		err := tx.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ? AND deleted_at IS NULL", currentPath, part, owner)
+		if err != nil {
+			var count int
+			if currentPath == "/" {
+				tx.Get(&count, "SELECT COUNT(*) FROM child_accounts WHERE username = ?", part)
+			}
+
+			if count == 0 {
+				_, err = tx.Exec(InsertIgnoreSQL("files", "filename, path, is_folder, owner", "?, ?, 1, ?"), part, currentPath, owner)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		if currentPath == "/" {
+			currentPath = "/" + part
+		} else {
+			currentPath = currentPath + "/" + part
+		}
+	}
+	return nil
+}
+
 
 func CloseDB() error {
 	var errs []string

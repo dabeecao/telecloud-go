@@ -11,15 +11,63 @@ import (
 	"telecloud/utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func (h *Handler) checkShareAuth(c *gin.Context, item database.File) bool {
+	if item.SharePassword == nil || *item.SharePassword == "" {
+		return true
+	}
+	token := c.Param("token")
+	authCookie, err := c.Cookie("share_auth_" + token)
+	if err == nil && authCookie == *item.SharePassword {
+		return true
+	}
+	return false
+}
+
+func (h *Handler) handleVerifySharePassword(c *gin.Context) {
+	token := c.Param("token")
+	password := c.PostForm("password")
+
+	var item database.File
+	if err := database.RODB.Get(&item, "SELECT share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+
+	if item.SharePassword == nil || *item.SharePassword == "" {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(*item.SharePassword), []byte(password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "incorrect_password"})
+		return
+	}
+
+	// Set cookie with the hash as value for verification in other handlers
+	c.SetCookie("share_auth_"+token, *item.SharePassword, 3600*24, "/", "", false, true)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
 
 func (h *Handler) handleGetSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT id, filename, size, created_at, thumb_path, is_folder, path FROM files WHERE share_token = ? AND (is_folder = 1 OR message_id IS NOT NULL)", token); err != nil {
+	if err := database.RODB.Get(&item, "SELECT id, filename, size, created_at, thumb_path, is_folder, path, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL)", token); err != nil {
 		c.HTML(http.StatusNotFound, "error.html", gin.H{
 			"error_message": "File not found or link has been revoked.",
 			"version":       h.cfg.Version,
+		})
+		return
+	}
+
+	if !h.checkShareAuth(c, item) {
+		c.HTML(http.StatusOK, "share_login.html", gin.H{
+			"filename": item.Filename,
+			"token":    token,
+			"version":  h.cfg.Version,
 		})
 		return
 	}
@@ -55,8 +103,13 @@ func (h *Handler) handleGetSharedFile(c *gin.Context) {
 func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !item.IsFolder {
+	if err := database.RODB.Get(&item, "SELECT filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !item.IsFolder {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Folder not found"})
+		return
+	}
+
+	if !h.checkShareAuth(c, item) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "password_required"})
 		return
 	}
 
@@ -79,14 +132,14 @@ func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 	}
 
 	var files []database.File
-	err := database.RODB.Select(&files, "SELECT id, filename, path, size, created_at, is_folder, mime_type, thumb_path FROM files WHERE path = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC", targetPath)
+	err := database.RODB.Select(&files, "SELECT id, filename, path, size, created_at, is_folder, mime_type, thumb_path FROM files WHERE path = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC", targetPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	var totalSize int64
-	database.RODB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL", targetPath, targetPath+"/%")
+	database.RODB.Get(&totalSize, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL AND deleted_at IS NULL", targetPath, targetPath+"/%")
 
 	for i := range files {
 		if files[i].ThumbPath != nil {
@@ -101,8 +154,13 @@ func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 func (h *Handler) handleStreamSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil || item.IsFolder {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || item.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	if !h.checkShareAuth(c, item) {
+		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 
@@ -123,8 +181,13 @@ func (h *Handler) handleStreamSharedFile(c *gin.Context) {
 func (h *Handler) handleDownloadSharedFile(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ?", token); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil {
 		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	if !h.checkShareAuth(c, item) {
+		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 
@@ -140,8 +203,13 @@ func (h *Handler) handleDownloadSharedFile(c *gin.Context) {
 func (h *Handler) handleGetSharedThumb(c *gin.Context) {
 	token := c.Param("token")
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT thumb_path FROM files WHERE share_token = ?", token); err != nil || item.ThumbPath == nil {
+	if err := database.RODB.Get(&item, "SELECT thumb_path, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || item.ThumbPath == nil {
 		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	if !h.checkShareAuth(c, item) {
+		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 	c.File(*item.ThumbPath)
@@ -152,8 +220,13 @@ func (h *Handler) handleStreamSharedFileInFolder(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 
 	var folder database.File
-	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !folder.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	if !h.checkShareAuth(c, folder) {
+		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 
@@ -163,7 +236,7 @@ func (h *Handler) handleStreamSharedFileInFolder(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND deleted_at IS NULL", id); err != nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -189,8 +262,13 @@ func (h *Handler) handleDownloadSharedFileInFolder(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 
 	var folder database.File
-	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !folder.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	if !h.checkShareAuth(c, folder) {
+		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 
@@ -200,7 +278,7 @@ func (h *Handler) handleDownloadSharedFileInFolder(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ?", id); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND deleted_at IS NULL", id); err != nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -224,8 +302,13 @@ func (h *Handler) handleGetSharedFileThumbInFolder(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 
 	var folder database.File
-	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder FROM files WHERE share_token = ?", token); err != nil || !folder.IsFolder {
+	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !folder.IsFolder {
 		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	if !h.checkShareAuth(c, folder) {
+		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 
@@ -235,7 +318,7 @@ func (h *Handler) handleGetSharedFileThumbInFolder(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT thumb_path, path FROM files WHERE id = ?", id); err != nil || item.ThumbPath == nil {
+	if err := database.RODB.Get(&item, "SELECT thumb_path, path FROM files WHERE id = ? AND deleted_at IS NULL", id); err != nil || item.ThumbPath == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -257,7 +340,7 @@ func (h *Handler) handleGetDirectDownload(c *gin.Context) {
 	}
 
 	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ?", *shareToken); err != nil {
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE share_token = ? AND deleted_at IS NULL", *shareToken); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 		return
 	}
@@ -268,4 +351,53 @@ func (h *Handler) handleGetDirectDownload(c *gin.Context) {
 	}
 
 	tgclient.ServeTelegramFile(c.Request, c.Writer, item, h.cfg)
+}
+
+func (h *Handler) handleShareFile(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	password := c.PostForm("password")
+	var item database.File
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT path, is_folder FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+
+	var hashedPass *string
+	if password != "" {
+		h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err == nil {
+			s := string(h)
+			hashedPass = &s
+		}
+	}
+
+	token := uuid.New().String()
+	database.DB.Exec("UPDATE files SET share_token = ?, share_password = ? WHERE id = ?", token, hashedPass, id)
+
+	resp := gin.H{"share_token": token}
+	if !item.IsFolder {
+		resp["direct_token"] = utils.GenerateDirectToken(token)
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) handleRevokeShare(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	var item database.File
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT path FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	database.DB.Exec("UPDATE files SET share_token = NULL, share_password = NULL WHERE id = ?", id)
+	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
 }

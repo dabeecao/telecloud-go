@@ -35,8 +35,8 @@ var (
 	taskMutex   sync.Mutex
 
 	// Limit concurrent uploads to Telegram to prevent floodwait
-	uploadSemaphore       chan struct{}
-	remoteUploadSemaphore chan struct{}
+	uploadSemaphore         chan struct{}
+	globalDownloadSemaphore chan struct{}
 	
 	// Stagger mechanism to prevent bursts
 	lastUploadStart time.Time
@@ -59,12 +59,14 @@ func staggerUpload(ctx context.Context) {
 }
 
 func InitUploader(cfg *config.Config) {
-	count := 3
+	uploadCount := 4
 	if botCount := GetBotCount(); botCount > 0 {
-		count = 3 * (botCount + 1)
+		uploadCount = 4 * (botCount + 1)
 	}
-	uploadSemaphore = make(chan struct{}, count)
-	remoteUploadSemaphore = make(chan struct{}, count)
+	uploadSemaphore = make(chan struct{}, uploadCount)
+	
+	// Set concurrent download limit to 2 for a more comfortable experience
+	globalDownloadSemaphore = make(chan struct{}, 2)
 }
 
 type UploadStatus struct {
@@ -89,34 +91,64 @@ type UploadStatus struct {
 }
 
 func UpdateTask(taskID string, status string, percent int, msg string, owner string) {
-	UpdateTaskWithFile(taskID, status, percent, msg, "", owner, 0, 0)
+	UpdateTaskWithSpeed(taskID, status, percent, msg, "", owner, 0, 0, 0)
 }
 
 func UpdateTaskWithSize(taskID string, status string, percent int, msg string, size int64, uploaded int64, owner string) {
-	UpdateTaskWithFile(taskID, status, percent, msg, "", owner, size, uploaded)
+	UpdateTaskWithSpeed(taskID, status, percent, msg, "", owner, size, uploaded, 0)
+}
+
+func UpdateTaskWithSpeed(taskID string, status string, percent int, msg string, filename string, owner string, size int64, uploaded int64, speed int64) {
+	UpdateTaskWithFile(taskID, status, percent, msg, filename, owner, size, uploaded, speed)
 }
 
 func UpdateTaskWithFileID(taskID string, status string, percent int, msg string, fileID int64, filename string, owner string) {
 	taskMutex.Lock()
-	if t, ok := UploadTasks[taskID]; ok {
-		t.FileID = fileID
+	defer taskMutex.Unlock()
+	if existing, ok := UploadTasks[taskID]; ok {
+		existing.Status = status
+		existing.Percent = percent
+		existing.Message = msg
+		existing.FileID = fileID
 		if filename != "" {
-			t.Filename = filename
+			existing.Filename = filename
 		}
 	} else {
 		UploadTasks[taskID] = &UploadStatus{
+			Status:   status,
+			Percent:  percent,
+			Message:  msg,
 			FileID:   fileID,
 			Filename: filename,
 			Owner:    owner,
 		}
 	}
-	taskMutex.Unlock()
-	UpdateTaskWithFile(taskID, status, percent, msg, filename, owner, 0, 0)
+
+	// Notify frontend about the update
+	if s, ok := UploadTasks[taskID]; ok {
+		ws.BroadcastTaskUpdate(s.Owner, taskID, s.Status, s.Percent, s.Message, s.Filename, s.Size, s.UploadedBytes, s.Speed, s.ETA)
+	}
+
+	// Auto-cleanup: remove task from memory once terminal
+	if status == "done" || status == "error" || status == "cancelled" {
+		go func() {
+			time.Sleep(1 * time.Hour)
+			taskMutex.Lock()
+			delete(UploadTasks, taskID)
+			taskMutex.Unlock()
+		}()
+	}
 }
 
-func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64, uploaded int64) {
+// Keep this for compatibility but update internally
+func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64, uploaded int64, manualSpeed ...int64) {
 	taskMutex.Lock()
 	defer taskMutex.Unlock()
+
+	var finalSpeed int64
+	if len(manualSpeed) > 0 {
+		finalSpeed = manualSpeed[0]
+	}
 
 	var finalFilename string
 	var finalOwner string
@@ -170,12 +202,17 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 
 	var speed int64
 	var eta int
-	duration := time.Since(st).Seconds()
-	if duration > 1 && fu > 0 {
-		speed = int64(float64(fu) / duration)
-		if speed > 0 && fs > fu {
-			eta = int(float64(fs-fu) / float64(speed))
+	if finalSpeed > 0 {
+		speed = finalSpeed
+	} else {
+		duration := time.Since(st).Seconds()
+		if duration > 1 && fu > 0 {
+			speed = int64(float64(fu) / duration)
 		}
+	}
+
+	if speed > 0 && fs > fu {
+		eta = int(float64(fs-fu) / float64(speed))
 	}
 
 	phase := status
@@ -227,7 +264,7 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 	}
 
 	UploadTasks[taskID] = statusObj
-	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, fs, fu, speed, eta)
+	ws.BroadcastTaskUpdate(finalOwner, taskID, status, percent, msg, statusObj.Filename, fs, fu, speed, eta)
 
 	// Auto-cleanup: remove task from memory once terminal
 	if status == "done" || status == "error" || status == "cancelled" {
@@ -552,24 +589,25 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		cancel()
 	}()
 
-	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0, 0)
-
-	// SSRF Protection
+	// SSRF Protection (Check before waiting in queue)
 	if utils.IsPrivateIP(url) {
-		UpdateTaskWithFile(taskID, "error", 0, "err_forbidden_url", "", owner, 0, 0)
+		UpdateTaskWithFile(taskID, "error", 0, "err_forbidden_url", filename, owner, 0, 0)
 		return
 	}
 
-	database.EnsureFoldersExist(path, owner)
+	UpdateTaskWithFile(taskID, "waiting_slot", 0, "waiting_slot", filename, owner, 0, 0)
 
-	// 1. Wait for a slot in the remote upload queue (HTTP download limit)
+	// 1. Wait for a slot in the global download queue (HTTP download limit)
 	select {
-	case remoteUploadSemaphore <- struct{}{}:
-		defer func() { <-remoteUploadSemaphore }()
+	case globalDownloadSemaphore <- struct{}{}:
+		defer func() { <-globalDownloadSemaphore }()
 	case <-ctx.Done():
 		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", "", owner, 0, 0)
 		return
 	}
+
+	database.EnsureFoldersExist(path, owner)
+	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0, 0)
 
 	// 2. Get the file stream
 	defaultDialer := &net.Dialer{
@@ -1190,12 +1228,12 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 		filename = filename[:idx]
 	}
 
-	UpdateTaskWithFile(taskID, "downloading", 0, "initiating_request", filename, owner, 0, 0)
+	UpdateTaskWithFile(taskID, "waiting_slot", 0, "waiting_slot", filename, owner, 0, 0)
 
 	// 1. Wait for a slot in the remote upload queue (HTTP download limit)
 	select {
-	case remoteUploadSemaphore <- struct{}{}:
-		defer func() { <-remoteUploadSemaphore }()
+	case globalDownloadSemaphore <- struct{}{}:
+		defer func() { <-globalDownloadSemaphore }()
 	case <-ctx.Done():
 		return 0, "", fmt.Errorf("cancelled while waiting for remote slot")
 	}

@@ -20,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 )
 
 func (h *Handler) handleGetIndex(c *gin.Context) {
@@ -65,10 +66,10 @@ func (h *Handler) handleGetIndex(c *gin.Context) {
 
 	var userStorageUsed int64
 	if isAdmin {
-		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0 AND message_id IS NOT NULL")
+		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE is_folder = 0 AND message_id IS NOT NULL AND deleted_at IS NULL")
 	} else {
 		prefix := "/" + sessionUsername
-		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL", prefix, prefix+"/%")
+		database.RODB.Get(&userStorageUsed, "SELECT COALESCE(SUM(size), 0) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL AND deleted_at IS NULL", prefix, prefix+"/%")
 	}
 
 	// S3 for the current session user
@@ -135,11 +136,11 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 	}
 
 	var files []database.File
-	query := "SELECT * FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
+	query := "SELECT * FROM files WHERE path = ? AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
 	args := []interface{}{dbPath, username}
 	if isAdmin {
 		if dbPath == "/" {
-			query = "SELECT * FROM files WHERE path = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
+			query = "SELECT * FROM files WHERE path = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
 			args = []interface{}{dbPath}
 		} else {
 			parts := strings.Split(strings.TrimPrefix(dbPath, "/"), "/")
@@ -151,7 +152,7 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 			if isChild > 0 {
 				effectiveOwner = rootFolder
 			}
-			query = "SELECT * FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
+			query = "SELECT * FROM files WHERE path = ? AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL) ORDER BY is_folder DESC, id DESC"
 			args = []interface{}{dbPath, effectiveOwner}
 		}
 	}
@@ -538,17 +539,18 @@ func (h *Handler) handleCancelUpload(c *gin.Context) {
 			return
 		}
 
-		// Cleanup files starting with taskID_ or ytdlp_taskID_
+		// Cleanup files/folders starting with taskID_, ytdlp_taskID_, or torrent_taskID_
 		patterns := []string{
 			filepath.Join(h.cfg.TempDir, taskID+"_*"),
 			filepath.Join(h.cfg.TempDir, "ytdlp_"+taskID+"_*"),
+			filepath.Join(h.cfg.TempDir, "torrent_"+taskID),
 		}
 
 		for _, pattern := range patterns {
 			matches, err := filepath.Glob(pattern)
 			if err == nil {
 				for _, m := range matches {
-					os.Remove(m)
+					os.RemoveAll(m)
 				}
 			}
 		}
@@ -726,6 +728,213 @@ func (h *Handler) handleDeleteFile(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
+	if item.IsFolder {
+		oldPrefix := item.Path + "/" + item.Filename
+		if item.Path == "/" {
+			oldPrefix = "/" + item.Filename
+		}
+		database.DB.Exec("UPDATE files SET deleted_at = ? WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL", now, oldPrefix, oldPrefix+"/%", item.Owner)
+	}
+	database.DB.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, id)
+
+	c.JSON(http.StatusOK, gin.H{"status": "moved_to_trash"})
+}
+
+func (h *Handler) handleGetTrashFiles(c *gin.Context) {
+	username := c.GetString("username")
+	var allFiles []database.File
+	err := database.RODB.Select(&allFiles, "SELECT * FROM files WHERE owner = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC", username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Filter to only show top-level deleted items (items whose parent folder is NOT deleted)
+	deletedFolders := make(map[string]bool)
+	for _, f := range allFiles {
+		if f.IsFolder {
+			fullPath := f.Path + "/" + f.Filename
+			if f.Path == "/" {
+				fullPath = "/" + f.Filename
+			}
+			deletedFolders[fullPath] = true
+		}
+	}
+
+	var topLevelFiles []database.File
+	for _, f := range allFiles {
+		isSub := false
+		if f.Path != "/" {
+			parts := strings.Split(strings.TrimPrefix(f.Path, "/"), "/")
+			curr := ""
+			for _, part := range parts {
+				if part == "" {
+					continue
+				}
+				if curr == "" {
+					curr = "/" + part
+				} else {
+					curr = curr + "/" + part
+				}
+				if deletedFolders[curr] {
+					fFullPath := f.Path + "/" + f.Filename
+					if f.Path == "/" {
+						fFullPath = "/" + f.Filename
+					}
+					if fFullPath != curr {
+						isSub = true
+						break
+					}
+				}
+			}
+		}
+		if !isSub {
+			topLevelFiles = append(topLevelFiles, f)
+		}
+	}
+
+	for i := range topLevelFiles {
+		if topLevelFiles[i].ThumbPath != nil {
+			if _, err := os.Stat(*topLevelFiles[i].ThumbPath); err == nil {
+				topLevelFiles[i].HasThumb = true
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"files": topLevelFiles})
+}
+
+func (h *Handler) handleRestoreFile(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+
+	username := c.GetString("username")
+	tx, err := database.DB.Beginx()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
+	defer tx.Rollback()
+
+	var item database.File
+	if err := tx.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+
+	if item.DeletedAt == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_not_in_trash"})
+		return
+	}
+
+	// 1. Ensure parent folders exist
+	if item.Path != "/" {
+		if err := database.EnsureFoldersExistTx(tx, item.Path, item.Owner); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_recreate_parents"})
+			return
+		}
+	}
+
+	// 2. Handle name collision
+	newFilename := database.GetUniqueFilename(tx, item.Path, item.Filename, item.IsFolder, item.ID, item.Owner)
+
+	// 3. Restore item and children (if folder)
+	if item.IsFolder {
+		oldPrefix := item.Path + "/" + item.Filename
+		if item.Path == "/" {
+			oldPrefix = "/" + item.Filename
+		}
+
+		// Restore children that were deleted at the exact same time as the parent
+		// This prevents restoring items that were deleted individually before the folder was deleted.
+		if _, err := tx.Exec("UPDATE files SET deleted_at = NULL WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at = ?", oldPrefix, oldPrefix+"/%", item.Owner, item.DeletedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "restore_children_failed"})
+			return
+		}
+	}
+
+	if _, err := tx.Exec("UPDATE files SET deleted_at = NULL, filename = ? WHERE id = ?", newFilename, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "restore_failed"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "commit_failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "restored", "new_filename": newFilename})
+}
+
+func (h *Handler) handleEmptyTrash(c *gin.Context) {
+	username := c.GetString("username")
+	
+	// Identify all items in trash for this user
+	var items []database.File
+	if err := database.RODB.Select(&items, "SELECT id, is_folder, thumb_path FROM files WHERE owner = ? AND deleted_at IS NOT NULL", username); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
+
+	if len(items) == 0 {
+		c.JSON(http.StatusOK, gin.H{"status": "trash_already_empty"})
+		return
+	}
+
+	var fileIDs []int
+	for _, item := range items {
+		fileIDs = append(fileIDs, item.ID)
+	}
+
+	// Identify messages to delete from Telegram
+	msgIDsToDelete, _ := database.GetOrphanedMessages(fileIDs)
+
+	// Delete thumbnails
+	for _, item := range items {
+		if item.ThumbPath != nil && *item.ThumbPath != "" {
+			// Check if other files use the same thumb (unlikely for trash items, but safe)
+			var count int
+			database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ? AND id NOT IN ("+strings.Trim(strings.Join(strings.Fields(fmt.Sprint(fileIDs)), ","), "[]")+")", *item.ThumbPath)
+			if count == 0 {
+				os.Remove(*item.ThumbPath)
+			}
+		}
+	}
+
+	// Delete Telegram messages in background
+	if len(msgIDsToDelete) > 0 {
+		go tgclient.DeleteMessages(context.Background(), h.cfg, msgIDsToDelete)
+	}
+
+	// Delete from DB
+	query, args, err := sqlx.In("DELETE FROM files WHERE id IN (?)", fileIDs)
+	if err == nil {
+		query = database.DB.Rebind(query)
+		database.DB.Exec(query, args...)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "trash_emptied"})
+}
+
+
+func (h *Handler) handlePermanentDeleteFile(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+
+	var item database.File
+	username := c.GetString("username")
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+
 	var fileIDs []int
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
@@ -739,7 +948,7 @@ func (h *Handler) handleDeleteFile(c *gin.Context) {
 	// Identify messages to delete from Telegram before removing files from DB
 	msgIDsToDelete, _ := database.GetOrphanedMessages(fileIDs)
 
-	// Delete thumbnails — single query: only get thumb paths exclusively owned by files being deleted
+	// Delete thumbnails
 	if len(fileIDs) > 0 {
 		placeholders := make([]string, len(fileIDs))
 		args := make([]interface{}, len(fileIDs))
@@ -773,7 +982,7 @@ func (h *Handler) handleDeleteFile(c *gin.Context) {
 		tgclient.DeleteMessages(context.Background(), h.cfg, msgIDsToDelete)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+	c.JSON(http.StatusOK, gin.H{"status": "permanently_deleted"})
 }
 
 func (h *Handler) handleRenameFile(c *gin.Context) {
@@ -846,43 +1055,7 @@ func (h *Handler) handleRenameFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "renamed", "new_name": uniqueName})
 }
 
-func (h *Handler) handleShareFile(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
-		return
-	}
-	var item database.File
-	username := c.GetString("username")
-	if err := database.RODB.Get(&item, "SELECT path, is_folder FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	token := uuid.New().String()
-	database.DB.Exec("UPDATE files SET share_token = ? WHERE id = ?", token, id)
-	
-	resp := gin.H{"share_token": token}
-	if !item.IsFolder {
-		resp["direct_token"] = utils.GenerateDirectToken(token)
-	}
-	c.JSON(http.StatusOK, resp)
-}
 
-func (h *Handler) handleRevokeShare(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
-		return
-	}
-	var item database.File
-	username := c.GetString("username")
-	if err := database.RODB.Get(&item, "SELECT path FROM files WHERE id = ? AND owner = ?", id, username); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-		return
-	}
-	database.DB.Exec("UPDATE files SET share_token = NULL WHERE id = ?", id)
-	c.JSON(http.StatusOK, gin.H{"status": "revoked"})
-}
 
 func (h *Handler) handleGetThumb(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))

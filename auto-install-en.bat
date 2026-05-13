@@ -105,6 +105,35 @@ if exist "yt-dlp.exe" (
     echo [v] Downloaded yt-dlp.exe successfully.
 ) else (
     echo [!] Could not download yt-dlp.exe.
+echo [+] Checking for aria2c...
+where aria2c >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [v] aria2c is already installed on the system.
+) else (
+    if exist "aria2c.exe" (
+        echo [v] Found aria2c.exe in current directory.
+    ) else (
+        set /p install_aria2="[?] Do you want to install aria2 (Torrent support)? (y/n): "
+        if /i "!install_aria2!"=="y" (
+            echo [+] Downloading aria2...
+            for /f "tokens=*" %%a in ('powershell -Command "$r = Invoke-RestMethod -Uri 'https://api.github.com/repos/aria2/aria2/releases/latest'; $r.assets | Where-Object { $_.name -like '*win-64bit-build1.zip*' } | Select-Object -ExpandProperty browser_download_url"') do set "ARIA2_URL=%%a"
+            if "!ARIA2_URL!"=="" (
+                echo [!] Could not find aria2 release for Windows.
+            ) else (
+                powershell -Command "$progressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '!ARIA2_URL!' -OutFile 'aria2.zip'"
+                echo [+] Extracting aria2...
+                powershell -Command "Expand-Archive -Path 'aria2.zip' -DestinationPath 'aria2_temp' -Force"
+                for /r "aria2_temp" %%i in (aria2c.exe) do move /y "%%i" . >nul
+                del aria2.zip
+                rd /s /q aria2_temp
+                if exist "aria2c.exe" (
+                    echo [v] Downloaded aria2c.exe successfully.
+                ) else (
+                    echo [!] Extraction failed or aria2c.exe not found.
+                )
+            )
+        )
+    )
 )
 
 :DOWNLOAD_APP
@@ -143,6 +172,9 @@ if not exist ".env" (
     )
     if exist "yt-dlp.exe" (
         powershell -Command "(Get-Content .env) -replace '^#?YTDLP_PATH=.*', 'YTDLP_PATH=yt-dlp' | Set-Content .env"
+    )
+    if exist "aria2c.exe" (
+        powershell -Command "(Get-Content .env) -replace '^#?TORRENT_PATH=.*', 'TORRENT_PATH=aria2c' | Set-Content .env"
     )
 
     echo [v] Installation complete!

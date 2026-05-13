@@ -88,7 +88,7 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 			fullSearchPath = path.Join(searchDir, searchBase)
 		}
 		
-		query := "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE path = ? AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL)"
+		query := "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE path = ? AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL)"
 		args := []interface{}{fullSearchPath, b.username}
 		
 		if isPartialFile {
@@ -110,11 +110,11 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 			likePattern = "/%"
 		}
 
-		query := "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE (path = ? OR path LIKE ?) AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL)"
+		query := "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL)"
 		args := []interface{}{fullSearchPath, likePattern, b.username}
 
 		if isPartialFile {
-			query = "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE ((path = ? AND filename LIKE ?) OR (path LIKE ?)) AND owner = ? AND (is_folder = 1 OR message_id IS NOT NULL)"
+			query = "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE ((path = ? AND filename LIKE ?) OR (path LIKE ?)) AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL)"
 			args = []interface{}{searchDir, searchBase + "%", path.Join(searchDir, searchBase) + "/%", b.username}
 		}
 
@@ -180,7 +180,7 @@ func (b *TelecloudBackend) GetObject(bucketName, objectName string, rangeRequest
 	dbPath, filename := b.mapPath(objectName)
 
 	var file database.File
-	query := "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?"
+	query := "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL"
 	args := []interface{}{dbPath, filename, b.username}
 
 	err := database.RODB.Get(&file, query, args...)
@@ -236,7 +236,7 @@ func (b *TelecloudBackend) HeadObject(bucketName, objectName string) (*gofakes3.
 	dbPath, filename := b.mapPath(objectName)
 
 	var file database.File
-	query := "SELECT id, filename, size, is_folder, created_at, mime_type FROM files WHERE path = ? AND filename = ? AND owner = ?"
+	query := "SELECT id, filename, size, is_folder, created_at, mime_type FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL"
 	args := []interface{}{dbPath, filename, b.username}
 
 	err := database.RODB.Get(&file, query, args...)
@@ -267,7 +267,7 @@ func (b *TelecloudBackend) DeleteObject(bucketName, objectName string) (gofakes3
 	dbPath, filename := b.mapPath(objectName)
 
 	var file database.File
-	query := "SELECT * FROM files WHERE path = ? AND filename = ? AND owner = ?"
+	query := "SELECT id FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL"
 	args := []interface{}{dbPath, filename, b.username}
 
 	err := database.RODB.Get(&file, query, args...)
@@ -275,24 +275,8 @@ func (b *TelecloudBackend) DeleteObject(bucketName, objectName string) (gofakes3
 		return gofakes3.ObjectDeleteResult{}, nil
 	}
 
-	if !file.IsFolder {
-		// Identify messages to delete from Telegram safely
-		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{file.ID})
-
-		if len(msgIDsToDelete) > 0 {
-			go tgclient.DeleteMessages(context.Background(), b.cfg, msgIDsToDelete)
-		}
-
-		if file.ThumbPath != nil {
-			var count int
-			database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ?", *file.ThumbPath)
-			if count <= 1 {
-				os.Remove(*file.ThumbPath)
-			}
-		}
-	}
-
-	database.DB.Exec("DELETE FROM files WHERE id = ?", file.ID)
+	now := time.Now()
+	database.DB.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, file.ID)
 	return gofakes3.ObjectDeleteResult{IsDeleteMarker: false}, nil
 }
 
@@ -372,7 +356,7 @@ func (b *TelecloudBackend) CopyObject(srcBucket, srcKey, dstBucket, dstKey strin
 	dstDbPath, dstFilename := b.mapPath(dstKey)
 
 	var file database.File
-	query := "SELECT id, message_id, filename, path, size, mime_type, is_folder, thumb_path FROM files WHERE path = ? AND filename = ? AND owner = ?"
+	query := "SELECT id, message_id, filename, path, size, mime_type, is_folder, thumb_path FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL"
 	args := []interface{}{srcDbPath, srcFilename, b.username}
 
 	err := database.RODB.Get(&file, query, args...)

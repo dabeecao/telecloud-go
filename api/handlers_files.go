@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -12,11 +13,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	"telecloud/database"
 	"telecloud/tgclient"
 	"telecloud/utils"
 	"telecloud/ws"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -667,16 +668,26 @@ func (h *Handler) handlePostPaste(c *gin.Context) {
 				}
 
 				for _, child := range children {
+					var newChildID int64
+					var res sql.Result
+					err = nil
 					newChildPath := newPrefix + child.Path[len(oldPrefix):]
-					res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-						child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath, username)
+					if database.IsPostgres() {
+						err = tx.QueryRowx("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+							child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath, username).Scan(&newChildID)
+					} else {
+						res, err = tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+							child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath, username)
+					}
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
 					}
 
 					if !child.IsFolder {
-						newChildID, err := res.LastInsertId()
+						if !database.IsPostgres() {
+							newChildID, err = res.LastInsertId()
+						}
 						if err == nil {
 							_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newChildID, child.ID)
 							if err != nil {
@@ -690,12 +701,22 @@ func (h *Handler) handlePostPaste(c *gin.Context) {
 				if item.MessageID == nil {
 					continue
 				}
-				res, err := tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, 0, ?, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath, username)
+				var newFileID int64
+				var res sql.Result
+				err = nil
+				if database.IsPostgres() {
+					err = tx.QueryRowx("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES ($1, $2, $3, $4, $5, 0, $6, $7) RETURNING id",
+						item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath, username).Scan(&newFileID)
+				} else {
+					res, err = tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, 0, ?, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath, username)
+				}
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
-				newFileID, err := res.LastInsertId()
+				if !database.IsPostgres() {
+					newFileID, err = res.LastInsertId()
+				}
 				if err == nil {
 					_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newFileID, item.ID)
 					if err != nil {
@@ -872,7 +893,7 @@ func (h *Handler) handleRestoreFile(c *gin.Context) {
 
 func (h *Handler) handleEmptyTrash(c *gin.Context) {
 	username := c.GetString("username")
-	
+
 	// Identify all items in trash for this user
 	var items []database.File
 	if err := database.RODB.Select(&items, "SELECT id, is_folder, thumb_path FROM files WHERE owner = ? AND deleted_at IS NOT NULL", username); err != nil {
@@ -919,7 +940,6 @@ func (h *Handler) handleEmptyTrash(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "trash_emptied"})
 }
-
 
 func (h *Handler) handlePermanentDeleteFile(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
@@ -1054,8 +1074,6 @@ func (h *Handler) handleRenameFile(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "renamed", "new_name": uniqueName})
 }
-
-
 
 func (h *Handler) handleGetThumb(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
@@ -1261,13 +1279,13 @@ func (h *Handler) handlePublicUploadAPI(c *gin.Context) {
 
 	if async {
 		origin := getRequestOrigin(c)
-		
+
 		var fileSize int64
 		if stat, err := os.Stat(tempFilePath); err == nil {
 			fileSize = stat.Size()
 		}
 		tgclient.UpdateTaskWithFile(taskID, "processing", 0, "uploading_to_telegram", filename, username, fileSize, 0)
-		
+
 		go func() {
 			defer os.Remove(tempFilePath)
 			fileID, finalName, err := tgclient.ProcessCompleteUploadSync(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, overwrite, username)
@@ -1372,7 +1390,7 @@ func (h *Handler) handlePublicRemoteUploadAPI(c *gin.Context) {
 
 	if req.Async {
 		origin := getRequestOrigin(c)
-		
+
 		// Initialize task in memory
 		filename := filepath.Base(req.URL)
 		if idx := strings.Index(filename, "?"); idx != -1 {

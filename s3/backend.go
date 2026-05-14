@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -76,7 +77,7 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 	}
 
 	searchDir, searchBase := b.mapPath(s3Prefix)
-	
+
 	// If the prefix doesn't end in a slash, it might be a partial filename.
 	// We need to search in the parent directory for files starting with searchBase.
 	isPartialFile := s3Prefix != "" && !strings.HasSuffix(s3Prefix, "/")
@@ -87,15 +88,15 @@ func (b *TelecloudBackend) ListBucket(name string, prefix *gofakes3.Prefix, page
 		if searchBase != "" && !isPartialFile {
 			fullSearchPath = path.Join(searchDir, searchBase)
 		}
-		
+
 		query := "SELECT id, path, filename, size, is_folder, created_at FROM files WHERE path = ? AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL)"
 		args := []interface{}{fullSearchPath, b.username}
-		
+
 		if isPartialFile {
 			query += " AND filename LIKE ?"
 			args = append(args, searchBase+"%")
 		}
-		
+
 		query += " ORDER BY filename ASC"
 		err = database.RODB.Select(&files, query, args...)
 	} else {
@@ -374,15 +375,27 @@ func (b *TelecloudBackend) CopyObject(srcBucket, srcKey, dstBucket, dstKey strin
 	defer tx.Rollback()
 
 	// Perform the copy in database
-	res, err := tx.Exec(
-		"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		file.MessageID, dstFilename, dstDbPath, file.Size, file.MimeType, file.IsFolder, file.ThumbPath, b.username,
-	)
+	var newFileID int64
+	var res sql.Result
+	err = nil
+	if database.IsPostgres() {
+		err = tx.QueryRowx(
+			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+			file.MessageID, dstFilename, dstDbPath, file.Size, file.MimeType, file.IsFolder, file.ThumbPath, b.username,
+		).Scan(&newFileID)
+	} else {
+		res, err = tx.Exec(
+			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			file.MessageID, dstFilename, dstDbPath, file.Size, file.MimeType, file.IsFolder, file.ThumbPath, b.username,
+		)
+	}
 	if err != nil {
 		return gofakes3.CopyObjectResult{}, err
 	}
 
-	newFileID, _ := res.LastInsertId()
+	if !database.IsPostgres() {
+		newFileID, _ = res.LastInsertId()
+	}
 	if !file.IsFolder {
 		_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newFileID, file.ID)
 		if err != nil {
@@ -418,6 +431,7 @@ func (b *TelecloudBackend) BucketExists(name string) (bool, error) {
 func (b *TelecloudBackend) ForceDeleteBucket(name string) error {
 	return gofakes3.ErrNotImplemented
 }
+
 type closerReader struct {
 	r io.Reader
 	c io.Closer

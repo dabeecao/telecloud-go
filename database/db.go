@@ -52,12 +52,12 @@ type WrappedDB struct {
 }
 
 func RebindQuery(query string) string {
-	switch driverName {
-	case "postgres":
+	if driverName == "postgres" &&
+		!strings.Contains(query, "$1") {
 		return sqlx.Rebind(sqlx.DOLLAR, query)
-	default:
-		return query
 	}
+
+	return query
 }
 
 func (db *WrappedDB) Exec(query string, args ...interface{}) (sql.Result, error) {

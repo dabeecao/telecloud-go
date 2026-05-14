@@ -325,7 +325,7 @@ func fatalf(format string, v ...interface{}) {
 func printStartupBox(cfg *config.Config) {
 	// Prepare data
 	dbDisplay := cfg.DatabasePath
-	if cfg.DatabaseDriver == "mysql" {
+	if cfg.DatabaseDriver == "mysql" || cfg.DatabaseDriver == "postgres" {
 		dsn := cfg.DatabaseDSN
 		if strings.Contains(dsn, ":") && strings.Contains(dsn, "@") {
 			parts := strings.SplitN(dsn, "@", 2)
@@ -338,6 +338,9 @@ func printStartupBox(cfg *config.Config) {
 			}
 		}
 		dbDisplay = "MySQL (" + dsn + ")"
+		if cfg.DatabaseDriver == "postgres" {
+			dbDisplay = "postgreSQL (" + dsn + ")"
+		}
 	} else {
 		dbDisplay = "SQLite (" + cfg.DatabasePath + ")"
 	}

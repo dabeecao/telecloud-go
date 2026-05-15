@@ -371,7 +371,7 @@ func (h *Handler) handlePostUser(c *gin.Context) {
 
 	var folderCount int
 	folderQuery := "SELECT COUNT(*) FROM files WHERE path = '/' AND filename = ? COLLATE NOCASE AND is_folder = 1"
-	if database.IsMySQL() {
+	if database.IsMySQL() || database.IsPostgres() {
 		folderQuery = "SELECT COUNT(*) FROM files WHERE path = '/' AND LOWER(filename) = LOWER(?) AND is_folder = 1"
 	}
 	err = tx.Get(&folderCount, folderQuery, username)
@@ -386,7 +386,7 @@ func (h *Handler) handlePostUser(c *gin.Context) {
 
 	var userExists int
 	userQuery := "SELECT COUNT(*) FROM child_accounts WHERE username = ? COLLATE NOCASE"
-	if database.IsMySQL() {
+	if database.IsMySQL() || database.IsPostgres() {
 		userQuery = "SELECT COUNT(*) FROM child_accounts WHERE LOWER(username) = LOWER(?)"
 	}
 	err = tx.Get(&userExists, userQuery, username)

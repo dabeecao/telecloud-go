@@ -47,7 +47,7 @@ This project has been **completely rewritten in Golang** from the original proje
 * 👥 **Multi-user Management**: Support creating child accounts with isolated storage spaces (Virtual Path).
 * 🤖 **Multi-Bot (Bot Pool)**: Supports using secondary bots to increase throughput. The system automatically optimizes chunk sizes (500MB) to balance the load across bots, maximizing stability and recovery during network drops.
 * 🔐 **Passkey**: Supports secure login using biometrics (TouchID/FaceID) or security keys (WebAuthn).
-* 🗄️ **MySQL Support**: In addition to SQLite, TeleCloud now supports **MySQL** for storing its database, suitable for large-scale deployments requiring high stability.
+* 🗄️ **Multi-Database Support**: In addition to SQLite, TeleCloud now supports **MySQL** and **PostgreSQL** for database storage in large systems requiring high stability.
 * 🗑️ **Trash**: Supports storing and recovering deleted files, protecting your data from accidental deletion.
 * 🔒 **Locked Shares**: Allows setting password protection for file and folder share links.
 * 🌐 **Multi-language**: Supports multiple languages (English, Vietnamese, Chinese, Japanese, Russian, Arabic, Hindi, and Khmer).
@@ -144,9 +144,9 @@ Main fields in `.env`:
 * `TG_UPLOAD_THREADS`: (Optional) Number of concurrent upload threads per file part. Default is `2`. Increase to `4` for maximum speed.
 * `BOT_TOKENS`: (Optional) A comma-separated list of secondary Bot tokens (e.g. `token1,token2`). These bots will help share the workload with your main account, significantly increasing download/upload performance.
   * **Note**: Bots must be added to the storage group/channel (`LOG_GROUP_ID`) and granted permission to send messages. If `LOG_GROUP_ID=me` (Saved Messages), the Multi-bot feature will be automatically disabled because bots do not have access to the user's private messages.
-* `DATABASE_DRIVER`: (Optional) The database engine to use (`sqlite` or `mysql`). Default is `sqlite`.
-* `DATABASE_PATH`: (Optional) Path to the database file if using SQLite (default: `database.db`).
-* `DATABASE_DSN`: (Required if using MySQL) MySQL connection string (e.g. `user:pass@tcp(127.0.0.1:3306)/telecloud?parseTime=true&charset=utf8mb4`).
+*   `DATABASE_DRIVER`: (Optional) Database type (`sqlite`, `mysql` or `postgres`). Default is `sqlite`.
+*   `DATABASE_PATH`: (Optional) Path to the database file if using SQLite (default: `database.db`).
+*   `DATABASE_DSN`: (Required if using MySQL/Postgres) Connection string (e.g., MySQL: `user:pass@tcp(127.0.0.1:3306)/telecloud?parseTime=true&charset=utf8mb4`, e.g., Postgres: `postgres://user:pass@127.0.0.1:5432/telecloud?sslmode=disable`).
 * `THUMBS_DIR`: (Optional) Directory for storing thumbnails (default: `./static/thumbs`)
 * `TEMP_DIR`: (Optional) Path to the temporary directory for storing file chunks during the upload process.
 * `PROXY_URL`: (Optional) Proxy to connect MTProto, supports HTTP and SOCKS5 (e.g. `socks5://127.0.0.1:1080`)

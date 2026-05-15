@@ -52,11 +52,9 @@ type WrappedDB struct {
 }
 
 func RebindQuery(query string) string {
-	if driverName == "postgres" &&
-		!strings.Contains(query, "$1") {
+	if driverName == "postgres" {
 		return sqlx.Rebind(sqlx.DOLLAR, query)
 	}
-
 	return query
 }
 
@@ -98,6 +96,14 @@ func (tx *WrappedTx) Get(dest interface{}, query string, args ...interface{}) er
 
 func (tx *WrappedTx) Select(dest interface{}, query string, args ...interface{}) error {
 	return tx.Tx.Select(dest, RebindQuery(query), args...)
+}
+
+func (tx *WrappedTx) QueryRowx(query string, args ...interface{}) *sqlx.Row {
+	return tx.Tx.QueryRowx(RebindQuery(query), args...)
+}
+
+func (db *WrappedDB) QueryRowx(query string, args ...interface{}) *sqlx.Row {
+	return db.DB.QueryRowx(RebindQuery(query), args...)
 }
 
 func (db *WrappedDB) Beginx() (*WrappedTx, error) {
@@ -180,22 +186,23 @@ func InitDB(driver, dbPath, dbDSN string) error {
 
 		schema = postgresSchema
 	default:
-		return fmt.Errorf("unsupported DATABASE_DRIVER %q (supported: sqlite, mysql)", driver)
+		return fmt.Errorf("unsupported DATABASE_DRIVER %q (supported: sqlite, mysql, postgres)", driver)
 	}
 
 	if err := execSchema(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %v", err)
 	}
 
-	if driverName == "mysql" {
+	switch driverName {
+	case "mysql":
 		if err := migrateMySQL(); err != nil {
 			return err
 		}
-	} else if driverName == "postgres" {
+	case "postgres":
 		if err := migratePostgres(); err != nil {
 			return err
 		}
-	} else {
+	default:
 		if err := migrateSQLite(); err != nil {
 			return err
 		}
@@ -304,6 +311,7 @@ const sqliteSchema = `
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+	CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename);
 	CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
@@ -414,7 +422,7 @@ const postgresSchema = `
 		size BIGINT DEFAULT 0,
 		mime_type TEXT,
 		share_token TEXT UNIQUE,
-		is_folder SMALLINT DEFAULT 0,
+		is_folder BOOLEAN DEFAULT FALSE,
 		thumb_path TEXT,
 		owner TEXT DEFAULT '',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -444,12 +452,12 @@ const postgresSchema = `
 		username TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
 		api_key TEXT UNIQUE,
-		webdav_enabled SMALLINT DEFAULT 1,
-		api_enabled SMALLINT DEFAULT 1,
-		force_password_change SMALLINT DEFAULT 0,
+		webdav_enabled BOOLEAN DEFAULT TRUE,
+		api_enabled BOOLEAN DEFAULT TRUE,
+		force_password_change BOOLEAN DEFAULT FALSE,
 		s3_access_key TEXT UNIQUE,
 		s3_secret_key TEXT,
-		s3_enabled SMALLINT DEFAULT 1,
+		s3_enabled BOOLEAN DEFAULT TRUE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -462,8 +470,8 @@ const postgresSchema = `
 		aaguid BYTEA,
 		sign_count BIGINT DEFAULT 0,
 		transports TEXT,
-		backup_eligible SMALLINT DEFAULT 0,
-		backup_state SMALLINT DEFAULT 0,
+		backup_eligible BOOLEAN DEFAULT FALSE,
+		backup_state BOOLEAN DEFAULT FALSE,
 		name TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -480,7 +488,7 @@ const postgresSchema = `
 		id TEXT PRIMARY KEY,
 		filename TEXT NOT NULL,
 		owner TEXT NOT NULL,
-		overwrite SMALLINT DEFAULT 0,
+		overwrite BOOLEAN DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -499,6 +507,7 @@ const postgresSchema = `
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+	CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename);
 	CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename);
 	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
 	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
@@ -524,6 +533,8 @@ func migrateSQLite() error {
 	DB.Exec("ALTER TABLE child_accounts ADD COLUMN s3_enabled INTEGER DEFAULT 1")
 	DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_child_accounts_s3_key ON child_accounts(s3_access_key)")
 
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)")
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename)")
 	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename)")
 	DB.Exec("CREATE TABLE IF NOT EXISTS tg_sessions (session_id TEXT PRIMARY KEY, data BLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
 	DB.Exec("ALTER TABLE upload_tasks ADD COLUMN overwrite BOOLEAN DEFAULT 0")
@@ -592,6 +603,9 @@ func migrateMySQL() error {
 	if err := createIndexMySQL("idx_files_path", "files", "path", false); err != nil {
 		return err
 	}
+	if err := createIndexMySQL("idx_files_filename", "files", "filename", false); err != nil {
+		return err
+	}
 	if err := createIndexMySQL("idx_files_owner_path", "files", "owner, path, filename", false); err != nil {
 		return err
 	}
@@ -645,6 +659,9 @@ func migrateMySQL() error {
 }
 
 func migratePostgres() error {
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)")
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename)")
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename)")
 	_, err := DB.Exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_active_files
 		ON files (path, filename, owner)
@@ -710,7 +727,7 @@ func backfillOwners() error {
 	updateCmd := "UPDATE"
 	if IsMySQL() {
 		updateCmd = "UPDATE IGNORE"
-	} else {
+	} else if !IsPostgres() {
 		updateCmd = "UPDATE OR IGNORE"
 	}
 
@@ -760,6 +777,25 @@ func ConcatPathSQL() string {
 	return "? || SUBSTR(path, ?)"
 }
 
+type DBExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	QueryRowx(query string, args ...interface{}) *sqlx.Row
+}
+
+func InsertAndGetID(db DBExecer, query string, args ...interface{}) (int64, error) {
+	if IsPostgres() {
+		var id int64
+		err := db.QueryRowx(query+" RETURNING id", args...).Scan(&id)
+		return id, err
+	}
+
+	res, err := db.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
 type FilePart struct {
 	ID        int   `db:"id" json:"id"`
 	FileID    int   `db:"file_id" json:"file_id"`
@@ -777,7 +813,9 @@ func GetFileParts(fileID int) ([]FilePart, error) {
 func GetSetting(key string) string {
 	var value string
 	query := "SELECT value FROM settings WHERE `key` = ?"
-	if !IsMySQL() {
+	if IsPostgres() {
+		query = "SELECT value FROM settings WHERE \"key\" = ?"
+	} else if !IsMySQL() {
 		query = "SELECT value FROM settings WHERE key = ?"
 	}
 	err := RODB.Get(&value, query, key)
@@ -789,7 +827,9 @@ func GetSetting(key string) string {
 
 func SetSetting(key string, value string) error {
 	query := "INSERT INTO settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)"
-	if !IsMySQL() {
+	if IsPostgres() {
+		query = "INSERT INTO settings (\"key\", value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value"
+	} else if !IsMySQL() {
 		query = "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
 	}
 	_, err := DB.Exec(query, key, value)
@@ -813,7 +853,9 @@ func SetTGSession(sessionID string, data []byte) error {
 
 func DeleteSetting(key string) error {
 	query := "DELETE FROM settings WHERE `key` = ?"
-	if !IsMySQL() {
+	if IsPostgres() {
+		query = "DELETE FROM settings WHERE \"key\" = ?"
+	} else if !IsMySQL() {
 		query = "DELETE FROM settings WHERE key = ?"
 	}
 	_, err := DB.Exec(query, key)
@@ -823,7 +865,9 @@ func DeleteSetting(key string) error {
 func GetUserSetting(username string, key string) string {
 	var value string
 	query := "SELECT value FROM user_settings WHERE username = ? AND `key` = ?"
-	if !IsMySQL() {
+	if IsPostgres() {
+		query = "SELECT value FROM user_settings WHERE username = ? AND \"key\" = ?"
+	} else if !IsMySQL() {
 		query = "SELECT value FROM user_settings WHERE username = ? AND key = ?"
 	}
 	err := RODB.Get(&value, query, username, key)
@@ -835,7 +879,9 @@ func GetUserSetting(username string, key string) string {
 
 func SetUserSetting(username string, key string, value string) error {
 	query := "INSERT INTO user_settings (username, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)"
-	if !IsMySQL() {
+	if IsPostgres() {
+		query = "INSERT INTO user_settings (username, \"key\", value) VALUES (?, ?, ?) ON CONFLICT(username, \"key\") DO UPDATE SET value = EXCLUDED.value"
+	} else if !IsMySQL() {
 		query = "INSERT INTO user_settings (username, key, value) VALUES (?, ?, ?) ON CONFLICT(username, key) DO UPDATE SET value = excluded.value"
 	}
 	_, err := DB.Exec(query, username, key, value)

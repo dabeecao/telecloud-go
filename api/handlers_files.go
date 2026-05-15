@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -668,32 +667,20 @@ func (h *Handler) handlePostPaste(c *gin.Context) {
 				}
 
 				for _, child := range children {
-					var newChildID int64
-					var res sql.Result
-					err = nil
 					newChildPath := newPrefix + child.Path[len(oldPrefix):]
-					if database.IsPostgres() {
-						err = tx.QueryRowx("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
-							child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath, username).Scan(&newChildID)
-					} else {
-						res, err = tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-							child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath, username)
-					}
+					newChildID, err := database.InsertAndGetID(tx,
+						"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+						child.MessageID, child.Filename, newChildPath, child.Size, child.MimeType, child.IsFolder, child.ThumbPath, username)
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 						return
 					}
 
 					if !child.IsFolder {
-						if !database.IsPostgres() {
-							newChildID, err = res.LastInsertId()
-						}
-						if err == nil {
-							_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newChildID, child.ID)
-							if err != nil {
-								c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-								return
-							}
+						_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newChildID, child.ID)
+						if err != nil {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+							return
 						}
 					}
 				}
@@ -701,28 +688,17 @@ func (h *Handler) handlePostPaste(c *gin.Context) {
 				if item.MessageID == nil {
 					continue
 				}
-				var newFileID int64
-				var res sql.Result
-				err = nil
-				if database.IsPostgres() {
-					err = tx.QueryRowx("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES ($1, $2, $3, $4, $5, 0, $6, $7) RETURNING id",
-						item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath, username).Scan(&newFileID)
-				} else {
-					res, err = tx.Exec("INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, 0, ?, ?)", item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath, username)
-				}
+				newFileID, err := database.InsertAndGetID(tx,
+					"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+					item.MessageID, uniqueName, req.Destination, item.Size, item.MimeType, item.ThumbPath, username)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
-				if !database.IsPostgres() {
-					newFileID, err = res.LastInsertId()
-				}
-				if err == nil {
-					_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newFileID, item.ID)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-						return
-					}
+				_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newFileID, item.ID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
 				}
 			}
 		}

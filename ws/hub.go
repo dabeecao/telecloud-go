@@ -180,7 +180,9 @@ func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, 
 	}
 
 	progress := float64(percent)
-	if size > 0 {
+	if status == "done" {
+		progress = 100
+	} else if size > 0 {
 		progress = (float64(uploadedBytes) / float64(size)) * 100
 	}
 

@@ -2,7 +2,6 @@ package tgclient
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"crypto/tls"
@@ -156,7 +155,7 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 		// Prevent terminal statuses (done, cancelled) from being overwritten
 		// by late-arriving updates. We allow 'error' to be overwritten so that
 		// manual retries from the UI can still show progress correctly.
-		if (existing.Status == "done" || existing.Status == "cancelled") &&
+		if (existing.Status == "done" || existing.Status == "error" || existing.Status == "cancelled") &&
 			(status != "done" && status != "error" && status != "cancelled") {
 			return
 		}
@@ -189,10 +188,17 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 		if uploaded <= 0 {
 			fu = existing.UploadedBytes
 		}
+		// If task is done, ensure progress is 100%
+		if status == "done" && fs > 0 {
+			fu = fs
+		}
 		st = existing.startTime
 	} else {
 		fs = size
 		fu = uploaded
+		if status == "done" && fs > 0 {
+			fu = fs
+		}
 		st = time.Now()
 	}
 
@@ -402,31 +408,14 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	if !overwrite || existingID == 0 {
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
-
-	// Create the main file record first so we have an ID for parts
 	var fileID int64
 	var dbErr error
 	for i := 0; i < 5; i++ {
-		var res sql.Result
-		if database.IsPostgres() {
-			dbErr = database.DB.QueryRowx(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
-				uniqueFilename, path, fileSize, mimeType, owner,
-			).Scan(&fileID)
-		} else {
-			res, dbErr = database.DB.Exec(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-				uniqueFilename, path, fileSize, mimeType, owner,
-			)
-		}
+		fileID, dbErr = database.InsertAndGetID(database.DB,
+			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+			uniqueFilename, path, fileSize, mimeType, owner,
+		)
 		if dbErr == nil {
-			if !database.IsPostgres() {
-				fileID, err = res.LastInsertId()
-			}
-			if err != nil {
-				dbErr = err
-				continue
-			}
 			break
 		}
 		// If it still fails, fallback to unique name
@@ -435,7 +424,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	}
 
 	if dbErr != nil {
-		UpdateTask(taskID, "error", 0, "err_db_error: "+dbErr.Error(), "")
+		UpdateTask(taskID, "error", 0, "err_db_error: "+dbErr.Error(), owner)
 		return
 	}
 
@@ -457,7 +446,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		UpdateTask(taskID, "error", 0, "err_open_file: "+err.Error(), "")
+		UpdateTask(taskID, "error", 0, "err_open_file: "+err.Error(), owner)
 		return
 	}
 	defer f.Close()
@@ -478,7 +467,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			partFilename = fmt.Sprintf("%s.part%d", uniqueFilename, i+1)
 		}
 
-		UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("uploading_part_%d_of_%d", i+1, numParts), "")
+		UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("uploading_part_%d_of_%d", i+1, numParts), owner)
 
 		var msgID int
 		var uploadErr error
@@ -491,7 +480,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			currentApi := GetAPI()
 
 			if attempt > 1 {
-				UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("retrying_part_%d_attempt_%d", i+1, attempt), "")
+				UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("retrying_part_%d_attempt_%d", i+1, attempt), owner)
 
 				// Wait with increasing backoff, but return early if context is canceled
 				select {
@@ -525,7 +514,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			if ctx.Err() != nil {
 				return // Intentionally canceled by user, don't overwrite "cancelled" state
 			}
-			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), "")
+			UpdateTask(taskID, "error", 0, "upload_part_failed: "+uploadErr.Error(), owner)
 			return
 		}
 		uploadedMsgIDs = append(uploadedMsgIDs, msgID)
@@ -540,7 +529,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			fileID, msgID, i, partSize,
 		)
 		if err != nil {
-			UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error(), "")
+			UpdateTask(taskID, "error", 0, "err_db_part_insert: "+err.Error(), owner)
 			return
 		}
 	}
@@ -756,31 +745,14 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	if !overwrite || existingID == 0 {
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
-
-	// Create main record first
 	var fileID int64
 	var dbErr error
 	for i := 0; i < 5; i++ {
-		var res sql.Result
-		if database.IsPostgres() {
-			dbErr = database.DB.QueryRowx(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
-				uniqueFilename, path, size, mimeType, owner,
-			).Scan(&fileID)
-		} else {
-			res, dbErr = database.DB.Exec(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-				uniqueFilename, path, size, mimeType, owner,
-			)
-		}
+		fileID, dbErr = database.InsertAndGetID(database.DB,
+			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+			uniqueFilename, path, size, mimeType, owner,
+		)
 		if dbErr == nil {
-			if !database.IsPostgres() {
-				fileID, err = res.LastInsertId()
-			}
-			if err != nil {
-				dbErr = err
-				continue
-			}
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
@@ -997,29 +969,13 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		fileSize = fileInfo.Size()
 	}
 
-	// Create main record
 	var dbErr error
 	for i := 0; i < 5; i++ {
-		var res sql.Result
-		if database.IsPostgres() {
-			dbErr = database.DB.QueryRowx(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
-				uniqueFilename, path, fileSize, mimeType, owner,
-			).Scan(&fileID)
-		} else {
-			res, dbErr = database.DB.Exec(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-				uniqueFilename, path, fileSize, mimeType, owner,
-			)
-		}
+		fileID, dbErr = database.InsertAndGetID(database.DB,
+			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+			uniqueFilename, path, fileSize, mimeType, owner,
+		)
 		if dbErr == nil {
-			if !database.IsPostgres() {
-				fileID, err = res.LastInsertId()
-			}
-			if err != nil {
-				dbErr = err
-				continue
-			}
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
@@ -1350,26 +1306,14 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
-	// Create main record
 	var fileID int64
 	var dbErr error
 	for i := 0; i < 5; i++ {
-		var res sql.Result
-		if database.IsPostgres() {
-			dbErr = database.DB.QueryRowx(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
-				uniqueFilename, path, size, mimeType, owner,
-			).Scan(&fileID)
-		} else {
-			res, dbErr = database.DB.Exec(
-				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-				uniqueFilename, path, size, mimeType, owner,
-			)
-		}
+		fileID, dbErr = database.InsertAndGetID(database.DB,
+			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+			uniqueFilename, path, size, mimeType, owner,
+		)
 		if dbErr == nil {
-			if !database.IsPostgres() {
-				fileID, _ = res.LastInsertId()
-			}
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)

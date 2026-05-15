@@ -2,7 +2,6 @@ package s3
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -375,26 +374,12 @@ func (b *TelecloudBackend) CopyObject(srcBucket, srcKey, dstBucket, dstKey strin
 	defer tx.Rollback()
 
 	// Perform the copy in database
-	var newFileID int64
-	var res sql.Result
-	err = nil
-	if database.IsPostgres() {
-		err = tx.QueryRowx(
-			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
-			file.MessageID, dstFilename, dstDbPath, file.Size, file.MimeType, file.IsFolder, file.ThumbPath, b.username,
-		).Scan(&newFileID)
-	} else {
-		res, err = tx.Exec(
-			"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			file.MessageID, dstFilename, dstDbPath, file.Size, file.MimeType, file.IsFolder, file.ThumbPath, b.username,
-		)
-	}
+	newFileID, err := database.InsertAndGetID(tx,
+		"INSERT INTO files (message_id, filename, path, size, mime_type, is_folder, thumb_path, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		file.MessageID, dstFilename, dstDbPath, file.Size, file.MimeType, file.IsFolder, file.ThumbPath, b.username,
+	)
 	if err != nil {
 		return gofakes3.CopyObjectResult{}, err
-	}
-
-	if !database.IsPostgres() {
-		newFileID, _ = res.LastInsertId()
 	}
 	if !file.IsFolder {
 		_, err = tx.Exec("INSERT INTO file_parts (file_id, part_index, message_id, size) SELECT ?, part_index, message_id, size FROM file_parts WHERE file_id = ?", newFileID, file.ID)

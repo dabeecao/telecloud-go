@@ -1,12 +1,14 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"path"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
@@ -17,19 +19,19 @@ func JoinPath(elem ...string) string {
 }
 
 type File struct {
-	ID         int       `db:"id" json:"id"`
-	MessageID  *int      `db:"message_id" json:"message_id"`
-	Filename   string    `db:"filename" json:"filename"`
-	Path       string    `db:"path" json:"path"`
-	Size       int64     `db:"size" json:"size"`
-	MimeType   *string   `db:"mime_type" json:"mime_type"`
-	ShareToken *string   `db:"share_token" json:"share_token"`
-	IsFolder   bool      `db:"is_folder" json:"is_folder"`
-	ThumbPath  *string   `db:"thumb_path" json:"thumb_path"`
-	Owner         string    `db:"owner" json:"owner"`
-	CreatedAt     time.Time `db:"created_at" json:"created_at"`
+	ID            int        `db:"id" json:"id"`
+	MessageID     *int       `db:"message_id" json:"message_id"`
+	Filename      string     `db:"filename" json:"filename"`
+	Path          string     `db:"path" json:"path"`
+	Size          int64      `db:"size" json:"size"`
+	MimeType      *string    `db:"mime_type" json:"mime_type"`
+	ShareToken    *string    `db:"share_token" json:"share_token"`
+	IsFolder      bool       `db:"is_folder" json:"is_folder"`
+	ThumbPath     *string    `db:"thumb_path" json:"thumb_path"`
+	Owner         string     `db:"owner" json:"owner"`
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
 	DeletedAt     *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
-	SharePassword *string   `db:"share_password" json:"-"`
+	SharePassword *string    `db:"share_password" json:"-"`
 
 	// Virtual fields
 	DirectToken string `db:"-" json:"direct_token,omitempty"`
@@ -45,15 +47,81 @@ type User struct {
 	TotalSize    int64     `json:"total_size"`
 }
 
+type WrappedDB struct {
+	*sqlx.DB
+}
+
+func RebindQuery(query string) string {
+	if driverName == "postgres" &&
+		!strings.Contains(query, "$1") {
+		return sqlx.Rebind(sqlx.DOLLAR, query)
+	}
+
+	return query
+}
+
+func (db *WrappedDB) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return db.DB.Exec(RebindQuery(query), args...)
+}
+
+func (db *WrappedDB) Get(dest interface{}, query string, args ...interface{}) error {
+	return db.DB.Get(dest, RebindQuery(query), args...)
+}
+
+func (db *WrappedDB) Select(dest interface{}, query string, args ...interface{}) error {
+	return db.DB.Select(dest, RebindQuery(query), args...)
+}
+
+func (db *WrappedDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	return db.DB.Query(RebindQuery(query), args...)
+}
+
+func (db *WrappedDB) QueryRow(query string, args ...interface{}) *sql.Row {
+	return db.DB.QueryRow(RebindQuery(query), args...)
+}
+
+func (db *WrappedDB) NamedExec(query string, arg interface{}) (sql.Result, error) {
+	return db.DB.NamedExec(RebindQuery(query), arg)
+}
+
+type WrappedTx struct {
+	*sqlx.Tx
+}
+
+func (tx *WrappedTx) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return tx.Tx.Exec(RebindQuery(query), args...)
+}
+
+func (tx *WrappedTx) Get(dest interface{}, query string, args ...interface{}) error {
+	return tx.Tx.Get(dest, RebindQuery(query), args...)
+}
+
+func (tx *WrappedTx) Select(dest interface{}, query string, args ...interface{}) error {
+	return tx.Tx.Select(dest, RebindQuery(query), args...)
+}
+
+func (db *WrappedDB) Beginx() (*WrappedTx, error) {
+	tx, err := db.DB.Beginx()
+	if err != nil {
+		return nil, err
+	}
+
+	return &WrappedTx{tx}, nil
+}
+
 var (
-	DB   *sqlx.DB // Alias to RWDB for backward compatibility
-	RWDB *sqlx.DB // Write pool (MaxOpenConns=1 for SQLite)
-	RODB *sqlx.DB // Read pool (MaxOpenConns=10 for SQLite)
+	DB   *WrappedDB // Alias to RWDB for backward compatibility
+	RWDB *WrappedDB // Write pool (MaxOpenConns=1 for SQLite)
+	RODB *WrappedDB // Read pool (MaxOpenConns=10 for SQLite)
 )
 var driverName = "sqlite"
 
 func InitDB(driver, dbPath, dbDSN string) error {
 	var err error
+	var rawDB *sqlx.DB
+	var rawRWDB *sqlx.DB
+	var rawRODB *sqlx.DB
+
 	driverName = strings.ToLower(strings.TrimSpace(driver))
 	if driverName == "" {
 		driverName = "sqlite"
@@ -66,18 +134,22 @@ func InitDB(driver, dbPath, dbDSN string) error {
 		dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", dbPath)
 
 		// Initialize Write Pool (MaxOpenConns=1)
-		RWDB, err = sqlx.Connect("sqlite", dsn)
+		rawRWDB, err = sqlx.Connect("sqlite", dsn)
 		if err != nil {
 			return fmt.Errorf("failed to connect to write database: %v", err)
 		}
-		RWDB.SetMaxOpenConns(1)
+		rawRWDB.SetMaxOpenConns(1)
+
+		RWDB = &WrappedDB{rawRWDB}
 
 		// Initialize Read Pool (MaxOpenConns=10)
-		RODB, err = sqlx.Connect("sqlite", dsn)
+		rawRODB, err = sqlx.Connect("sqlite", dsn)
 		if err != nil {
 			return fmt.Errorf("failed to connect to read database: %v", err)
 		}
-		RODB.SetMaxOpenConns(10)
+		rawRODB.SetMaxOpenConns(10)
+
+		RODB = &WrappedDB{rawRODB}
 
 		DB = RWDB // Alias for existing code
 		schema = sqliteSchema
@@ -85,13 +157,28 @@ func InitDB(driver, dbPath, dbDSN string) error {
 		if dbDSN == "" {
 			return fmt.Errorf("DATABASE_DSN must be set when DATABASE_DRIVER=mysql")
 		}
-		DB, err = sqlx.Connect("mysql", normalizeMySQLDSN(dbDSN))
+		rawDB, err = sqlx.Connect("mysql", normalizeMySQLDSN(dbDSN))
 		if err != nil {
 			return err
 		}
+		DB = &WrappedDB{rawDB}
 		RWDB = DB
 		RODB = DB
 		schema = mysqlSchema
+	case "postgres":
+		if dbDSN == "" {
+			return fmt.Errorf("DATABASE_DSN must be set when DATABASE_DRIVER=postgres")
+		}
+
+		rawDB, err = sqlx.Connect("pgx", dbDSN)
+		if err != nil {
+			return err
+		}
+		DB = &WrappedDB{rawDB}
+		RWDB = DB
+		RODB = DB
+
+		schema = postgresSchema
 	default:
 		return fmt.Errorf("unsupported DATABASE_DRIVER %q (supported: sqlite, mysql)", driver)
 	}
@@ -102,6 +189,10 @@ func InitDB(driver, dbPath, dbDSN string) error {
 
 	if driverName == "mysql" {
 		if err := migrateMySQL(); err != nil {
+			return err
+		}
+	} else if driverName == "postgres" {
+		if err := migratePostgres(); err != nil {
 			return err
 		}
 	} else {
@@ -314,6 +405,106 @@ const mysqlSchema = `
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `
 
+const postgresSchema = `
+	CREATE TABLE IF NOT EXISTS files (
+		id BIGSERIAL PRIMARY KEY,
+		message_id BIGINT,
+		filename TEXT NOT NULL,
+		path TEXT DEFAULT '/',
+		size BIGINT DEFAULT 0,
+		mime_type TEXT,
+		share_token TEXT UNIQUE,
+		is_folder SMALLINT DEFAULT 0,
+		thumb_path TEXT,
+		owner TEXT DEFAULT '',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP,
+		share_password TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS sessions (
+		token TEXT PRIMARY KEY,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		username TEXT DEFAULT ''
+	);
+
+	CREATE TABLE IF NOT EXISTS tg_sessions (
+		session_id TEXT PRIMARY KEY,
+		data BYTEA NOT NULL,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS child_accounts (
+		id BIGSERIAL PRIMARY KEY,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		api_key TEXT UNIQUE,
+		webdav_enabled SMALLINT DEFAULT 1,
+		api_enabled SMALLINT DEFAULT 1,
+		force_password_change SMALLINT DEFAULT 0,
+		s3_access_key TEXT UNIQUE,
+		s3_secret_key TEXT,
+		s3_enabled SMALLINT DEFAULT 1,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS passkeys (
+		id BIGSERIAL PRIMARY KEY,
+		username TEXT NOT NULL,
+		credential_id BYTEA UNIQUE NOT NULL,
+		public_key BYTEA NOT NULL,
+		attestation_type TEXT,
+		aaguid BYTEA,
+		sign_count BIGINT DEFAULT 0,
+		transports TEXT,
+		backup_eligible SMALLINT DEFAULT 0,
+		backup_state SMALLINT DEFAULT 0,
+		name TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS file_parts (
+		id BIGSERIAL PRIMARY KEY,
+		file_id BIGINT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+		message_id BIGINT NOT NULL,
+		part_index BIGINT NOT NULL,
+		size BIGINT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS upload_tasks (
+		id TEXT PRIMARY KEY,
+		filename TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		overwrite SMALLINT DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS upload_chunks (
+		task_id TEXT NOT NULL,
+		chunk_index BIGINT NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (task_id, chunk_index)
+	);
+
+	CREATE TABLE IF NOT EXISTS user_settings (
+		username TEXT NOT NULL,
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		PRIMARY KEY (username, key)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+	CREATE INDEX IF NOT EXISTS idx_files_owner_path ON files(owner, path, filename);
+	CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
+	CREATE INDEX IF NOT EXISTS idx_passkeys_username ON passkeys(username);
+	CREATE INDEX IF NOT EXISTS idx_file_parts_file_id ON file_parts(file_id);
+`
+
 func migrateSQLite() error {
 	// Migration for existing DBs
 	DB.Exec("ALTER TABLE sessions ADD COLUMN username TEXT DEFAULT ''")
@@ -453,6 +644,15 @@ func migrateMySQL() error {
 	return nil
 }
 
+func migratePostgres() error {
+	_, err := DB.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_active_files
+		ON files (path, filename, owner)
+		WHERE deleted_at IS NULL
+	`)
+	return err
+}
+
 func normalizeMySQLDSN(dsn string) string {
 	if strings.Contains(dsn, "?") {
 		if !strings.Contains(dsn, "parseTime=") {
@@ -539,9 +739,16 @@ func IsMySQL() bool {
 	return driverName == "mysql"
 }
 
+func IsPostgres() bool {
+	return driverName == "postgres"
+}
+
 func InsertIgnoreSQL(table, columns, values string) string {
 	if IsMySQL() {
 		return fmt.Sprintf("INSERT IGNORE INTO %s (%s) VALUES (%s)", table, columns, values)
+	}
+	if IsPostgres() {
+		return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING", table, columns, values)
 	}
 	return fmt.Sprintf("INSERT OR IGNORE INTO %s (%s) VALUES (%s)", table, columns, values)
 }
@@ -717,7 +924,7 @@ func EnsureFoldersExist(dbPath string, owner string) error {
 	return nil
 }
 
-func EnsureFoldersExistTx(tx *sqlx.Tx, dbPath string, owner string) error {
+func EnsureFoldersExistTx(tx *WrappedTx, dbPath string, owner string) error {
 	cleanPath := path.Clean(dbPath)
 	if cleanPath == "/" {
 		return nil
@@ -757,7 +964,6 @@ func EnsureFoldersExistTx(tx *sqlx.Tx, dbPath string, owner string) error {
 	return nil
 }
 
-
 func CloseDB() error {
 	var errs []string
 	if RWDB != nil {
@@ -794,7 +1000,7 @@ func GetOrphanedMessages(fileIDs []int) ([]int, error) {
 
 	// We want message_ids that exist in the set of files being deleted,
 	// BUT do NOT exist in the set of files NOT being deleted.
-	
+
 	query := fmt.Sprintf(`
 		SELECT DISTINCT message_id FROM (
 			SELECT message_id FROM files WHERE id IN (%s) AND message_id IS NOT NULL

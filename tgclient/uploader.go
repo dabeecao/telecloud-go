@@ -37,7 +37,7 @@ var (
 	// Limit concurrent uploads to Telegram to prevent floodwait
 	uploadSemaphore         chan struct{}
 	globalDownloadSemaphore chan struct{}
-	
+
 	// Stagger mechanism to prevent bursts
 	lastUploadStart time.Time
 	startMu         sync.Mutex
@@ -46,7 +46,7 @@ var (
 func staggerUpload(ctx context.Context) {
 	startMu.Lock()
 	defer startMu.Unlock()
-	
+
 	elapsed := time.Since(lastUploadStart)
 	if elapsed < 500*time.Millisecond {
 		wait := 500*time.Millisecond - elapsed
@@ -64,7 +64,7 @@ func InitUploader(cfg *config.Config) {
 		uploadCount = 4 * (botCount + 1)
 	}
 	uploadSemaphore = make(chan struct{}, uploadCount)
-	
+
 	// Set concurrent download limit to 2 for a more comfortable experience
 	globalDownloadSemaphore = make(chan struct{}, 2)
 }
@@ -408,12 +408,21 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	var dbErr error
 	for i := 0; i < 5; i++ {
 		var res sql.Result
-		res, dbErr = database.DB.Exec(
-			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-			uniqueFilename, path, fileSize, mimeType, owner,
-		)
+		if database.IsPostgres() {
+			dbErr = database.DB.QueryRowx(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
+				uniqueFilename, path, fileSize, mimeType, owner,
+			).Scan(&fileID)
+		} else {
+			res, dbErr = database.DB.Exec(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+				uniqueFilename, path, fileSize, mimeType, owner,
+			)
+		}
 		if dbErr == nil {
-			fileID, err = res.LastInsertId()
+			if !database.IsPostgres() {
+				fileID, err = res.LastInsertId()
+			}
 			if err != nil {
 				dbErr = err
 				continue
@@ -480,10 +489,10 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 			}
 			// Fresh API client per attempt to rotate through the bot pool on failure.
 			currentApi := GetAPI()
-			
+
 			if attempt > 1 {
 				UpdateTask(taskID, "telegram", int(float64(i)/float64(numParts)*100), fmt.Sprintf("retrying_part_%d_attempt_%d", i+1, attempt), "")
-				
+
 				// Wait with increasing backoff, but return early if context is canceled
 				select {
 				case <-ctx.Done():
@@ -491,7 +500,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 					break
 				case <-time.After(time.Duration(attempt*2) * time.Second):
 				}
-				
+
 				if ctx.Err() != nil {
 					break
 				}
@@ -748,18 +757,26 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
-
 	// Create main record first
 	var fileID int64
 	var dbErr error
 	for i := 0; i < 5; i++ {
 		var res sql.Result
-		res, dbErr = database.DB.Exec(
-			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-			uniqueFilename, path, size, mimeType, owner,
-		)
+		if database.IsPostgres() {
+			dbErr = database.DB.QueryRowx(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
+				uniqueFilename, path, size, mimeType, owner,
+			).Scan(&fileID)
+		} else {
+			res, dbErr = database.DB.Exec(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+				uniqueFilename, path, size, mimeType, owner,
+			)
+		}
 		if dbErr == nil {
-			fileID, err = res.LastInsertId()
+			if !database.IsPostgres() {
+				fileID, err = res.LastInsertId()
+			}
 			if err != nil {
 				dbErr = err
 				continue
@@ -807,13 +824,13 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 
 		var msgID int
 		var uploadErr error
-		
+
 		// Determine max attempts: reduce if no range support and deep into the file
 		maxAttempts := 3
 		if !rangeSupport && totalUploaded > 0 {
 			maxAttempts = 2 // Only 1 retry if we have to discard data manually
 		}
-		
+
 		// Retry loop for each part
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			if ctx.Err() != nil {
@@ -825,19 +842,19 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 				if bodyReader != nil {
 					bodyReader.Close()
 				}
-				
+
 				// Re-connect to source with Range header
 				newReq, _ := http.NewRequestWithContext(ctx, "GET", resp.Request.URL.String(), nil)
 				newReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 				newReq.Header.Set("Range", fmt.Sprintf("bytes=%d-", totalUploaded))
-				
+
 				newResp, err := client.Do(newReq)
 				if err != nil {
 					uploadErr = err
 					time.Sleep(time.Duration(attempt) * time.Second)
 					continue
 				}
-				
+
 				if newResp.StatusCode == http.StatusOK || newResp.StatusCode == http.StatusPartialContent {
 					bodyReader = newResp.Body
 					if newResp.StatusCode == http.StatusOK && totalUploaded > 0 {
@@ -861,7 +878,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 				WithThreads(cfg.UploadThreads)
 
 			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
-			
+
 			if uploadErr == nil {
 				// Successfully uploaded this part
 				lastPartSize = pr.N
@@ -921,13 +938,12 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 		}
 	}
 
-	// Note: Remote uploads usually don't have a local file for thumbnail generation 
+	// Note: Remote uploads usually don't have a local file for thumbnail generation
 	// unless we download it first. Since this is a streaming upload, we skip local thumb for now.
 	// But we signal done so the UI refreshes.
 	UpdateTaskWithFileID(taskID, "done", 100, "", fileID, uniqueFilename, owner)
 	success = true
 }
-
 
 // ProcessCompleteUploadSync is the synchronous version for the Upload API.
 func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool, owner string) (fileID int64, finalName string, err error) {
@@ -981,17 +997,25 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		fileSize = fileInfo.Size()
 	}
 
-
 	// Create main record
 	var dbErr error
 	for i := 0; i < 5; i++ {
 		var res sql.Result
-		res, dbErr = database.DB.Exec(
-			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-			uniqueFilename, path, fileSize, mimeType, owner,
-		)
+		if database.IsPostgres() {
+			dbErr = database.DB.QueryRowx(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
+				uniqueFilename, path, fileSize, mimeType, owner,
+			).Scan(&fileID)
+		} else {
+			res, dbErr = database.DB.Exec(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+				uniqueFilename, path, fileSize, mimeType, owner,
+			)
+		}
 		if dbErr == nil {
-			fileID, err = res.LastInsertId()
+			if !database.IsPostgres() {
+				fileID, err = res.LastInsertId()
+			}
 			if err != nil {
 				dbErr = err
 				continue
@@ -1110,7 +1134,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 		}
 	}
 	success = true
-	
+
 	// Generate thumbnail and update DB
 	localThumb := utils.CreateLocalThumbnail(filePath, mimeType, cfg.FFMPEGPath)
 	if localThumb != nil {
@@ -1241,7 +1265,7 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 	client := &http.Client{
 		Timeout: 0,
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
+			Proxy:           http.ProxyFromEnvironment,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}
@@ -1326,18 +1350,26 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
 	}
 
-
 	// Create main record
 	var fileID int64
 	var dbErr error
 	for i := 0; i < 5; i++ {
 		var res sql.Result
-		res, dbErr = database.DB.Exec(
-			"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
-			uniqueFilename, path, size, mimeType, owner,
-		)
+		if database.IsPostgres() {
+			dbErr = database.DB.QueryRowx(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES ($1, $2, $3, $4, 0, $5) RETURNING id",
+				uniqueFilename, path, size, mimeType, owner,
+			).Scan(&fileID)
+		} else {
+			res, dbErr = database.DB.Exec(
+				"INSERT INTO files (filename, path, size, mime_type, is_folder, owner) VALUES (?, ?, ?, ?, 0, ?)",
+				uniqueFilename, path, size, mimeType, owner,
+			)
+		}
 		if dbErr == nil {
-			fileID, _ = res.LastInsertId()
+			if !database.IsPostgres() {
+				fileID, _ = res.LastInsertId()
+			}
 			break
 		}
 		uniqueFilename = database.GetUniqueFilename(database.RODB, path, filename, false, 0, owner)
@@ -1381,13 +1413,13 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 
 		var msgID int
 		var uploadErr error
-		
+
 		// Determine max attempts: reduce if no range support and deep into the file
 		maxAttempts := 3
 		if !rangeSupport && totalUploaded > 0 {
 			maxAttempts = 2
 		}
-		
+
 		// Retry loop for each part
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			if ctx.Err() != nil {
@@ -1398,19 +1430,19 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 				if bodyReader != nil {
 					bodyReader.Close()
 				}
-				
+
 				// Re-connect to source with Range header
 				newReq, _ := http.NewRequestWithContext(ctx, "GET", resp.Request.URL.String(), nil)
 				newReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 				newReq.Header.Set("Range", fmt.Sprintf("bytes=%d-", totalUploaded))
-				
+
 				newResp, err := client.Do(newReq)
 				if err != nil {
 					uploadErr = err
 					time.Sleep(time.Duration(attempt) * time.Second)
 					continue
 				}
-				
+
 				if newResp.StatusCode == http.StatusOK || newResp.StatusCode == http.StatusPartialContent {
 					bodyReader = newResp.Body
 					if newResp.StatusCode == http.StatusOK && totalUploaded > 0 {
@@ -1434,7 +1466,7 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 				WithThreads(cfg.UploadThreads)
 
 			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
-			
+
 			if uploadErr == nil {
 				// Successfully uploaded this part
 				lastPartSize = pr.N

@@ -21,12 +21,23 @@ jobs:
       - name: Prepare Wiki Files
         run: |
           mkdir wiki_temp
-          # Copy all documentation files
           cp docs/*.md wiki_temp/
-          # Set the main README as the Wiki Home page
           cp readme.md wiki_temp/Home.md
-          # Also include the English README
           cp readme_en.md wiki_temp/Home-EN.md
+          
+          # Fix image paths to use absolute URLs from the main repo
+          sed -i 's|src="preview/|src="https://raw.githubusercontent.com/dabeecao/telecloud-go/main/preview/|g' wiki_temp/Home.md
+          sed -i 's|src="preview/|src="https://raw.githubusercontent.com/dabeecao/telecloud-go/main/preview/|g' wiki_temp/Home-EN.md
+          
+          # Fix language toggle links for Wiki structure
+          sed -i 's|(\./readme_en.md)|(Home-EN)|g' wiki_temp/Home.md
+          sed -i 's|(\./readme.md)|(Home)|g' wiki_temp/Home-EN.md
+          
+          # Fix documentation links (remove ./docs/ and .md extension for Wiki)
+          sed -i 's|(\./docs/|(|g' wiki_temp/Home.md
+          sed -i 's|(\./docs/|(|g' wiki_temp/Home-EN.md
+          sed -i 's|\.md)|)|g' wiki_temp/Home.md
+          sed -i 's|\.md)|)|g' wiki_temp/Home-EN.md
 
       - name: Sync to Wiki
         uses: Andrew-Chen-Wang/github-wiki-action@v4

@@ -760,6 +760,10 @@ func IsPostgres() bool {
 	return driverName == "postgres"
 }
 
+func IsSQLite() bool {
+	return driverName == "sqlite"
+}
+
 func InsertIgnoreSQL(table, columns, values string) string {
 	if IsMySQL() {
 		return fmt.Sprintf("INSERT IGNORE INTO %s (%s) VALUES (%s)", table, columns, values)

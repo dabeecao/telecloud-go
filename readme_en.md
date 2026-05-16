@@ -50,6 +50,7 @@ This project has been **completely rewritten in Golang** from the original proje
 * 🗄️ **Multi-Database Support**: In addition to SQLite, TeleCloud now supports **MySQL** and **PostgreSQL** for database storage in large systems requiring high stability.
 * 🗑️ **Trash**: Supports storing and recovering deleted files, protecting your data from accidental deletion.
 * 🔒 **Locked Shares**: Allows setting password protection for file and folder share links.
+* 🛡️ **Automated Backup**: Supports scheduled daily backups of your SQLite database and thumbnails directory directly to your Telegram Log Group.
 * 🌐 **Multi-language**: Supports multiple languages (English, Vietnamese, Chinese, Japanese, Russian, Arabic, Hindi, and Khmer).
 
 ---

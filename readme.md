@@ -50,6 +50,7 @@ Dự án này đã được **viết lại hoàn toàn bằng Golang** từ dự
 * 🗄️ **Hỗ trợ Đa cơ sở dữ liệu**: Ngoài SQLite, TeleCloud hiện đã hỗ trợ **MySQL** và **PostgreSQL** để lưu trữ cơ sở dữ liệu cho các hệ thống lớn và yêu cầu tính ổn định cao.
 * 🗑️ **Thùng rác**: Hỗ trợ lưu trữ và khôi phục các tệp đã xóa, giúp bảo vệ dữ liệu khỏi việc xóa nhầm.
 * 🔒 **Khóa tệp/thư mục khi chia sẻ**: Cho phép thiết lập mật khẩu bảo vệ cho các liên kết chia sẻ tệp và thư mục.
+* 🛡️ **Sao lưu tự động**: Hỗ trợ tự động sao lưu hàng ngày cơ sở dữ liệu SQLite và thư mục ảnh thu nhỏ (thumbnails) trực tiếp vào Nhóm Log Telegram.
 * 🌐 **Đa ngôn ngữ**: Hỗ trợ nhiều ngôn ngữ (Tiếng Việt, Tiếng Anh, Tiếng Trung, Tiếng Nhật, Tiếng Nga, Tiếng Ả Rập, Tiếng Hindi và Tiếng Khmer).
 
 ---

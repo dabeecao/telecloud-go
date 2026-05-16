@@ -79,7 +79,7 @@ func restartApp() {
 }
 
 var (
-	version = "v3.3.0-beta.1"
+	version = "v3.4.0-beta.1"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -175,10 +175,11 @@ func main() {
 
 	startCleanupTask(cfg)
 	startTrashCleanupTask(cfg)
-
 	// cancelCtx is used to signal the Telegram client to stop
 	appCtx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
+
+	tgclient.StartBackupTask(appCtx, cfg)
 
 	// Catch OS signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)

@@ -503,7 +503,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 				WithPartSize(uploader.MaximumPartSize).
 				WithProgress(uploadProgress{taskID: taskID, totalSize: fileSize, previousSize: start, owner: owner}).
 				WithThreads(cfg.UploadThreads)
-			msgID, uploadErr = uploadFilePart(ctx, currentApi, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, freshUp, sectionReader, partFilename, uniqueFilename, cfg, partSize)
 			if uploadErr == nil {
 				break
 			}
@@ -849,7 +849,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 				WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
 				WithThreads(cfg.UploadThreads)
 
-			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, uniqueFilename, cfg, -1)
 
 			if uploadErr == nil {
 				// Successfully uploaded this part
@@ -1047,7 +1047,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 			freshUp := uploader.NewUploader(currentApi).
 				WithPartSize(uploader.MaximumPartSize).
 				WithThreads(cfg.UploadThreads)
-			msgID, uploadErr = uploadFilePart(ctx, currentApi, freshUp, sectionReader, partFilename, mimeType, uniqueFilename, cfg, partSize)
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, freshUp, sectionReader, partFilename, uniqueFilename, cfg, partSize)
 			if uploadErr == nil {
 				break
 			}
@@ -1110,19 +1110,42 @@ func DeleteMessages(ctx context.Context, cfg *config.Config, msgIDs []int) error
 		return err
 	}
 
-	if channel, ok := peer.(*tg.InputPeerChannel); ok {
-		_, err = api.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
-			Channel: &tg.InputChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash},
-			ID:      msgIDs,
-		})
-		return err
-	}
+	// Telegram API limits deletion to 100 message IDs per request.
+	// Sending more than 100 at once will cause the request to fail silently.
+	const batchSize = 100
+	for i := 0; i < len(msgIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(msgIDs) {
+			end = len(msgIDs)
+		}
+		batch := msgIDs[i:end]
 
-	_, err = api.MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{
-		Revoke: true,
-		ID:     msgIDs,
-	})
-	return err
+		switch p := peer.(type) {
+		case *tg.InputPeerChannel:
+			// Supergroup or channel (-100xxxxxxxxx)
+			_, err = api.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
+				Channel: &tg.InputChannel{ChannelID: p.ChannelID, AccessHash: p.AccessHash},
+				ID:      batch,
+			})
+		case *tg.InputPeerChat:
+			// Basic group (negative ID, not -100 prefix)
+			_, err = api.MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{
+				Revoke: true,
+				ID:     batch,
+			})
+		default:
+			// InputPeerSelf (saved messages) or InputPeerUser
+			_, err = api.MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{
+				Revoke: true,
+				ID:     batch,
+			})
+		}
+
+		if err != nil {
+			return fmt.Errorf("DeleteMessages batch %d-%d: %w", i, end-1, err)
+		}
+	}
+	return nil
 }
 func GetActiveTasks(username string) map[string]*UploadStatus {
 	taskMutex.Lock()
@@ -1137,7 +1160,7 @@ func GetActiveTasks(username string) map[string]*UploadStatus {
 	return tasks
 }
 
-func uploadFilePart(ctx context.Context, api *tg.Client, up *uploader.Uploader, r io.Reader, filename, mimeType, caption string, cfg *config.Config, size int64) (int, error) {
+func uploadFilePart(ctx context.Context, api *tg.Client, up *uploader.Uploader, r io.Reader, filename, caption string, cfg *config.Config, size int64) (int, error) {
 	u := uploader.NewUpload(filename, r, size)
 	file, err := up.Upload(ctx, u)
 	if err != nil {
@@ -1159,7 +1182,7 @@ func uploadFilePart(ctx context.Context, api *tg.Client, up *uploader.Uploader, 
 
 	docBuilder := message.UploadedDocument(file, html.String(nil, finalCaption)).
 		Filename(filename).
-		MIME(mimeType)
+		MIME("application/octet-stream")
 
 	res, err := sender.To(peer).Media(ctx, docBuilder)
 	if err != nil {
@@ -1409,7 +1432,7 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 				WithProgress(uploadProgress{taskID: taskID, totalSize: size, previousSize: totalUploaded, owner: owner}).
 				WithThreads(cfg.UploadThreads)
 
-			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, mimeType, uniqueFilename, cfg, -1)
+			msgID, uploadErr = uploadFilePart(ctx, currentApi, up, pr, partFilename, uniqueFilename, cfg, -1)
 
 			if uploadErr == nil {
 				// Successfully uploaded this part

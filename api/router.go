@@ -121,6 +121,9 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.POST("/settings/child-webdav", h.handlePostChildWebDAV)
 		api.POST("/settings/child-api", h.handlePostChildAPI)
 		api.POST("/settings/webauthn", h.handlePostWebAuthn)
+		api.GET("/settings/backup", h.handleGetBackupStatus)
+		api.POST("/settings/backup", h.handlePostBackup)
+		api.POST("/settings/backup/toggle", h.handlePostBackupToggle)
 
 		// Users
 		api.GET("/users", h.handleGetUsers)

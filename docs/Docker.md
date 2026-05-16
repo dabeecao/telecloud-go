@@ -1,50 +1,82 @@
 # 🐳 Docker Deployment / Triển khai với Docker
 
-TeleCloud Docker image includes FFmpeg and yt-dlp built-in.
-Image Docker của TeleCloud đã tích hợp sẵn FFmpeg và yt-dlp.
+This is the recommended method for servers. The Docker image (Alpine-based) includes **FFmpeg and yt-dlp built-in**.
+Đây là cách triển khai được khuyến nghị cho máy chủ. Image Docker (Alpine) đã tích hợp sẵn **FFmpeg và yt-dlp**.
 
 ---
 
 ## 🇻🇳 Tiếng Việt
 
-### 1. Sử dụng Docker Run (Nhanh)
-```bash
-docker run -d \
-    --name telecloud \
-    --restart unless-stopped \
-    -p 8091:8091 \
-    -v "$(pwd)/data:/app/data" \
-    --env-file .env \
-    ghcr.io/dabeecao/telecloud-go
-```
+### Phương pháp 1: Chạy bằng lệnh Docker (Nhanh)
 
-### 2. Sử dụng Docker Compose (Khuyên dùng)
-Tải `docker-compose.yml` và `.env` mẫu, sau đó chạy:
-```bash
-sudo docker compose up -d
-```
+1. Tải image: `docker pull ghcr.io/dabeecao/telecloud-go`
+2. Cấu hình thư mục và `.env`:
+   ```bash
+   mkdir telecloud && cd telecloud
+   curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/env.example
+   mv env.example .env
+   # Điền API_ID, API_HASH, LOG_GROUP_ID vào .env
+   ```
+3. Khởi động:
+   ```bash
+   mkdir -p data && sudo chmod 777 data
+   sudo docker run -d \
+       --name telecloud \
+       --restart unless-stopped \
+       -p 8091:8091 \
+       -v "$(pwd)/data:/app/data" \
+       --env-file .env \
+       -e DATABASE_PATH=/app/data/database.db \
+       -e THUMBS_DIR=/app/data/thumbs \
+       -e TEMP_DIR=/app/data/temp \
+       --user 65532:65532 \
+       ghcr.io/dabeecao/telecloud-go
+   ```
 
-Toàn bộ dữ liệu (database, thumbnails, temp) được lưu trong thư mục `./data/`.
+### Phương pháp 2: Docker Compose (Khuyên dùng)
+
+1. Tải file cấu hình:
+   ```bash
+   mkdir telecloud && cd telecloud
+   curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/docker-compose.yml
+   curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/env.example
+   mv env.example .env
+   ```
+2. Điền thông tin vào `.env` (API_ID, API_HASH...).
+3. Khởi động: `sudo docker compose up -d`
+
+#### Các lệnh quản lý:
+*   Xem log: `sudo docker compose logs -f`
+*   Dừng: `sudo docker compose stop`
+*   Cập nhật: `sudo docker compose pull && sudo docker compose up -d`
+*   Xóa container: `sudo docker compose down`
 
 ---
 
 ## 🇺🇸 English
 
-### 1. Using Docker Run (Quick)
+### Method 1: Single Container (Quick)
 ```bash
-docker run -d \
+# Prepare directory and run
+mkdir -p data && sudo chmod 777 data
+sudo docker run -d \
     --name telecloud \
     --restart unless-stopped \
     -p 8091:8091 \
     -v "$(pwd)/data:/app/data" \
     --env-file .env \
+    -e DATABASE_PATH=/app/data/database.db \
+    -e THUMBS_DIR=/app/data/thumbs \
+    -e TEMP_DIR=/app/data/temp \
+    --user 65532:65532 \
     ghcr.io/dabeecao/telecloud-go
 ```
 
-### 2. Using Docker Compose (Recommended)
-Download `docker-compose.yml` and `env.example` (rename to `.env`), then run:
-```bash
-sudo docker compose up -d
-```
+### Method 2: Docker Compose (Recommended)
+1. Download `docker-compose.yml` and `.env`.
+2. Fill in the required fields in `.env`.
+3. Run: `sudo docker compose up -d`
 
-All data (database, thumbnails, temp) is stored in the `./data/` directory.
+#### Useful Commands:
+* `sudo docker compose logs -f`
+* `sudo docker compose pull && sudo docker compose up -d`

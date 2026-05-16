@@ -47,8 +47,8 @@ import (
 )
 
 //go:embed web/templates
-//go:embed web/static/css/*.min.css web/static/css/tailwind.css web/static/css/plyr.css web/static/css/prism.css
-//go:embed web/static/js/*.min.js web/static/js/plyr.polyfilled.js web/static/js/prism.js
+//go:embed web/static/css/*.min.css web/static/css/tailwind.css
+//go:embed web/static/js/*.min.js
 //go:embed web/static/themes/*.min.css
 //go:embed web/static/fonts web/static/webfonts
 //go:embed web/static/favicon.ico

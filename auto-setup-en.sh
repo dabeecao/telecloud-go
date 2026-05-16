@@ -202,7 +202,7 @@ install_dependencies() {
 
     if [ "$OS_TYPE" == "linux" ]; then
         # Install base packages one by one, skipping already-installed ones
-        for pkg in curl wget tar unzip jq tmux nano procps; do
+        for pkg in curl wget tar unzip jq tmux nano procps lsof; do
             pkg_install "$pkg"
         done
 
@@ -272,7 +272,7 @@ install_dependencies() {
         echo "[!] yt-dlp allows downloading video/audio from YouTube, Facebook, TikTok..."
         read -p "[?] Do you want to install yt-dlp? (y/n): " install_ytdlp
 
-        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python procps"
+        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python procps lsof"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
 
@@ -670,18 +670,19 @@ start_app() {
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
             echo "[+] Checking startup status (waiting up to 30s)..."
-            sleep 2
-            local timeout=28
+            local timeout=30
             local success=0
             while [ $timeout -gt 0 ]; do
-                if journalctl -u telecloud.service -n 50 | grep -q "Starting TeleCloud on port"; then
+                # 1. Check if port is open (Highly reliable)
+                if is_app_running "$BASE_DIR/telecloud"; then
                     success=1; break
                 fi
-                if journalctl -u telecloud.service -n 50 | grep -q "TeleCloud shut down"; then
+                # 2. Check logs for shut down errors (use --since "-1m" for coverage)
+                if journalctl -u telecloud.service --since "-1m" 2>/dev/null | grep -q "TeleCloud shut down"; then
                     success=2; break
                 fi
-                # Check if the service is dead (failed/inactive)
-                if ! systemctl is-active --quiet telecloud; then
+                # 3. Check if service failed
+                if systemctl is-failed --quiet telecloud; then
                     success=3; break
                 fi
                 sleep 1
@@ -813,16 +814,22 @@ stop_app() {
     if [ "$OS_TYPE" == "linux" ]; then
         if command -v systemctl &>/dev/null; then
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
+            # Wait for processes to stop to avoid conflicts on restart
+            local stop_timeout=15
+            while [ $stop_timeout -gt 0 ]; do
+                if ! is_app_running "$BASE_DIR/telecloud"; then break; fi
+                sleep 1
+                stop_timeout=$((stop_timeout - 1))
+            done
         else
             # Linux without systemd → use tmux
             tmux kill-session -t $SESSION 2>/dev/null || true
-            local timeout=15
-            while [ $timeout -gt 0 ]; do
-                if ! is_app_running "$BASE_DIR/telecloud"; then
-                    break
-                fi
+            # Wait for termination
+            local stop_timeout=15
+            while [ $stop_timeout -gt 0 ]; do
+                if ! is_app_running "$BASE_DIR/telecloud"; then break; fi
                 sleep 1
-                timeout=$((timeout - 1))
+                stop_timeout=$((stop_timeout - 1))
             done
             for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run.sh" | awk '{print $2}'); do
                 kill "$pid" 2>/dev/null || true

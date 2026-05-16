@@ -267,28 +267,27 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	cmd.Env = os.Environ()
 	setProcessGroup(cmd)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		UpdateTaskWithFile(taskID, "error", 0, "pipe_error", "", owner, 0, 0)
-		return
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		UpdateTaskWithFile(taskID, "error", 0, "pipe_error", "", owner, 0, 0)
-		return
-	}
-	// Merge stdout and stderr so progress lines and error messages are all captured
-	combined := io.MultiReader(stdout, stderr)
-	
-	// We also need to capture stderr separately for error reporting if it fails
+	// Capture both stdout and stderr interleaved for real-time progress
 	var stderrBuf strings.Builder
-	stderrTee := io.TeeReader(stderr, &stderrBuf)
-	combined = io.MultiReader(stdout, stderrTee)
+	pr, pw := io.Pipe()
+	
+	// Create a tee for stderr so we can still capture the full error log
+	stderrWriter := io.MultiWriter(pw, &stderrBuf)
+	
+	cmd.Stdout = pw
+	cmd.Stderr = stderrWriter
 
 	if err := cmd.Start(); err != nil {
 		UpdateTaskWithFile(taskID, "error", 0, "start_error", "", owner, 0, 0)
+		pw.Close()
 		return
 	}
+
+	// Close the pipe writer when the command finishes to unblock the scanner
+	go func() {
+		_ = cmd.Wait()
+		pw.Close()
+	}()
 
 	// Ensure whole process group is killed on context cancellation
 	go func() {
@@ -297,10 +296,11 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	}()
 
 	// Progress regex: [download]  10.0% of 100.00MiB at  1.00MiB/s ETA 01:30
-	progressRegex := regexp.MustCompile(`\[download\]\s+(\d+\.\d+)%`)
+	// Updated to handle both "10%" and "10.0%"
+	progressRegex := regexp.MustCompile(`\[download\]\s+(\d+(?:\.\d+)?)%`)
 
 	lastPercent := -1
-	scanner := bufio.NewScanner(combined)
+	scanner := bufio.NewScanner(pr)
 	for scanner.Scan() {
 		line := scanner.Text()
 		matches := progressRegex.FindStringSubmatch(line)
@@ -321,17 +321,19 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		}
 	}
 
-	if err := cmd.Wait(); err != nil {
-		// If context was cancelled or timed out, it's not a real error
-		if ctx.Err() != nil || ytdlpCtx.Err() != nil {
-			statusMsg := "cancelled"
-			if ytdlpCtx.Err() == context.DeadlineExceeded {
-				statusMsg = "ytdlp_timeout"
-			}
-			UpdateTask(taskID, "error", 0, statusMsg, owner)
-			return
+	// The wait is handled in the goroutine above, but we check if we actually finished correctly
+	if ctx.Err() != nil || ytdlpCtx.Err() != nil {
+		statusMsg := "cancelled"
+		if ytdlpCtx.Err() == context.DeadlineExceeded {
+			statusMsg = "ytdlp_timeout"
 		}
-		
+		UpdateTask(taskID, "error", 0, statusMsg, owner)
+		return
+	}
+	
+	// Check if process failed after we've finished scanning
+	// (cmd.ProcessState might be nil if Start failed, but we checked that)
+	if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
 		errMsg := stderrBuf.String()
 		if idx := strings.Index(errMsg, "ERROR:"); idx != -1 {
 			errMsg = strings.TrimSpace(errMsg[idx+6:])

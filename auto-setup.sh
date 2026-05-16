@@ -201,7 +201,7 @@ install_dependencies() {
 
     if [ "$OS_TYPE" == "linux" ]; then
         # Cài lần lượt, bỏ qua gói đã có
-        for pkg in curl wget tar unzip jq tmux nano procps; do
+        for pkg in curl wget tar unzip jq tmux nano procps lsof; do
             pkg_install "$pkg"
         done
 
@@ -271,7 +271,7 @@ install_dependencies() {
         echo "[!] yt-dlp cho phép tải video/audio từ YouTube, Facebook, TikTok..."
         read -p "[?] Bạn có muốn cài đặt yt-dlp không? (y/n): " install_ytdlp
 
-        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python procps"
+        MAIN_PACKAGES="wget curl tar unzip tmux jq nano python procps lsof"
         [ "${TUNNEL_METHOD:-}" == "cloudflare" ] && MAIN_PACKAGES="$MAIN_PACKAGES cloudflared"
         [ "$install_ffmpeg" == "y" ] && MAIN_PACKAGES="$MAIN_PACKAGES ffmpeg"
 
@@ -666,22 +666,24 @@ start_app() {
     echo "[+] Đang khởi động ứng dụng..."
     if [ "$OS_TYPE" == "linux" ]; then
         if command -v systemctl &>/dev/null; then
+            local start_time=$(date +"%Y-%m-%d %H:%M:%S")
             [ -f /etc/systemd/system/telecloud.service ] && systemctl enable --now telecloud || true
             [ -f /etc/systemd/system/telecloud-tunnel.service ] && [ -f "$BASE_DIR/tunnel.txt" ] && systemctl enable --now telecloud-tunnel || true
             
             echo "[+] Đang kiểm tra trạng thái khởi động (tối đa 30s)..."
-            sleep 2
-            local timeout=28
+            local timeout=30
             local success=0
             while [ $timeout -gt 0 ]; do
-                if journalctl -u telecloud.service -n 50 | grep -q "Starting TeleCloud on port"; then
+                # 1. Kiểm tra nếu cổng đã mở (Rất tin cậy)
+                if is_app_running "$BASE_DIR/telecloud"; then
                     success=1; break
                 fi
-                if journalctl -u telecloud.service -n 50 | grep -q "TeleCloud shut down"; then
+                # 2. Kiểm tra log để xem có báo lỗi shut down không (dùng --since "-1m" để bao quát)
+                if journalctl -u telecloud.service --since "-1m" 2>/dev/null | grep -q "TeleCloud shut down"; then
                     success=2; break
                 fi
-                # Kiểm tra nếu service đã chết (failed/inactive)
-                if ! systemctl is-active --quiet telecloud; then
+                # 3. Kiểm tra nếu service bị failed hẳn
+                if systemctl is-failed --quiet telecloud; then
                     success=3; break
                 fi
                 sleep 1
@@ -813,16 +815,22 @@ stop_app() {
     if [ "$OS_TYPE" == "linux" ]; then
         if command -v systemctl &>/dev/null; then
             systemctl stop telecloud telecloud-tunnel 2>/dev/null || true
+            # Chờ dừng hẳn để tránh xung đột khi khởi động lại
+            local stop_timeout=10
+            while [ $stop_timeout -gt 0 ]; do
+                if ! is_app_running "$BASE_DIR/telecloud"; then break; fi
+                sleep 1
+                stop_timeout=$((stop_timeout - 1))
+            done
         else
             # Linux không có systemd → dùng tmux
             tmux kill-session -t $SESSION 2>/dev/null || true
-            local timeout=15
-            while [ $timeout -gt 0 ]; do
-                if ! is_app_running "$BASE_DIR/telecloud"; then
-                    break
-                fi
+            # Chờ dừng hẳn
+            local stop_timeout=15
+            while [ $stop_timeout -gt 0 ]; do
+                if ! is_app_running "$BASE_DIR/telecloud"; then break; fi
                 sleep 1
-                timeout=$((timeout - 1))
+                stop_timeout=$((stop_timeout - 1))
             done
             for pid in $(ps auxww 2>/dev/null | grep -v grep | grep "$BASE_DIR/run.sh" | awk '{print $2}'); do
                 kill "$pid" 2>/dev/null || true

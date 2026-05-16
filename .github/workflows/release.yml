@@ -32,7 +32,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build frontend and download libraries
+      - name: Build frontend assets
         run: |
           cd web
           chmod +x build-frontend.sh

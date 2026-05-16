@@ -1,0 +1,36 @@
+name: Sync Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'readme.md'
+      - 'readme_en.md'
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare Wiki Files
+        run: |
+          mkdir wiki_temp
+          # Copy all documentation files
+          cp docs/*.md wiki_temp/
+          # Set the main README as the Wiki Home page
+          cp readme.md wiki_temp/Home.md
+          # Also include the English README
+          cp readme_en.md wiki_temp/Home-EN.md
+
+      - name: Sync to Wiki
+        uses: Andrew-Chen-Wang/github-wiki-action@v4
+        with:
+          path: wiki_temp
+          strategy: clone
+          # GitHub Actions token is usually sufficient for public repos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

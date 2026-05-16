@@ -25,7 +25,7 @@ COPY . .
 # Fetch frontend submodule (web/ is a git submodule, COPY doesn't include it)
 RUN git submodule update --init --recursive
 
-# Build frontend (Tailwind + download JS/CSS libs)
+# Build frontend (Tailwind + bundle assets via npm)
 RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh 1
 
 # Build Go binary for TARGET architecture

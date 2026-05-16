@@ -53,6 +53,12 @@ type tgFileReader struct {
 	offset      int64
 	chunkOffset int64
 	chunkData   []byte
+
+	// Prefetching
+	nextChunkData   []byte
+	nextChunkOffset int64
+	prefetchErr     error
+	prefetchMu      sync.Mutex
 }
 
 func (r *tgFileReader) Close() error {
@@ -72,83 +78,135 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 
 	// If we have no data or the current offset is outside our cached chunk
 	if r.chunkData == nil || r.offset < r.chunkOffset || r.offset >= r.chunkOffset+int64(len(r.chunkData)) {
-		// Align chunkStart to 1MB to take advantage of sequential reading
-		chunkStart := (r.offset / chunkSize) * chunkSize
-		
-		req := &tg.UploadGetFileRequest{
-			Precise:  true,
-			Location: r.loc,
-			Offset:   chunkStart,
-			Limit:    int(chunkSize),
-		}
+		// Check if we have the data in our prefetch buffer
+		r.prefetchMu.Lock()
+		if r.nextChunkData != nil && r.offset >= r.nextChunkOffset && r.offset < r.nextChunkOffset+int64(len(r.nextChunkData)) {
+			r.chunkData = r.nextChunkData
+			r.chunkOffset = r.nextChunkOffset
+			r.nextChunkData = nil
+			r.prefetchErr = nil
+			r.prefetchMu.Unlock()
+		} else {
+			// If prefetch errored out, return that error
+			if r.prefetchErr != nil {
+				err := r.prefetchErr
+				r.prefetchErr = nil
+				r.prefetchMu.Unlock()
+				return 0, err
+			}
+			r.prefetchMu.Unlock()
 
-		// Retry up to 3 times for transient Telegram errors
-		var res tg.UploadFileClass
-		var err error
-		for attempt := 0; attempt < 3; attempt++ {
-			res, err = r.api.UploadGetFile(r.ctx, req)
-			if err == nil {
-				break
+			// Otherwise, fetch manually (cold start or seek)
+			chunkStart := (r.offset / chunkSize) * chunkSize
+			data, err := r.fetchChunk(chunkStart, chunkSize)
+			if err != nil {
+				return 0, err
 			}
-			if r.ctx.Err() != nil {
-				return 0, r.ctx.Err()
-			}
-			errStr := err.Error()
-			if strings.Contains(errStr, "FLOOD_WAIT") || strings.Contains(errStr, "TIMEOUT") || strings.Contains(errStr, "RPC_CALL_FAIL") {
-				waitDuration := time.Duration(attempt+1) * 2 * time.Second
-				if strings.Contains(errStr, "FLOOD_WAIT_") {
-					parts := strings.Split(errStr, "FLOOD_WAIT_")
-					if len(parts) > 1 {
-						if secs, e := fmt.Sscanf(parts[1], "%d", new(int)); e == nil && secs > 0 {
-							waitDuration = time.Duration(secs) * time.Second
-						}
-					}
-				}
-				select {
-				case <-time.After(waitDuration):
-					continue
-				case <-r.ctx.Done():
-					return 0, r.ctx.Err()
-				}
-			}
-			select {
-			case <-time.After(time.Duration(attempt+1) * time.Second):
-			case <-r.ctx.Done():
-				return 0, r.ctx.Err()
-			}
-		}
-		if err != nil {
-			return 0, err
-		}
-
-		switch result := res.(type) {
-		case *tg.UploadFile:
-			r.chunkData = result.Bytes
+			r.chunkData = data
 			r.chunkOffset = chunkStart
-			if len(r.chunkData) == 0 {
-				// If Telegram returns 0 bytes but we haven't reached r.size, it's an error or unexpected EOF
-				if r.offset < r.size {
-					return 0, fmt.Errorf("unexpected end of file from telegram at offset %d (expected %d)", r.offset, r.size)
-				}
-				return 0, io.EOF
-			}
-		case *tg.UploadFileCDNRedirect:
-			return 0, fmt.Errorf("CDN redirect not supported")
-		default:
-			return 0, fmt.Errorf("unexpected type %T", res)
 		}
 	}
 
+	// After ensuring we have chunkData, trigger prefetch for the NEXT chunk if we are near the end of current chunk
 	inChunkOffset := r.offset - r.chunkOffset
-	if inChunkOffset < 0 || inChunkOffset >= int64(len(r.chunkData)) {
-		// This should not happen with the check above, but for safety:
-		r.chunkData = nil
-		return r.Read(p)
+	if inChunkOffset >= int64(len(r.chunkData))/2 {
+		r.triggerPrefetch(r.chunkOffset + chunkSize, chunkSize)
 	}
 
 	n := copy(p, r.chunkData[inChunkOffset:])
 	r.offset += int64(n)
 	return n, nil
+}
+
+func (r *tgFileReader) fetchChunk(offset int64, limit int64) ([]byte, error) {
+	req := &tg.UploadGetFileRequest{
+		Precise:  true,
+		Location: r.loc,
+		Offset:   offset,
+		Limit:    int(limit),
+	}
+
+	var res tg.UploadFileClass
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		res, err = r.api.UploadGetFile(r.ctx, req)
+		if err == nil {
+			break
+		}
+		if r.ctx.Err() != nil {
+			return nil, r.ctx.Err()
+		}
+		errStr := err.Error()
+		if strings.Contains(errStr, "FLOOD_WAIT") || strings.Contains(errStr, "TIMEOUT") || strings.Contains(errStr, "RPC_CALL_FAIL") {
+			waitDuration := time.Duration(attempt+1) * 2 * time.Second
+			if strings.Contains(errStr, "FLOOD_WAIT_") {
+				parts := strings.Split(errStr, "FLOOD_WAIT_")
+				if len(parts) > 1 {
+					if secs, e := fmt.Sscanf(parts[1], "%d", new(int)); e == nil && secs > 0 {
+						waitDuration = time.Duration(secs) * time.Second
+					}
+				}
+			}
+			select {
+			case <-time.After(waitDuration):
+				continue
+			case <-r.ctx.Done():
+				return nil, r.ctx.Err()
+			}
+		}
+		select {
+		case <-time.After(time.Duration(attempt+1) * time.Second):
+		case <-r.ctx.Done():
+			return nil, r.ctx.Err()
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	switch result := res.(type) {
+	case *tg.UploadFile:
+		if len(result.Bytes) == 0 && offset < r.size {
+			return nil, fmt.Errorf("unexpected end of file from telegram at offset %d (expected %d)", offset, r.size)
+		}
+		return result.Bytes, nil
+	case *tg.UploadFileCDNRedirect:
+		return nil, fmt.Errorf("CDN redirect not supported")
+	default:
+		return nil, fmt.Errorf("unexpected type %T", res)
+	}
+}
+
+func (r *tgFileReader) triggerPrefetch(offset int64, limit int64) {
+	if offset >= r.size {
+		return
+	}
+
+	r.prefetchMu.Lock()
+	if r.nextChunkData != nil && r.nextChunkOffset == offset {
+		r.prefetchMu.Unlock()
+		return
+	}
+	// If already prefetching this offset, do nothing
+	if r.nextChunkOffset == offset {
+		r.prefetchMu.Unlock()
+		return
+	}
+	
+	r.nextChunkData = nil
+	r.nextChunkOffset = offset
+	r.prefetchErr = nil
+	r.prefetchMu.Unlock()
+
+	go func() {
+		data, err := r.fetchChunk(offset, limit)
+		r.prefetchMu.Lock()
+		if r.nextChunkOffset == offset { // Ensure we haven't seeked away
+			r.nextChunkData = data
+			r.prefetchErr = err
+		}
+		r.prefetchMu.Unlock()
+	}()
 }
 
 func (r *tgFileReader) Seek(offset int64, whence int) (int64, error) {

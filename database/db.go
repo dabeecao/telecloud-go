@@ -137,7 +137,7 @@ func InitDB(driver, dbPath, dbDSN string) error {
 	switch driverName {
 	case "sqlite":
 		// Add PRAGMA settings to improve concurrency and prevent SQLITE_BUSY errors.
-		dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", dbPath)
+		dsn := fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=temp_store(MEMORY)", dbPath)
 
 		// Initialize Write Pool (MaxOpenConns=1)
 		rawRWDB, err = sqlx.Connect("sqlite", dsn)

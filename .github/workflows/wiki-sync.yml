@@ -34,10 +34,8 @@ jobs:
           sed -i 's|(\./readme.md)|(Home)|g' wiki_temp/Home-EN.md
           
           # Fix documentation links (remove ./docs/ and .md extension for Wiki)
-          sed -i 's|(\./docs/|(|g' wiki_temp/Home.md
-          sed -i 's|(\./docs/|(|g' wiki_temp/Home-EN.md
-          sed -i 's|\.md)|)|g' wiki_temp/Home.md
-          sed -i 's|\.md)|)|g' wiki_temp/Home-EN.md
+          sed -i 's|(\./docs/|(|g' wiki_temp/*.md
+          sed -i 's|\.md)|)|g' wiki_temp/*.md
 
       - name: Sync to Wiki
         uses: Andrew-Chen-Wang/github-wiki-action@v4

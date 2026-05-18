@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -31,15 +33,62 @@ var (
 )
 
 // LoadMasterKey reads the TELECLOUD_MASTER_KEY env var and caches the decoded bytes.
-// The env value is accepted as 64-char hex, or base64 (std or url-safe, with or without padding),
-// and must decode to exactly 32 bytes.
+// If the env var is not set, it attempts to load a cached key from a master.key file
+// in the same directory as the database, or in the data/ directory, or in the current
+// directory. If no key file exists, it generates a secure 32-byte key, saves it
+// to the persistent file, and returns it.
 func LoadMasterKey() ([]byte, error) {
 	masterKeyOnce.Do(func() {
 		raw := strings.TrimSpace(os.Getenv(masterKeyEnv))
 		if raw == "" {
-			masterKeyErr = fmt.Errorf("%s is not set. Generate one with: openssl rand -hex 32", masterKeyEnv)
+			// No env variable set. Determine the best location for a persistent key file.
+			keyFile := "master.key"
+			dbPath := strings.TrimSpace(os.Getenv("DATABASE_PATH"))
+			if dbPath != "" {
+				keyFile = filepath.Join(filepath.Dir(dbPath), "master.key")
+			} else {
+				// If a data directory exists, store it there
+				if _, err := os.Stat("data"); err == nil {
+					keyFile = filepath.Join("data", "master.key")
+				}
+			}
+
+			// Try to read key from the file
+			if data, err := os.ReadFile(keyFile); err == nil {
+				keyStr := strings.TrimSpace(string(data))
+				if key, err := decodeKey(keyStr); err == nil {
+					masterKey = key
+					return
+				}
+			}
+
+			// File does not exist or is invalid. Generate a secure 32-byte key!
+			newKeyBytes := make([]byte, keyByteLen)
+			if _, err := io.ReadFull(rand.Reader, newKeyBytes); err != nil {
+				masterKeyErr = fmt.Errorf("failed to generate secure master key: %w", err)
+				return
+			}
+
+			// Encode as 64-char hex
+			newKeyHex := hex.EncodeToString(newKeyBytes)
+
+			// Ensure target directory exists before writing
+			if err := os.MkdirAll(filepath.Dir(keyFile), 0755); err != nil {
+				masterKeyErr = fmt.Errorf("failed to create directory for master key file: %w", err)
+				return
+			}
+
+			// Save to file with restrictive permissions (0600)
+			if err := os.WriteFile(keyFile, []byte(newKeyHex), 0600); err != nil {
+				masterKeyErr = fmt.Errorf("failed to save generated master key to %s: %w", keyFile, err)
+				return
+			}
+
+			log.Printf("[MasterKey] Auto-generated secure master key and saved to %s", keyFile)
+			masterKey = newKeyBytes
 			return
 		}
+
 		key, err := decodeKey(raw)
 		if err != nil {
 			masterKeyErr = fmt.Errorf("%s is invalid: %w", masterKeyEnv, err)

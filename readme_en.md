@@ -106,6 +106,7 @@ This project uses amazing libraries:
 * [Artplayer.js](https://github.com/zhw2590582/ArtPlayer): Modern and full-featured HTML5 video player.
 * [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter.
 * [FontAwesome](https://fontawesome.com): The world's most popular icon set.
+* [Bun](https://bun.com): Fast JavaScript runtime & toolkit (build toolchain).
 * [yt-dlp](https://github.com/yt-dlp/yt-dlp): Audio/video downloader.
 * [aria2](https://github.com/aria2/aria2): Multi-protocol download utility.
 * [Google Fonts (Nunito)](https://fonts.google.com/specimen/Nunito): Modern sans-serif typeface.

@@ -7,13 +7,11 @@ ARG TARGETARCH
 ARG BUILDPLATFORM
 WORKDIR /app
 
-# Install curl and Node.js 20+ for frontend (tailwindcss oxide requires node >= 20)
-RUN apt-get update && apt-get install -y ca-certificates curl gnupg && \
-    mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
-    apt-get update && apt-get install -y nodejs && \
-    rm -rf /var/lib/apt/lists/*
+# Install curl and Bun for frontend
+RUN apt-get update && apt-get install -y ca-certificates curl unzip && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
 
 # Download dependencies first (cache layer)
 COPY go.mod go.sum ./
@@ -25,7 +23,7 @@ COPY . .
 # Fetch frontend submodule if building from a git clone
 RUN if [ -d .git ]; then git submodule update --init --recursive; else echo "Not a git repository, skipping submodule init"; fi
 
-# Build frontend (Tailwind + bundle assets via npm)
+# Build frontend (Tailwind + bundle assets via bun)
 RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh 1
 
 # Build Go binary for TARGET architecture

@@ -40,7 +40,7 @@ type BackupInfo struct {
 func GetBackupInfo() BackupInfo {
 	backupMutex.Lock()
 	defer backupMutex.Unlock()
-	
+
 	lastTimeStr := ""
 	if !lastBackupTime.IsZero() {
 		lastTimeStr = lastBackupTime.Format(time.RFC3339)
@@ -50,7 +50,7 @@ func GetBackupInfo() BackupInfo {
 	if !nextBackupTime.IsZero() {
 		nextTimeStr = nextBackupTime.Format(time.RFC3339)
 	}
-	
+
 	return BackupInfo{
 		LastTime:   lastTimeStr,
 		NextTime:   nextTimeStr,
@@ -77,7 +77,7 @@ func PerformBackup(ctx context.Context, cfg *config.Config) error {
 	}()
 
 	log.Println("[Backup] Starting automated backup...")
-	
+
 	tempDir := filepath.Join(cfg.TempDir, "backups_temp")
 	os.MkdirAll(tempDir, 0755)
 	defer os.RemoveAll(tempDir)
@@ -150,7 +150,7 @@ func PerformBackup(ctx context.Context, cfg *config.Config) error {
 	up := uploader.NewUploader(mainApi).WithThreads(cfg.UploadThreads)
 
 	log.Printf("[Backup] Uploading backup bundle (%s)...", utils.FormatBytes(stat.Size()))
-	
+
 	f, err := os.Open(finalZipPath)
 	if err != nil {
 		return err
@@ -167,9 +167,9 @@ func PerformBackup(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	caption := fmt.Sprintf("<b>📦 TeleCloud Automated Backup</b>\n\n<b>File:</b> %s\n<b>Size:</b> %s\n<b>Date:</b> %s\n\n#backup", 
+	caption := fmt.Sprintf("<b>📦 TeleCloud Automated Backup</b>\n\n<b>File:</b> %s\n<b>Size:</b> %s\n<b>Date:</b> %s\n\n#backup",
 		filepath.Base(finalZipPath), utils.FormatBytes(stat.Size()), time.Now().Format("2006-01-02 15:04:05"))
-	
+
 	docBuilder := message.UploadedDocument(tgFile, html.String(nil, caption)).Filename(filepath.Base(finalZipPath))
 	_, err = sender.To(peer).Media(ctx, docBuilder)
 	if err != nil {
@@ -187,7 +187,7 @@ func PerformBackup(ctx context.Context, cfg *config.Config) error {
 	database.SetSetting("last_backup_time", lastBackupTime.Format(time.RFC3339))
 	database.SetSetting("last_backup_status", lastBackupStatus)
 	backupMutex.Unlock()
-	
+
 	log.Println("[Backup] Backup completed successfully.")
 	return nil
 }
@@ -212,7 +212,7 @@ func zipBackupBundle(dbPath, thumbsDir, targetZip string) error {
 				// Fallback to direct copy if VACUUM fails
 				err = copyFile(dbPath, tempDB)
 			}
-			
+
 			if err == nil {
 				defer os.Remove(tempDB)
 				f, err := os.Open(tempDB)
@@ -255,7 +255,7 @@ func zipBackupBundle(dbPath, thumbsDir, targetZip string) error {
 			if err != nil || info.IsDir() {
 				return err
 			}
-			
+
 			relPath, err := filepath.Rel(thumbsDir, path)
 			if err != nil {
 				return nil
@@ -378,14 +378,14 @@ func StartBackupTask(ctx context.Context, cfg *config.Config) {
 
 		// Initial wait to let system settle
 		time.Sleep(1 * time.Minute)
-		
+
 		// Run every 24 hours
 		ticker := time.NewTicker(1 * time.Minute) // Check every minute for more accurate scheduling
 		defer ticker.Stop()
-		
+
 		for {
 			now := time.Now()
-			
+
 			// Calculate next backup time based on last backup
 			backupMutex.Lock()
 			if lastBackupTime.IsZero() {

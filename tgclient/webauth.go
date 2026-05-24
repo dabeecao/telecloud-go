@@ -7,11 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"telecloud/config"
-	"telecloud/database"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
+	"telecloud/config"
+	"telecloud/database"
 )
 
 var (
@@ -43,7 +43,7 @@ func StartWebAuth(cfg *config.Config) error {
 
 	go func(w *WebAuth) {
 		log.Println("Web Auth: Initializing Telegram client...")
-		
+
 		if err := InitClient(cfg, false); err != nil {
 			log.Printf("Web Auth: InitClient failed: %v", err)
 			w.Cancel(err)
@@ -60,7 +60,7 @@ func StartWebAuth(cfg *config.Config) error {
 				if err == nil {
 					break
 				}
-				
+
 				errStr := err.Error()
 				if strings.Contains(errStr, "PASSWORD_HASH_INVALID") || strings.Contains(errStr, "invalid password") || strings.Contains(errStr, "PASSWORD_INVALID") {
 					log.Printf("Web Auth: Invalid password, retrying IfNecessary...")
@@ -68,7 +68,7 @@ func StartWebAuth(cfg *config.Config) error {
 					w.SetState("password_error")
 					continue
 				}
-				
+
 				if strings.Contains(errStr, "PHONE_CODE_INVALID") || strings.Contains(errStr, "invalid code") {
 					log.Printf("Web Auth: Invalid OTP code, retrying IfNecessary...")
 					w.SetTransientErr("PHONE_CODE_INVALID")
@@ -114,9 +114,9 @@ func StartQRAuth(cfg *config.Config) error {
 		log.Println("QR Auth: Client initialized, starting Run...")
 		err := Client.Run(tgCtx, func(ctx context.Context) error {
 			log.Println("QR Auth: Client connected, starting QR flow...")
-			
+
 			loggedIn := qrlogin.OnLoginToken(Dispatcher)
-			
+
 			_, err := Client.QR().Auth(ctx, loggedIn, func(ctx context.Context, token qrlogin.Token) error {
 				log.Printf("QR Auth: New token generated: %s", token.URL())
 				w.SetQRURL(token.URL())
@@ -142,7 +142,7 @@ func StartQRAuth(cfg *config.Config) error {
 							log.Println("QR Auth: 2FA password accepted!")
 							break
 						}
-						
+
 						innerErrStr := err.Error()
 						if strings.Contains(innerErrStr, "PASSWORD_HASH_INVALID") || strings.Contains(innerErrStr, "invalid password") {
 							log.Printf("QR Auth: Invalid password, requesting again...")
@@ -324,7 +324,7 @@ func (w *WebAuth) SubmitPassword(password string) {
 
 func (w *WebAuth) Cancel(err error) {
 	log.Printf("Web Auth: Cancelling flow due to error: %v", err)
-	
+
 	errStr := err.Error()
 	if strings.Contains(errStr, "API_ID_INVALID") || strings.Contains(errStr, "API_HASH_INVALID") {
 		log.Println("Web Auth: Invalid API credentials detected, clearing from database...")
@@ -347,4 +347,3 @@ func (w *WebAuth) Cancel(err error) {
 	authMu.Unlock()
 	StopClient()
 }
-

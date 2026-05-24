@@ -7,11 +7,11 @@ ARG TARGETARCH
 ARG BUILDPLATFORM
 WORKDIR /app
 
-# Install curl and Bun for frontend
+# Install curl, unzip, and Bun for frontend
 RUN apt-get update && apt-get install -y ca-certificates curl unzip && \
-    rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:$PATH"
+    curl -fsSL https://bun.sh/install | bash && \
+    mv /root/.bun/bin/bun /usr/local/bin/bun && \
+    rm -rf /var/lib/apt/lists/*
 
 # Download dependencies first (cache layer)
 COPY go.mod go.sum ./
@@ -24,13 +24,15 @@ COPY . .
 RUN if [ -d .git ]; then git submodule update --init --recursive; else echo "Not a git repository, skipping submodule init"; fi
 
 # Build frontend (Tailwind + bundle assets via bun)
-RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh 1
+RUN cd web && sed -i 's/\r$//' build-frontend.sh && bash build-frontend.sh
 
 # Build Go binary for TARGET architecture
 ARG VERSION=dev
+ARG DEFAULT_API_ID="0"
+ARG DEFAULT_API_HASH=""
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build \
     -p 2 \
-    -ldflags="-s -w -X main.version=${VERSION}" \
+    -ldflags="-s -w -X main.version=${VERSION} -X telecloud/config.DefaultAPIIDStr=${DEFAULT_API_ID} -X telecloud/config.DefaultAPIHash=${DEFAULT_API_HASH}" \
     -o telecloud .
 
 # Create data directory and set permissions for the nonroot user (UID 65532)

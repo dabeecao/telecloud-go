@@ -21,7 +21,7 @@ builds:
     binary: telecloud
     main: .
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X telecloud/config.DefaultAPIIDStr={{.Env.DEFAULT_API_ID}} -X telecloud/config.DefaultAPIHash={{.Env.DEFAULT_API_HASH}}
 
   - id: win
     env:
@@ -34,7 +34,7 @@ builds:
     binary: telecloud
     main: .
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X telecloud/config.DefaultAPIIDStr={{.Env.DEFAULT_API_ID}} -X telecloud/config.DefaultAPIHash={{.Env.DEFAULT_API_HASH}}
 
 archives:
   - id: nix

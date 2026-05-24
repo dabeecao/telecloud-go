@@ -52,7 +52,7 @@ func applyCORSHeaders(w http.ResponseWriter, r *http.Request) bool {
 func corsAllowedOrigin(origin string) (bool, string) {
 	allowedOrigins := resolvedCORSAllowedOrigins()
 	if allowedOrigins == "" {
-		return false, ""
+		return true, "*"
 	}
 
 	for _, item := range strings.Split(allowedOrigins, ",") {

@@ -10,16 +10,16 @@ import (
 // Audit action constants. Keep them stable — external log analysis tooling
 // may match on these strings.
 const (
-	AuditActionLoginSuccess   = "login_success"
-	AuditActionLoginFail      = "login_fail"
-	AuditActionLogout         = "logout"
-	AuditActionPasswordChange = "password_change"
-	AuditActionAdminReset     = "admin_reset"
-	AuditActionSetupComplete  = "setup_complete"
-	AuditActionSetupConfig    = "setup_config"
-	AuditActionWebDAVToggle   = "webdav_toggle"
+	AuditActionLoginSuccess    = "login_success"
+	AuditActionLoginFail       = "login_fail"
+	AuditActionLogout          = "logout"
+	AuditActionPasswordChange  = "password_change"
+	AuditActionAdminReset      = "admin_reset"
+	AuditActionSetupComplete   = "setup_complete"
+	AuditActionSetupConfig     = "setup_config"
+	AuditActionWebDAVToggle    = "webdav_toggle"
 	AuditActionUploadAPIToggle = "upload_api_toggle"
-	AuditActionAPIKeyRotated  = "api_key_rotated"
+	AuditActionAPIKeyRotated   = "api_key_rotated"
 	AuditActionAnalyticsToggle = "analytics_toggle"
 )
 

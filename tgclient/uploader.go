@@ -170,7 +170,7 @@ type UploadStatus struct {
 	OldSize          int64 `json:"size,omitempty"`
 	OldUploadedBytes int64 `json:"uploaded_bytes,omitempty"`
 
-	startTime time.Time
+	startTime     time.Time
 	lastBroadcast time.Time
 }
 
@@ -1157,13 +1157,13 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	if overwrite && existingID > 0 {
 		// Identify messages to delete from Telegram BEFORE deleting the old record
 		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
-		
+
 		// Delete old record
 		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
-		
+
 		// Rename new record to final name
 		database.DB.Exec("UPDATE files SET message_id = ?, size = ?, filename = ? WHERE id = ?", firstMsgID, totalUploaded, filename, fileID)
-		
+
 		// Clean up old messages in background
 		if len(msgIDsToDelete) > 0 {
 			go DeleteMessages(context.Background(), cfg, msgIDsToDelete)
@@ -1177,7 +1177,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 				os.Remove(*existingThumb)
 			}
 		}
-		
+
 		uniqueFilename = filename // For task update
 	} else {
 		database.DB.Exec("UPDATE files SET message_id = ?, size = ? WHERE id = ?", firstMsgID, totalUploaded, fileID)
@@ -1350,8 +1350,6 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 
 	return fileID, uniqueFilename, nil
 }
-
-
 
 func DeleteMessages(ctx context.Context, cfg *config.Config, msgIDs []int) error {
 	if len(msgIDs) == 0 {
@@ -1732,13 +1730,13 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 	if overwrite && existingID > 0 {
 		// Identify messages to delete from Telegram BEFORE deleting the old record
 		msgIDsToDelete, _ := database.GetOrphanedMessages([]int{existingID})
-		
+
 		// Delete old record
 		database.DB.Exec("DELETE FROM files WHERE id = ?", existingID)
-		
+
 		// Rename new record to final name
 		database.DB.Exec("UPDATE files SET message_id = ?, size = ?, filename = ? WHERE id = ?", firstMsgID, totalUploaded, filename, fileID)
-		
+
 		// Clean up old messages in background
 		if len(msgIDsToDelete) > 0 {
 			go DeleteMessages(context.Background(), cfg, msgIDsToDelete)

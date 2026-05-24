@@ -7,7 +7,7 @@ import (
 )
 
 func setProcessGroup(cmd *exec.Cmd) {
-	// On Windows, the default behavior of exec.CommandContext 
+	// On Windows, the default behavior of exec.CommandContext
 	// is generally enough to handle process termination.
 }
 

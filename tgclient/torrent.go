@@ -251,7 +251,7 @@ func ProcessTorrentUpload(ctx context.Context, input, path, taskID string, cfg *
 			gid := m[1]
 			downloadedStr := m[2]
 			totalStr := m[3]
-			
+
 			p := 0
 			if len(m) > 4 && m[4] != "" {
 				p, _ = strconv.Atoi(m[4])
@@ -278,7 +278,7 @@ func ProcessTorrentUpload(ctx context.Context, input, path, taskID string, cfg *
 					// We transitioned, reset progress reporting for the new file
 					lastPercent = -1
 					// CRITICAL: Reset lastTotalSize because GID #2 is a different download task
-					lastTotalSize = 0 
+					lastTotalSize = 0
 				}
 				lastGID = gid
 			}

@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"mime"
 	"telecloud/config"
 	"telecloud/database"
 	"telecloud/tgclient"
-	"mime"
 
 	"github.com/google/uuid"
 )
@@ -22,9 +22,15 @@ type telecloudFileInfo struct {
 	mtime time.Time
 }
 
-func (fi *telecloudFileInfo) Name() string       { return fi.name }
-func (fi *telecloudFileInfo) Size() int64        { return fi.size }
-func (fi *telecloudFileInfo) Mode() os.FileMode  { if fi.isDir { return os.ModeDir | 0755 } else { return 0644 } }
+func (fi *telecloudFileInfo) Name() string { return fi.name }
+func (fi *telecloudFileInfo) Size() int64  { return fi.size }
+func (fi *telecloudFileInfo) Mode() os.FileMode {
+	if fi.isDir {
+		return os.ModeDir | 0755
+	} else {
+		return 0644
+	}
+}
 func (fi *telecloudFileInfo) ModTime() time.Time { return fi.mtime }
 func (fi *telecloudFileInfo) IsDir() bool        { return fi.isDir }
 func (fi *telecloudFileInfo) Sys() interface{}   { return nil }
@@ -68,7 +74,7 @@ func (f *telecloudFile) Readdir(count int) ([]os.FileInfo, error) {
 	if !f.isDir {
 		return nil, io.ErrUnexpectedEOF
 	}
-	
+
 	if f.dirItems == nil {
 		searchPath := f.path
 		cacheKey := f.username + ":" + searchPath
@@ -150,15 +156,14 @@ func (f *telecloudFile) Write(p []byte) (int, error) {
 	return 0, io.ErrUnexpectedEOF
 }
 
-
 // fileWriter is used for uploads
 type fileWriter struct {
-	ctx      context.Context
-	cfg      *config.Config
-	dir      string
-	filename string
-	tempPath string
-	file     *os.File
+	ctx       context.Context
+	cfg       *config.Config
+	dir       string
+	filename  string
+	tempPath  string
+	file      *os.File
 	taskID    string
 	overwrite bool
 	owner     string

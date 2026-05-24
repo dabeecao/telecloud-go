@@ -110,7 +110,7 @@ func (r *tgFileReader) Read(p []byte) (int, error) {
 	// After ensuring we have chunkData, trigger prefetch for the NEXT chunk if we are near the end of current chunk
 	inChunkOffset := r.offset - r.chunkOffset
 	if inChunkOffset >= int64(len(r.chunkData))/2 {
-		r.triggerPrefetch(r.chunkOffset + chunkSize, chunkSize)
+		r.triggerPrefetch(r.chunkOffset+chunkSize, chunkSize)
 	}
 
 	n := copy(p, r.chunkData[inChunkOffset:])
@@ -192,7 +192,7 @@ func (r *tgFileReader) triggerPrefetch(offset int64, limit int64) {
 		r.prefetchMu.Unlock()
 		return
 	}
-	
+
 	r.nextChunkData = nil
 	r.nextChunkOffset = offset
 	r.prefetchErr = nil
@@ -401,7 +401,7 @@ var getSinglePartReader = func(ctx context.Context, msgID int, size int64, cfg *
 		cancel()
 		return nil, err
 	}
-	
+
 	// Cache the location AND the API client for 1 hour
 	cacheMutex.Lock()
 	locationCache[msgID] = &cachedLocation{

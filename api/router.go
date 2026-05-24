@@ -63,6 +63,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 	r.POST("/api/setup/tg/password", csrfMiddleware(), h.handleSetupTGPassword)
 	r.POST("/api/setup/tg/cancel", csrfMiddleware(), h.handleSetupTGCancel)
 	r.POST("/api/setup/tg/test-log-group", csrfMiddleware(), h.handleSetupTGTestLogGroup)
+	r.POST("/api/setup/tg/verify-bots", csrfMiddleware(), h.handleSetupTGVerifyBots)
 	r.POST("/api/setup/restart", csrfMiddleware(), h.handleSetupRestart)
 	r.GET("/api/system/status", h.handleSystemStatus)
 	r.GET("/api/setup/tg/status", h.handleSetupTGStatus)
@@ -90,6 +91,18 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 	r.GET("/s/:token/file/:id/stream/:filename", h.handleStreamSharedFileInFolder)
 	r.GET("/s/:token/file/:id/dl", h.handleDownloadSharedFileInFolder)
 	r.GET("/s/:token/file/:id/thumb", h.handleGetSharedFileThumbInFolder)
+	r.GET("/s/:token/cbz/list", h.handleGetSharedComicPages)
+	r.GET("/s/:token/cbz/page", h.handleGetSharedComicPage)
+	r.HEAD("/s/:token/cbz/page", h.handleGetSharedComicPage)
+	r.GET("/s/:token/file/:id/cbz/list", h.handleGetSharedComicPages)
+	r.GET("/s/:token/file/:id/cbz/page", h.handleGetSharedComicPage)
+	r.HEAD("/s/:token/file/:id/cbz/page", h.handleGetSharedComicPage)
+	r.GET("/s/:token/epub/meta", h.handleGetSharedEpubMeta)
+	r.GET("/s/:token/epub/resource/*path", h.handleGetSharedEpubResource)
+	r.HEAD("/s/:token/epub/resource/*path", h.handleGetSharedEpubResource)
+	r.GET("/s/:token/file/:id/epub/meta", h.handleGetSharedEpubMeta)
+	r.GET("/s/:token/file/:id/epub/resource/*path", h.handleGetSharedEpubResource)
+	r.HEAD("/s/:token/file/:id/epub/resource/*path", h.handleGetSharedEpubResource)
 	r.GET("/dl/:token", h.handleGetDirectDownload)
 
 	// Protected API group
@@ -106,6 +119,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 
 		// Settings
 		api.POST("/settings/password", h.handlePostPassword)
+		api.POST("/settings/bot-pool", h.handlePostBotPool)
 		api.POST("/settings/webdav", h.handlePostWebDAV)
 		api.POST("/settings/upload-api", h.handlePostUploadAPI)
 		api.POST("/settings/upload-api/regenerate-key", h.handleRegenerateAPIKey)
@@ -125,6 +139,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.POST("/settings/backup", h.handlePostBackup)
 		api.POST("/settings/backup/toggle", h.handlePostBackupToggle)
 		api.POST("/settings/restore", h.handlePostRestore)
+		api.POST("/settings/restart", h.handlePostRestart)
 
 		// Users
 		api.GET("/users", h.handleGetUsers)
@@ -152,6 +167,12 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.GET("/files/:id/thumb", h.handleGetThumb)
 		api.GET("/files/:id/stream", h.handleStreamFile)
 		api.GET("/files/:id/stream/:filename", h.handleStreamFile)
+		api.GET("/files/:id/cbz/list", h.handleGetComicPages)
+		api.GET("/files/:id/cbz/page", h.handleGetComicPage)
+		api.HEAD("/files/:id/cbz/page", h.handleGetComicPage)
+		api.GET("/files/:id/epub/meta", h.handleGetEpubMeta)
+		api.GET("/files/:id/epub/resource/*path", h.handleGetEpubResource)
+		api.HEAD("/files/:id/epub/resource/*path", h.handleGetEpubResource)
 		api.GET("/progress/:task_id", h.handleGetProgress)
 		api.GET("/upload/check/:task_id", h.handleGetUploadCheck)
 		api.POST("/upload/check-exists", h.handlePostCheckExists)
@@ -169,7 +190,6 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.GET("/torrent/status", h.handleGetTorrentStatus)
 		api.POST("/torrent/add", h.handlePostTorrentAdd)
 		api.POST("/torrent/upload", h.handlePostTorrentUpload)
-
 
 		// WebSocket
 		api.GET("/ws", h.handleWebSocket)

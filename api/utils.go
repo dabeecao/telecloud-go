@@ -47,8 +47,6 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-
-
 func isChildAccountPath(dbPath string) bool {
 	return isChildAccountPathQuery(database.RODB, dbPath)
 }

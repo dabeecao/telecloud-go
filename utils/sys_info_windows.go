@@ -9,7 +9,7 @@ import (
 func GetDiskSpace(path string) (total, free uint64, err error) {
 	// For Windows, path can be a drive letter like "C:\" or a directory.
 	// If empty or invalid, GetDiskFreeSpaceEx defaults to the current drive.
-	
+
 	if path == "" || path == "." || path == "/" {
 		path = "."
 	}

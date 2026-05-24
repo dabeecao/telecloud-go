@@ -60,7 +60,7 @@ func (h *Handler) handlePostRestore(c *gin.Context) {
 	}
 
 	// Create temp path to save the uploaded file
-	tempFile := filepath.Join(h.cfg.TempDir, "uploaded_backup_" + filepath.Base(file.Filename))
+	tempFile := filepath.Join(h.cfg.TempDir, "uploaded_backup_"+filepath.Base(file.Filename))
 	if err := c.SaveUploadedFile(file, tempFile); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save uploaded file"})
 		return
@@ -79,4 +79,3 @@ func (h *Handler) handlePostRestore(c *gin.Context) {
 	// Restart app to load the new database
 	go h.restartApp()
 }
-

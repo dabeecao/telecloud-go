@@ -11,6 +11,12 @@
 
 **TeleCloud** là một dự án sử dụng dung lượng lưu trữ của Telegram để lưu trữ và quản lý tệp. Được viết lại hoàn toàn bằng Golang, đem lại hiệu năng xuất sắc và sử dụng bộ nhớ cực thấp.
 
+> [!IMPORTANT]
+> **Thay đổi từ phiên bản 3.7.0**
+> Kể từ v3.7.0, **App ID, API Hash** và **Bot Token (Bot Pool)** không còn cấu hình trong file `.env` nữa — tất cả được quản lý trực tiếp trong **Giao diện Cài đặt** của ứng dụng:
+> - 🔑 **App ID & API Hash**: Trong bước cài đặt ban đầu, **cứ để mặc định và bấm Tiếp tục** — ứng dụng đã tích hợp sẵn credentials của nhà phát triển. Chỉ thay đổi nếu bạn là **người dùng nâng cao / nhà phát triển** và muốn dùng API credentials của riêng mình.
+> - 🤖 **Bot Token (Bot Pool)**: Thêm, sửa, xóa bot trực tiếp trong **Trang quản trị → Cài đặt → Bot Pool** mà không cần khởi động lại server.
+
 ---
 
 ## 📸 Ảnh xem trước giao diện
@@ -31,11 +37,13 @@
 ## ✨ Tính năng
 
 * 📁 **Lưu trữ không giới hạn**: Lưu file trực tiếp trên Telegram **không giới hạn dung lượng** (Tự động chia nhỏ file siêu lớn thành các mảnh từ 500MB đến 4GB).
-* 🎬 **Phát phương tiện**: Phát video và nhạc trực tiếp trong trang quản lý và liên kết chia sẻ (Hỗ trợ phát mượt mà các file đã chia nhỏ).
+* 🎬 **Phát phương tiện & Phụ đề**: Phát video và nhạc trực tiếp trong trang quản lý và liên kết chia sẻ. Tích hợp tính năng tự động quét/nạp phụ đề rời cùng tên (`.srt`, `.vtt`, `.ass`) hoặc tải lên thủ công từ thiết bị của bạn.
+* 📚 **Đọc sách & Comic online**: Tích hợp các trình đọc trực quan cao cấp cho sách điện tử **EPUB**, truyện tranh **CBZ** (Webtoon mode, tự động lưu tiến trình đọc, tải trang thông minh), và tài liệu **PDF** trực tiếp trên trình duyệt mà không cần tải về.
 * 🔗 **Chia sẻ linh hoạt**: Hỗ trợ liên kết thường hoặc link tải trực tiếp (Direct Link), hỗ trợ chia sẻ cả **Thư mục**.
 * 🗂️ **Quản lý trực quan**: Giao diện File Browser hỗ trợ chế độ xem **Lưới (Grid)** và **Danh sách (List)**.
 * ⬆️ **Tốc độ tối ưu**: Upload song song (Multi-threading) và chia nhỏ (chunk) để tối ưu tốc độ và ổn định.
 * 📂 **Hỗ trợ WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
+* 🪣 **Tương thích S3 API**: Cung cấp giao diện API tương thích S3 (sử dụng gofakes3) giúp kết nối với các ứng dụng bên thứ ba (Rclone, Cyberduck, Infuse, v.v.), hỗ trợ xác thực chữ ký bảo mật SigV4/SigV2 và Range requests để stream video.
 * 🔌 **Upload API**: Cho phép upload file từ xa qua HTTP API để tích hợp vào script hoặc CI/CD.
 * 📥 **Tải từ URL & Media**: Hỗ trợ tải tệp từ URL và Video/Nhạc (YouTube, TikTok, Facebook...) bằng **yt-dlp** ngay trong giao diện.
 * ⚡ **Tải trong nền**: Hỗ trợ tải tệp từ URL trong nền, không cần treo trình duyệt, có thông báo tiến trình real-time.
@@ -104,6 +112,7 @@ Dự án sử dụng các thư viện tuyệt vời:
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): A utility-first CSS framework.
 * [plyr](https://github.com/sampotts/plyr): A simple HTML5 media player.
 * [Artplayer.js](https://github.com/zhw2590582/ArtPlayer): Modern and full-featured HTML5 video player.
+* [PDF.js](https://github.com/mozilla/pdf.js): HTML5 PDF reader and viewer.
 * [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter.
 * [FontAwesome](https://fontawesome.com): Bộ biểu tượng phổ biến nhất thế giới.
 * [Bun](https://bun.com): Fast JavaScript runtime & toolkit (build toolchain).

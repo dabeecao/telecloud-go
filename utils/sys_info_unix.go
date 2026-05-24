@@ -12,19 +12,19 @@ import (
 func GetDiskSpace(path string) (total, free uint64, err error) {
 	// Try a sequence of paths to be as resilient as possible, especially for Termux/Android
 	var stat unix.Statfs_t
-	
+
 	paths := []string{path, "."}
 	if wd, wdErr := os.Getwd(); wdErr == nil {
 		paths = append(paths, wd)
 	}
-	
+
 	// Termux-specific fallback
 	if runtime.GOOS == "android" || os.Getenv("TERMUX_VERSION") != "" {
 		if home := os.Getenv("HOME"); home != "" {
 			paths = append(paths, home)
 		}
 	}
-	
+
 	paths = append(paths, "/")
 
 	for _, p := range paths {

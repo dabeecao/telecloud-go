@@ -55,7 +55,19 @@ import (
 //go:embed web/static/locales/*.min.json
 var contentFS embed.FS
 
+var restartCh = make(chan struct{}, 1)
+
 func restartApp() {
+	log.Println("Restart trigger received...")
+	// Small delay to allow HTTP response to be sent
+	time.Sleep(500 * time.Millisecond)
+	select {
+	case restartCh <- struct{}{}:
+	default:
+	}
+}
+
+func executeRestart() {
 	log.Println("Restarting TeleCloud...")
 	executable, err := os.Executable()
 	if err != nil {
@@ -68,9 +80,6 @@ func restartApp() {
 		os.Exit(0)
 	}
 
-	// Small delay to allow HTTP response to be sent
-	time.Sleep(500 * time.Millisecond)
-
 	err = syscall.Exec(executable, os.Args, os.Environ())
 	if err != nil {
 		log.Printf("Failed to restart app: %v. Exiting instead.", err)
@@ -79,7 +88,7 @@ func restartApp() {
 }
 
 var (
-	version = "v3.6.0"
+	version = "v3.7.0"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -124,11 +133,7 @@ func main() {
 		fatalf("%v", err)
 	}
 
-	sqlitePath := ""
-	if cfg.DatabaseDriver == "" || cfg.DatabaseDriver == "sqlite" {
-		sqlitePath = cfg.DatabasePath
-	}
-	if err := database.MigrateEncryptV1(sqlitePath); err != nil {
+	if err := database.MigrateEncryptV1(); err != nil {
 		fatalf("Encryption migration failed: %v", err)
 	}
 
@@ -266,11 +271,16 @@ func main() {
 
 	// Wait for shutdown signal or Telegram client to exit
 	var exitCode int
+	var shouldRestart bool
 Loop:
 	for {
 		select {
 		case sig := <-sigCh:
 			log.Printf("Received signal: %v — initiating graceful shutdown...", sig)
+			break Loop
+		case <-restartCh:
+			log.Println("Restart signal received — initiating graceful shutdown before restart...")
+			shouldRestart = true
 			break Loop
 		case err := <-tgErrCh:
 			if err != nil {
@@ -322,8 +332,12 @@ Loop:
 	}
 
 	log.Println("TeleCloud shut down successfully.")
-	waitExitOnWindows()
-	os.Exit(exitCode)
+	if shouldRestart {
+		executeRestart()
+	} else {
+		waitExitOnWindows()
+		os.Exit(exitCode)
+	}
 }
 
 func waitExitOnWindows() {

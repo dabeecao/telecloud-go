@@ -52,6 +52,7 @@ Bạn cần cài đặt **FFmpeg**, **yt-dlp** và **aria2** (tùy chọn) để
    telecloud.exe # Windows
    ```
 3. Truy cập `http://localhost:8091/setup` để hoàn tất cấu hình qua giao diện Web Wizard.
+   *   **Lưu ý**: Thông tin API Telegram mặc định đã được tích hợp sẵn. Người dùng thông thường **không cần cung cấp** và hệ thống sẽ tự động bỏ qua bước nhập API. Nếu bạn là nhà phát triển hoặc người dùng nâng cao muốn sử dụng API riêng, bạn có thể tùy chỉnh tại phần **Cài đặt nâng cao** ở chân trang Đăng nhập trên Web Setup.
 
 ---
 
@@ -85,3 +86,4 @@ curl -fsSL https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-set
 #### Step 2: Download & Startup
 1. Get the binary from [**Releases**](https://github.com/dabeecao/telecloud-go/releases).
 2. Run the application and access `http://localhost:8091/setup` for the Web Setup Wizard.
+   *   **Note**: Telegram API credentials are pre-configured by default. General users **do not need to provide them**, and the wizard will automatically skip the API setup step. If you are a developer or advanced user wishing to use custom credentials, you can configure them in the **Advanced settings** section at the bottom of the Web Setup login page.

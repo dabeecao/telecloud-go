@@ -365,11 +365,19 @@ func (b *TelecloudBackend) PutObject(bucketName, key string, meta map[string]str
 		mimeType = "application/octet-stream"
 	}
 
-	_, _, err = tgclient.ProcessCompleteUploadSync(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, b.cfg, true, b.username)
+	fileSize := int64(0)
+	if fileInfo, err := os.Stat(tempFilePath); err == nil {
+		fileSize = fileInfo.Size()
+	}
+	tgclient.UpdateTaskWithFile(taskID, "processing", 0, "uploading_to_telegram", filename, b.username, fileSize, 0)
+
+	fileID, finalName, err := tgclient.ProcessCompleteUploadSync(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, b.cfg, true, b.username)
 	if err != nil {
+		tgclient.UpdateTask(taskID, "error", 0, "upload_failed: "+err.Error(), b.username)
 		return gofakes3.PutObjectResult{}, err
 	}
 
+	tgclient.UpdateTaskWithFileID(taskID, "done", 100, "", fileID, finalName, b.username)
 	return gofakes3.PutObjectResult{}, nil
 }
 

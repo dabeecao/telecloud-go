@@ -31,10 +31,10 @@ type failedAttempt struct {
 }
 
 const (
-	authCacheTTL          = 2 * time.Minute
-	failedAttemptMax      = 5
-	failedAttemptWindow   = 15 * time.Minute
-	failedAttemptBackoff  = 100 * time.Millisecond
+	authCacheTTL         = 2 * time.Minute
+	failedAttemptMax     = 5
+	failedAttemptWindow  = 15 * time.Minute
+	failedAttemptBackoff = 100 * time.Millisecond
 )
 
 var (
@@ -127,7 +127,6 @@ func checkBlocked(ip string) bool {
 func clearFailed(ip string) {
 	failedAuthAttempts.Delete(ip)
 }
-
 
 func NewHandler(cfg *config.Config) http.Handler {
 	fs := NewTelecloudFS(cfg)
@@ -247,7 +246,7 @@ func NewHandler(cfg *config.Config) http.Handler {
 
 		// Standard WebDAV headers
 		w.Header().Set("DAV", "1, 2")
-		
+
 		if r.Method == "OPTIONS" {
 			w.Header().Set("Allow", "OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE, COPY, MOVE, MKCOL, PROPFIND, PROPPATCH, LOCK, UNLOCK")
 			w.WriteHeader(http.StatusOK)
@@ -277,5 +276,3 @@ func NewHandler(cfg *config.Config) http.Handler {
 		handler.ServeHTTP(w, r)
 	})
 }
-
-

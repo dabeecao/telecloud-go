@@ -21,7 +21,7 @@ import (
 
 func translateYTDLPError(errMsg string) string {
 	errMsg = strings.ToLower(errMsg)
-	
+
 	switch {
 	case strings.Contains(errMsg, "sign in to confirm your age"):
 		return "age_restricted"
@@ -44,14 +44,13 @@ func translateYTDLPError(errMsg string) string {
 	case strings.Contains(errMsg, "getaddrinfo failed") || strings.Contains(errMsg, "name or service not known"):
 		return "network_error"
 	}
-	
+
 	return "ytdlp_error"
 }
 
 func IsValidURL(u string) bool {
 	return strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
 }
-
 
 // YTDLPInfo represents the structure of yt-dlp -J output
 type YTDLPInfo struct {
@@ -67,16 +66,16 @@ type YTDLPInfo struct {
 }
 
 type YTDLPFormat struct {
-	FormatID       string  `json:"format_id"`
-	FormatNote     string  `json:"format_note"`
-	Ext            string  `json:"ext"`
-	Resolution     string  `json:"resolution"`
-	Filesize       int64   `json:"filesize"`
-	FilesizeApprox int64   `json:"filesize_approx"`
-	VCodec         string  `json:"vcodec"`
-	ACodec         string  `json:"acodec"`
-	Format         string  `json:"format"`
-	Height         int     `json:"height"`
+	FormatID       string `json:"format_id"`
+	FormatNote     string `json:"format_note"`
+	Ext            string `json:"ext"`
+	Resolution     string `json:"resolution"`
+	Filesize       int64  `json:"filesize"`
+	FilesizeApprox int64  `json:"filesize_approx"`
+	VCodec         string `json:"vcodec"`
+	ACodec         string `json:"acodec"`
+	Format         string `json:"format"`
+	Height         int    `json:"height"`
 }
 
 func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, error) {
@@ -95,7 +94,7 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 	}
 
 	args := []string{"-J", "--no-playlist", url}
-	
+
 	// Check for user cookie file
 	cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", owner))
 	if _, err := os.Stat(cookieFile); err == nil {
@@ -118,7 +117,7 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
-		
+
 		cleanErr := translateYTDLPError(errMsg)
 		if cleanErr != "ytdlp_error" {
 			return nil, fmt.Errorf("%s", cleanErr)
@@ -132,7 +131,7 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 	}
 
 	var info YTDLPInfo
-	
+
 	// Decode the string and automatically ignore any trailing junk data
 	rawStr := stdout.String()
 
@@ -156,12 +155,12 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 		for i := len(info.Formats) - 1; i >= 0; i-- {
 			f := info.Formats[i]
 			vcodec := strings.ToLower(f.VCodec)
-			
+
 			isAudio := vcodec == "none" || f.Resolution == "audio only"
-			
+
 			if isAudio {
 				// For audio, use FormatID or combination of ext+filesize as key if needed,
-				// but usually audio formats are distinct enough. 
+				// but usually audio formats are distinct enough.
 				// Let's just keep them all for now or filter by ext if needed.
 				filtered = append(filtered, f)
 			} else if f.Height > 0 {
@@ -283,10 +282,10 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	// Capture both stdout and stderr interleaved for real-time progress
 	var stderrBuf strings.Builder
 	pr, pw := io.Pipe()
-	
+
 	// Create a tee for stderr so we can still capture the full error log
 	stderrWriter := io.MultiWriter(pw, &stderrBuf)
-	
+
 	cmd.Stdout = pw
 	cmd.Stderr = stderrWriter
 
@@ -346,7 +345,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		UpdateTask(taskID, "error", 0, statusMsg, owner)
 		return
 	}
-	
+
 	// Check if process failed after we've finished scanning
 	// (cmd.ProcessState might be nil if Start failed, but we checked that)
 	if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
@@ -354,7 +353,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 		if idx := strings.Index(errMsg, "ERROR:"); idx != -1 {
 			errMsg = strings.TrimSpace(errMsg[idx+6:])
 		}
-		
+
 		cleanErr := translateYTDLPError(errMsg)
 		UpdateTask(taskID, "error", 0, cleanErr, owner)
 		return
@@ -369,20 +368,20 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 
 	var downloadedFile string
 	prefix := "ytdlp_" + taskID + "_"
-	
+
 	// Better selection: skip intermediate files like .part, .ytdl or .fXXX extensions
 	var candidates []string
 	for _, f := range files {
 		if f.IsDir() || !strings.HasPrefix(f.Name(), prefix) {
 			continue
 		}
-		
+
 		name := f.Name()
 		// Skip temporary/partial files
 		if strings.HasSuffix(name, ".part") || strings.HasSuffix(name, ".ytdl") || strings.HasSuffix(name, ".temp") {
 			continue
 		}
-		
+
 		// Check for intermediate format extensions like .f248.webm or .f140.m4a
 		isIntermediate := false
 		parts := strings.Split(name, ".")
@@ -394,7 +393,7 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 				}
 			}
 		}
-		
+
 		if !isIntermediate {
 			downloadedFile = filepath.Join(cfg.TempDir, name)
 			break

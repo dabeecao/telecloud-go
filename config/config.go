@@ -51,8 +51,8 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	apiID, _ := strconv.Atoi(os.Getenv("API_ID"))
-	apiHash := os.Getenv("API_HASH")
+	var apiID int
+	var apiHash string
 
 	uploadThreads, _ := strconv.Atoi(getEnv("TG_UPLOAD_THREADS", "2"))
 	if uploadThreads <= 0 {
@@ -117,7 +117,7 @@ func Load() (*Config, error) {
 		WebAuthnRPOrigin: getEnv("WEBAUTHN_RPORIGIN", "http://localhost:8091"),
 		MaxPartSize:      maxPartSizeMB * 1024 * 1024,
 		CookiesDir:       getEnv("COOKIES_DIR", "data/cookies"),
-		BotTokens:        strings.Split(os.Getenv("BOT_TOKENS"), ","),
+		BotTokens:        nil,
 		Warnings:         warnings,
 		TorrentEnabled:   torrentEnabled,
 		TorrentPath:      torrentPath,
@@ -178,18 +178,42 @@ func checkFileExecutable(path string) bool {
 	return !info.IsDir() && (info.Mode().Perm()&0111 != 0)
 }
 
+var (
+	DefaultAPIIDStr = "0"
+	DefaultAPIHash  = ""
+)
+
 func (c *Config) LoadFromDB(getSettingFunc func(key string) string) {
 	if c.APIID == 0 {
 		apiIDStr := getSettingFunc("api_id")
 		if apiIDStr != "" {
 			c.APIID, _ = strconv.Atoi(apiIDStr)
+		} else if DefaultAPIIDStr != "" && DefaultAPIIDStr != "0" {
+			c.APIID, _ = strconv.Atoi(DefaultAPIIDStr)
 		}
 	}
 	if c.APIHash == "" {
-		c.APIHash = getSettingFunc("api_hash")
+		dbHash := getSettingFunc("api_hash")
+		if dbHash != "" {
+			c.APIHash = dbHash
+		} else {
+			c.APIHash = DefaultAPIHash
+		}
 	}
 	if c.LogGroupID == "" {
 		c.LogGroupID = getSettingFunc("log_group_id")
 	}
+	dbBotTokens := getSettingFunc("bot_tokens")
+	if dbBotTokens != "" {
+		var tokens []string
+		for _, t := range strings.Split(dbBotTokens, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				tokens = append(tokens, t)
+			}
+		}
+		c.BotTokens = tokens
+	} else {
+		c.BotTokens = nil
+	}
 }
-

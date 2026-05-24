@@ -122,6 +122,7 @@ func (h *Handler) handleGetSharedFile(c *gin.Context) {
 	}
 
 	c.HTML(http.StatusOK, "share.html", gin.H{
+		"id":             item.ID,
 		"filename":       item.Filename,
 		"size":           item.Size,
 		"formatted_size": formatBytes(item.Size),
@@ -247,34 +248,59 @@ func (h *Handler) handleGetSharedThumb(c *gin.Context) {
 	c.File(*item.ThumbPath)
 }
 
-func (h *Handler) handleStreamSharedFileInFolder(c *gin.Context) {
-	token := c.Param("token")
-	id, _ := strconv.Atoi(c.Param("id"))
-
-	var folder database.File
-	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !folder.IsFolder {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
+// resolveSharedFileInFolder resolves a file by ID under a shared token.
+// It supports both shared folders and single file shares requesting via the /file/:id path prefix.
+func (h *Handler) resolveSharedFileInFolder(c *gin.Context, token string, id int) (database.File, error) {
+	var shareItem database.File
+	if err := database.RODB.Get(&shareItem, "SELECT * FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil {
+		return shareItem, fmt.Errorf("not_found")
 	}
 
-	if !h.checkShareAuth(c, folder) {
-		c.AbortWithStatus(http.StatusForbidden)
-		return
+	if !shareItem.IsFolder {
+		// Single shared file case: verify ID match to prevent unauthorized indexing
+		if id != shareItem.ID {
+			return shareItem, fmt.Errorf("forbidden")
+		}
+		if !h.checkShareAuth(c, shareItem) {
+			return shareItem, fmt.Errorf("unauthorized")
+		}
+		return shareItem, nil
 	}
 
-	basePrefix := folder.Path + "/" + folder.Filename
-	if folder.Path == "/" {
-		basePrefix = "/" + folder.Filename
+	// Folder share case
+	if !h.checkShareAuth(c, shareItem) {
+		return shareItem, fmt.Errorf("unauthorized")
+	}
+
+	basePrefix := shareItem.Path + "/" + shareItem.Filename
+	if shareItem.Path == "/" {
+		basePrefix = "/" + shareItem.Filename
 	}
 
 	var item database.File
 	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND deleted_at IS NULL", id); err != nil {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
+		return item, fmt.Errorf("not_found")
 	}
 
 	if item.Path != basePrefix && !strings.HasPrefix(item.Path, basePrefix+"/") {
-		c.AbortWithStatus(http.StatusForbidden)
+		return item, fmt.Errorf("forbidden")
+	}
+
+	return item, nil
+}
+
+func (h *Handler) handleStreamSharedFileInFolder(c *gin.Context) {
+	token := c.Param("token")
+	id, _ := strconv.Atoi(c.Param("id"))
+
+	item, err := h.resolveSharedFileInFolder(c, token, id)
+	if err != nil {
+		switch err.Error() {
+		case "unauthorized", "forbidden":
+			c.AbortWithStatus(http.StatusForbidden)
+		default:
+			c.AbortWithStatus(http.StatusNotFound)
+		}
 		return
 	}
 
@@ -293,30 +319,14 @@ func (h *Handler) handleDownloadSharedFileInFolder(c *gin.Context) {
 	token := c.Param("token")
 	id, _ := strconv.Atoi(c.Param("id"))
 
-	var folder database.File
-	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !folder.IsFolder {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-
-	if !h.checkShareAuth(c, folder) {
-		c.AbortWithStatus(http.StatusForbidden)
-		return
-	}
-
-	basePrefix := folder.Path + "/" + folder.Filename
-	if folder.Path == "/" {
-		basePrefix = "/" + folder.Filename
-	}
-
-	var item database.File
-	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND deleted_at IS NULL", id); err != nil {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-
-	if item.Path != basePrefix && !strings.HasPrefix(item.Path, basePrefix+"/") {
-		c.AbortWithStatus(http.StatusForbidden)
+	item, err := h.resolveSharedFileInFolder(c, token, id)
+	if err != nil {
+		switch err.Error() {
+		case "unauthorized", "forbidden":
+			c.AbortWithStatus(http.StatusForbidden)
+		default:
+			c.AbortWithStatus(http.StatusNotFound)
+		}
 		return
 	}
 
@@ -333,30 +343,13 @@ func (h *Handler) handleGetSharedFileThumbInFolder(c *gin.Context) {
 	token := c.Param("token")
 	id, _ := strconv.Atoi(c.Param("id"))
 
-	var folder database.File
-	if err := database.RODB.Get(&folder, "SELECT filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !folder.IsFolder {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-
-	if !h.checkShareAuth(c, folder) {
-		c.AbortWithStatus(http.StatusForbidden)
-		return
-	}
-
-	basePrefix := folder.Path + "/" + folder.Filename
-	if folder.Path == "/" {
-		basePrefix = "/" + folder.Filename
-	}
-
-	var item database.File
-	if err := database.RODB.Get(&item, "SELECT thumb_path, path FROM files WHERE id = ? AND deleted_at IS NULL", id); err != nil || item.ThumbPath == nil {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-
-	if item.Path != basePrefix && !strings.HasPrefix(item.Path, basePrefix+"/") {
-		c.AbortWithStatus(http.StatusForbidden)
+	item, err := h.resolveSharedFileInFolder(c, token, id)
+	if err != nil || item.ThumbPath == nil {
+		if err != nil && (err.Error() == "unauthorized" || err.Error() == "forbidden") {
+			c.AbortWithStatus(http.StatusForbidden)
+		} else {
+			c.AbortWithStatus(http.StatusNotFound)
+		}
 		return
 	}
 

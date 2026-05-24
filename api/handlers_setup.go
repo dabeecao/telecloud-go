@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"telecloud/config"
 	"telecloud/database"
 	"telecloud/tgclient"
 	"telecloud/utils"
@@ -19,12 +20,24 @@ import (
 func (h *Handler) handleGetSetup(c *gin.Context) {
 	adminUser := database.GetSetting("admin_username")
 	setCSRFCookie(c)
+
+	dbAPIID := database.GetSetting("api_id")
+	dbAPIHash := database.GetSetting("api_hash")
+
+	apiIDShow := ""
+	apiHashShow := ""
+	if dbAPIID != "" {
+		apiIDShow = dbAPIID
+		apiHashShow = dbAPIHash
+	}
+
 	c.HTML(http.StatusOK, "setup.html", gin.H{
-		"version":      h.cfg.Version,
-		"api_id":       h.cfg.APIID,
-		"api_hash":     h.cfg.APIHash,
-		"log_group_id": h.cfg.LogGroupID,
-		"admin_exists": adminUser != "",
+		"version":         h.cfg.Version,
+		"api_id":          apiIDShow,
+		"api_hash":        apiHashShow,
+		"has_default_api": config.DefaultAPIIDStr != "" && config.DefaultAPIIDStr != "0",
+		"log_group_id":    h.cfg.LogGroupID,
+		"admin_exists":    adminUser != "",
 	})
 }
 
@@ -78,9 +91,25 @@ func (h *Handler) handlePostSetup(c *gin.Context) {
 }
 
 func (h *Handler) handleSetupConfig(c *gin.Context) {
+	restoreDefault := c.PostForm("restore_default") == "true"
+	siteURL := strings.TrimRight(c.PostForm("site_url"), "/")
+
+	if restoreDefault {
+		database.DeleteSetting("api_id")
+		database.DeleteSetting("api_hash")
+		database.SetSetting("site_url", siteURL)
+
+		h.cfg.APIID = 0
+		h.cfg.APIHash = ""
+		h.cfg.LoadFromDB(database.GetSetting)
+
+		database.LogAuditFromCtx(c, database.GetSetting("admin_username"), database.AuditActionSetupConfig, "api_credentials_default", database.AuditStatusOK)
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+		return
+	}
+
 	apiID, _ := strconv.Atoi(c.PostForm("api_id"))
 	apiHash := c.PostForm("api_hash")
-	siteURL := strings.TrimRight(c.PostForm("site_url"), "/")
 
 	if apiID == 0 || apiHash == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "API_ID and API_HASH required"})
@@ -243,4 +272,75 @@ func (h *Handler) handleSetupTGStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"authorized": status.Authorized, "authState": authState})
+}
+
+type VerifyBotsRequest struct {
+	Tokens []string `json:"tokens"`
+}
+
+type BotVerifyResult struct {
+	Token  string `json:"token"`
+	Status string `json:"status"` // "success" or "error"
+	Error  string `json:"error,omitempty"`
+}
+
+func (h *Handler) handleSetupTGVerifyBots(c *gin.Context) {
+	adminUser := database.GetSetting("admin_username")
+	if adminUser != "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "already setup"})
+		return
+	}
+
+	var req VerifyBotsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	results := make([]BotVerifyResult, len(req.Tokens))
+
+	verifiedCount := 0
+	for i, token := range req.Tokens {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			results[i] = BotVerifyResult{Token: token, Status: "error", Error: "Empty token"}
+			continue
+		}
+
+		// If this is not the first token we actually verify, sleep to avoid flooding
+		if verifiedCount > 0 {
+			time.Sleep(1200 * time.Millisecond)
+		}
+		verifiedCount++
+
+		err := tgclient.VerifyBotToken(c.Request.Context(), h.cfg, token)
+		if err != nil {
+			results[i] = BotVerifyResult{
+				Token:  token,
+				Status: "error",
+				Error:  err.Error(),
+			}
+		} else {
+			results[i] = BotVerifyResult{
+				Token:  token,
+				Status: "success",
+			}
+		}
+	}
+
+	var validTokens []string
+	for _, res := range results {
+		if res.Status == "success" {
+			validTokens = append(validTokens, res.Token)
+		}
+	}
+
+	tokensStr := strings.Join(validTokens, ",")
+	database.SetSetting("bot_tokens", tokensStr)
+
+	h.cfg.BotTokens = validTokens
+
+	c.JSON(http.StatusOK, gin.H{
+		"results": results,
+	})
 }

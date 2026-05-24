@@ -15,7 +15,7 @@ This is the recommended method for servers. The Docker image (Alpine-based) incl
    mkdir telecloud && cd telecloud
    curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/env.example
    mv env.example .env
-   # Điền API_ID, API_HASH, LOG_GROUP_ID vào .env
+   # Điền LOG_GROUP_ID vào .env
    ```
 3. Khởi động:
    ```bash
@@ -42,7 +42,7 @@ This is the recommended method for servers. The Docker image (Alpine-based) incl
    curl -O https://raw.githubusercontent.com/dabeecao/telecloud-go/main/env.example
    mv env.example .env
    ```
-2. Điền thông tin vào `.env` (API_ID, API_HASH...).
+2. Điền thông tin vào `.env` (LOG_GROUP_ID...).
 3. Khởi động: `sudo docker compose up -d`
 
 #### Các lệnh quản lý:

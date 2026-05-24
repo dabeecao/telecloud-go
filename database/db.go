@@ -37,8 +37,9 @@ type File struct {
 	SharePassword *string    `db:"share_password" json:"-"`
 
 	// Virtual fields
-	DirectToken string `db:"-" json:"direct_token,omitempty"`
-	HasThumb    bool   `db:"-" json:"has_thumb"`
+	DirectToken      string `db:"-" json:"direct_token,omitempty"`
+	HasThumb         bool   `db:"-" json:"has_thumb"`
+	HasSharePassword bool   `db:"-" json:"has_share_password"`
 }
 
 type User struct {

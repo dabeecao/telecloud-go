@@ -80,44 +80,20 @@ func csrfMiddleware() gin.HandlerFunc {
 	}
 }
 
-
-// buildCSP returns a Content-Security-Policy whose third-party allow-lists
-// follow runtime settings. Cloudflare Web Analytics (cloudflareinsights.com)
-// is opt-in: it is only included when the operator flips analytics_enabled,
-// so a default deployment doesn't leak page-view telemetry to a CDN.
-//
-// 'unsafe-inline' and 'unsafe-eval' remain in script-src because the
-// frontend uses Alpine.js, which needs them. Documented in README.
-func buildCSP() string {
-	scriptSrc := "'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com"
-	connectSrc := "'self' https://api.github.com https://cdn.plyr.io"
-
-	if database.GetSetting("analytics_enabled") == "true" {
-		scriptSrc += " https://static.cloudflareinsights.com"
-		connectSrc += " https://cloudflareinsights.com"
-	}
-
-	return strings.Join([]string{
-		"default-src 'self'",
-		"script-src " + scriptSrc,
-		"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com",
-		"font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com",
-		"img-src 'self' data: *",
-		"connect-src " + connectSrc,
-		"media-src 'self' blob: * https://cdn.plyr.io",
-		"object-src 'self'",
-	}, "; ") + ";"
-}
-
 // securityHeadersMiddleware adds standard security headers to prevent common web attacks.
 func securityHeadersMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "SAMEORIGIN")
-		c.Header("X-XSS-Protection", "1; mode=block")
+
+		path := c.Request.URL.Path
+		isEpubResource := strings.Contains(path, "/epub/resource/")
+		isComicPage := strings.Contains(path, "/cbz/page")
+		if !isEpubResource && !isComicPage {
+			c.Header("X-Frame-Options", "SAMEORIGIN")
+		}
+
 		c.Header("Cross-Origin-Resource-Policy", "cross-origin")
 		c.Header("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
-		c.Header("Content-Security-Policy", buildCSP())
 		c.Next()
 	}
 }

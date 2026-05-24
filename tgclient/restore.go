@@ -27,7 +27,7 @@ func PerformRestore(cfg *config.Config, uploadedPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open uploaded file: %w", err)
 	}
-	
+
 	// Read first 4 bytes to check ZIP signature (PK\x03\x04)
 	header := make([]byte, 4)
 	n, _ := f.Read(header)
@@ -157,7 +157,7 @@ func PerformRestore(cfg *config.Config, uploadedPath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to open sqlite connection for validation: %w", err)
 		}
-		
+
 		// Check if settings table exists
 		var count int
 		err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='settings'").Scan(&count)

@@ -51,7 +51,7 @@ func (h *Hub) Run(ctx context.Context) {
 			}
 			h.mu.Unlock()
 		case message := <-h.broadcast:
-			// message format expected to be handled elsewhere if needed, 
+			// message format expected to be handled elsewhere if needed,
 			// but we'll focus on the specific TaskUpdate for targeted broadcast
 			h.mu.Lock()
 			for client := range h.clients {
@@ -204,7 +204,7 @@ func BroadcastTaskUpdate(owner, taskID, status string, percent int, msg string, 
 		log.Printf("json marshal error: %v", err)
 		return
 	}
-	
+
 	// If owner is empty, broadcast to everyone (fallback)
 	if owner == "" {
 		select {

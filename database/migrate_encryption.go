@@ -4,11 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os"
 	"strings"
-	"time"
 
 	"telecloud/utils"
 )
@@ -56,12 +53,7 @@ func setSchemaVersion(id string, version int) error {
 // MigrateEncryptV1 re-encrypts existing plaintext rows in tg_sessions and the
 // sensitive settings list under the master key. It runs at most once per
 // install; subsequent calls are no-ops.
-//
-// For SQLite the source file is copied to <path>.pre-enc.bak before any write.
-// For MySQL/Postgres a manual dump is required: callers must set the
-// TELECLOUD_I_HAVE_BACKED_UP env var to acknowledge, otherwise the migration
-// refuses to run and asks the operator to back up first.
-func MigrateEncryptV1(sqliteDBPath string) error {
+func MigrateEncryptV1() error {
 	if err := ensureSchemaVersionTable(); err != nil {
 		return fmt.Errorf("schema_version table: %w", err)
 	}
@@ -79,16 +71,6 @@ func MigrateEncryptV1(sqliteDBPath string) error {
 		return err
 	}
 
-	if IsMySQL() || IsPostgres() {
-		if os.Getenv("TELECLOUD_I_HAVE_BACKED_UP") != "1" {
-			return fmt.Errorf("encryption migration needs a manual DB dump first; back up the database and set TELECLOUD_I_HAVE_BACKED_UP=1 to proceed")
-		}
-	} else if sqliteDBPath != "" {
-		if err := backupSQLiteFile(sqliteDBPath); err != nil {
-			return fmt.Errorf("backup SQLite DB: %w", err)
-		}
-	}
-
 	if err := reEncryptTGSessions(); err != nil {
 		return fmt.Errorf("re-encrypt tg_sessions: %w", err)
 	}
@@ -99,31 +81,6 @@ func MigrateEncryptV1(sqliteDBPath string) error {
 	if err := setSchemaVersion("encryption", encryptionSchemaVersion); err != nil {
 		return fmt.Errorf("mark schema_version: %w", err)
 	}
-	return nil
-}
-
-func backupSQLiteFile(dbPath string) error {
-	if _, err := os.Stat(dbPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	backupPath := dbPath + ".pre-enc-" + time.Now().Format("20060102-150405") + ".bak"
-	src, err := os.Open(dbPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	dst, err := os.OpenFile(backupPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, src); err != nil {
-		return err
-	}
-	log.Printf("[migration] Backed up SQLite DB to %s before encrypting", backupPath)
 	return nil
 }
 

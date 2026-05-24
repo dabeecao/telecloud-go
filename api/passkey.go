@@ -28,7 +28,7 @@ func InitWebAuthn(rpid string, origins []string) {
 		rpid = database.GetSetting("webauthn_rpid")
 	}
 
-	if (rpid == "" || rpid == "localhost") {
+	if rpid == "" || rpid == "localhost" {
 		siteURL := database.GetSetting("site_url")
 		if siteURL != "" {
 			if u, err := url.Parse(siteURL); err == nil {
@@ -299,7 +299,7 @@ func LoginPasskeyFinish(c *gin.Context) {
 			if err != nil {
 				return nil, fmt.Errorf("user not found for this passkey")
 			}
-			
+
 			adminUser := database.GetSetting("admin_username")
 			if uName != adminUser {
 				var count int
@@ -343,7 +343,7 @@ func LoginPasskeyFinish(c *gin.Context) {
 	}
 
 	// Update sign count and backup state
-	database.DB.Exec("UPDATE passkeys SET sign_count = ?, backup_state = ? WHERE credential_id = ?", 
+	database.DB.Exec("UPDATE passkeys SET sign_count = ?, backup_state = ? WHERE credential_id = ?",
 		credential.Authenticator.SignCount, credential.Flags.BackupState, credential.ID)
 
 	// Create session

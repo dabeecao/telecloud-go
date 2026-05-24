@@ -11,6 +11,12 @@
 
 **TeleCloud** is a project that allows you to use Telegram’s nearly unlimited storage capacity to store and manage files. Completely rewritten in Golang for excellent performance and low memory usage.
 
+> [!IMPORTANT]
+> **Changed since version 3.7.0**
+> Starting from v3.7.0, **App ID & API Hash** and **Bot Tokens (Bot Pool)** are no longer configured in the `.env` file — everything is managed directly inside the **application's Settings UI**:
+> - 🔑 **App ID & API Hash**: During the initial setup, **just leave it as default and click Continue** — the app already has the developer credentials built in. Only change this if you are an **advanced user / developer** who wants to use their own API credentials.
+> - 🤖 **Bot Tokens (Bot Pool)**: Add, edit, or remove bots directly in **Admin Panel → Settings → Bot Pool** — no server restart required.
+
 ---
 
 ## 📸 Preview
@@ -31,11 +37,13 @@
 ## ✨ Features
 
 * 📁 **Unlimited Storage**: Store files directly on Telegram with **no size limits** (Automatically splits large files into chunks from 500MB to 4GB).
-* 🎬 **Media Streaming**: Stream videos and music directly in the dashboard and shared links (Seamless playback of split files).
+* 🎬 **Media & Subtitles Streaming**: Stream videos and music directly in the dashboard and shared links. Seamlessly auto-scans and loads subtitles (.srt, .vtt, .ass) with matching names, or manually uploads external subtitles from your computer.
+* 📚 **EPUB, Comic & PDF Readers**: Integrates custom, high-fidelity online readers for **EPUB** e-books, **CBZ** comic books (Webtoon scroll mode, lazy-loading, automatic progress preservation), and **PDF** documents directly within the browser without downloading.
 * 🔗 **Flexible Sharing**: Supports normal or direct download links (Direct Link) for both files and **folders**.
 * 🗂️ **Intuitive Management**: File Browser with **Grid** and **List** view modes.
 * ⬆️ **High Performance**: Multi-threaded and chunked uploads for maximum speed and stability.
 * 📂 **WebDAV Support**: Mount TeleCloud as a network drive on Windows, macOS, and Linux.
+* 🪣 **S3 API Compatibility**: Provides an S3-compatible API (via gofakes3) to integrate with third-party clients (Rclone, Cyberduck, Infuse, etc.) supporting secure SigV4/SigV2 signature verification and Range requests for smooth video streaming.
 * 🔌 **Upload API**: Remote file uploads via HTTP API for script or CI/CD integration.
 * 📥 **URL & Media Downloader**: Download files from URLs and Media (YouTube, TikTok, Facebook...) using **yt-dlp** directly in the UI.
 * ⚡ **Background Tasks**: Background URL downloads with real-time progress notifications.
@@ -104,6 +112,7 @@ This project uses amazing libraries:
 * [TailwindCSS](https://github.com/tailwindlabs/tailwindcss): Utility-first CSS framework
 * [plyr](https://github.com/sampotts/plyr): HTML5 media player
 * [Artplayer.js](https://github.com/zhw2590582/ArtPlayer): Modern and full-featured HTML5 video player.
+* [PDF.js](https://github.com/mozilla/pdf.js): HTML5 PDF reader and viewer.
 * [Prism.js](https://github.com/PrismJS/prism): Lightweight, extensible syntax highlighter.
 * [FontAwesome](https://fontawesome.com): The world's most popular icon set.
 * [Bun](https://bun.com): Fast JavaScript runtime & toolkit (build toolchain).

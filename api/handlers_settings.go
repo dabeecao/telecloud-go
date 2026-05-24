@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"telecloud/database"
+	"telecloud/tgclient"
 	"telecloud/utils"
 	"telecloud/webdav"
 	"time"
@@ -520,4 +521,94 @@ func (h *Handler) handlePostUserResetPass(c *gin.Context) {
 	database.DB.Exec("DELETE FROM sessions WHERE username = ?", username)
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "temp_password": tempPassword})
+}
+
+func (h *Handler) handlePostBotPool(c *gin.Context) {
+	if !c.GetBool("is_admin") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	var req struct {
+		Tokens []string `json:"tokens"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	type BotVerifyResult struct {
+		Token  string `json:"token"`
+		Status string `json:"status"` // "success" or "error"
+		Error  string `json:"error,omitempty"`
+	}
+
+	results := make([]BotVerifyResult, len(req.Tokens))
+
+	// Create a map of existing active/healthy tokens to skip re-verification
+	existingTokens := make(map[string]bool)
+	tgclient.BotPoolMu.RLock()
+	for _, bot := range tgclient.BotPool {
+		if !bot.Deleted {
+			existingTokens[bot.Token] = true
+		}
+	}
+	tgclient.BotPoolMu.RUnlock()
+
+	verifiedCount := 0
+	for i, token := range req.Tokens {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			results[i] = BotVerifyResult{Token: token, Status: "error", Error: "Empty token"}
+			continue
+		}
+
+		// Skip verification if token is already active and verified
+		if existingTokens[token] {
+			results[i] = BotVerifyResult{Token: token, Status: "success"}
+			continue
+		}
+
+		// If this is not the first token we actually verify, sleep to avoid flooding
+		if verifiedCount > 0 {
+			time.Sleep(1200 * time.Millisecond)
+		}
+		verifiedCount++
+
+		err := tgclient.VerifyBotToken(c.Request.Context(), h.cfg, token)
+		if err != nil {
+			results[i] = BotVerifyResult{
+				Token:  token,
+				Status: "error",
+				Error:  err.Error(),
+			}
+		} else {
+			results[i] = BotVerifyResult{
+				Token:  token,
+				Status: "success",
+			}
+		}
+	}
+
+	var validTokens []string
+	for _, res := range results {
+		if res.Status == "success" {
+			validTokens = append(validTokens, res.Token)
+		}
+	}
+
+	tokensStr := strings.Join(validTokens, ",")
+	database.SetSetting("bot_tokens", tokensStr)
+
+	// Dynamic update in-memory
+	tgclient.UpdateBotPool(h.cfg, validTokens)
+
+	c.JSON(http.StatusOK, gin.H{
+		"results": results,
+	})
+}
+
+func (h *Handler) handlePostRestart(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "restarting"})
+	go h.restartApp()
 }

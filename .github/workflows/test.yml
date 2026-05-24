@@ -36,8 +36,18 @@ jobs:
 
       - name: Smoke test — container starts and listens on port 8091
         run: |
-          docker run --rm --name tc-test -d -p 8091:8091 telecloud-go:test
+          # Run without --rm so logs survive even if container exits immediately
+          docker run --name tc-test -d -p 8091:8091 telecloud-go:test
           sleep 5
+          # Always dump logs before any check so crash output is visible in CI
           docker logs tc-test
+          # Fail if container has already exited (non-zero exit = crash)
+          STATUS=$(docker inspect -f '{{.State.Status}}' tc-test)
+          if [ "$STATUS" != "running" ]; then
+            echo "Container exited early with status: $STATUS"
+            docker rm tc-test
+            exit 1
+          fi
           curl -sf http://localhost:8091 || curl -sf http://localhost:8091/health || true
           docker stop tc-test
+          docker rm tc-test

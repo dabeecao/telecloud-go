@@ -171,12 +171,29 @@ func (fs *telecloudFS) OpenFile(ctx context.Context, name string, flag int, perm
 		return newFileWriter(ctx, fs.cfg, dir, base, true, username), nil
 	}
 
-	// Reading an existing file
-	// If file has no message_id and no file_parts, it's still being uploaded to Telegram
+	// Reading an existing file.
+	// No message_id and no file_parts means the Telegram upload is still in
+	// flight. This used to return ErrNotExist, but x/net/webdav's props() and
+	// propnames() open every file before reading its metadata (prop.go:169,
+	// :218 — there is no interface to opt out, unlike findContentType), so the
+	// error failed the whole PROPFIND with a 500. Clients read that as "the PUT
+	// I just finished did not stick" and re-uploaded the file, gigabytes at a
+	// time, each attempt minting another "name (n)" row and another concurrent
+	// Telegram stream. Hand back a metadata-only handle instead: Stat is
+	// accurate, and reads report the content is not retrievable yet.
 	if item.MessageID == nil {
 		parts, err := database.GetFileParts(item.ID)
 		if err != nil || len(parts) == 0 {
-			return nil, os.ErrNotExist
+			return &telecloudFile{
+				path:     dir,
+				name:     item.Filename,
+				size:     item.Size,
+				mtime:    item.CreatedAt,
+				isAdmin:  isAdmin,
+				username: username,
+				fs:       fs,
+				notReady: true,
+			}, nil
 		}
 	}
 

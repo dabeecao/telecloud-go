@@ -17,6 +17,8 @@ type Config struct {
 	APIID            int
 	APIHash          string
 	UploadThreads    int
+	MaxParallelParts int
+	MaxConcurrentUps int
 	DownloadPrefetch int
 	DatabaseDriver   string
 	DatabasePath     string
@@ -58,6 +60,20 @@ func Load() (*Config, error) {
 	uploadThreads, _ := strconv.Atoi(getEnv("TG_UPLOAD_THREADS", "2"))
 	if uploadThreads <= 0 {
 		uploadThreads = 2
+	}
+
+	// Upload concurrency caps. Both default to 0, which keeps the historical
+	// behaviour of deriving the limit from the bot-pool size. Set them when the
+	// network path to Telegram cannot sustain many simultaneous connections —
+	// on links that reset long high-throughput streams, 1/1 trades speed for
+	// actually finishing. Negative values are ignored.
+	maxParallelParts, _ := strconv.Atoi(getEnv("TG_MAX_PARALLEL_PARTS", "0"))
+	if maxParallelParts < 0 {
+		maxParallelParts = 0
+	}
+	maxConcurrentUps, _ := strconv.Atoi(getEnv("TG_MAX_CONCURRENT_UPLOADS", "0"))
+	if maxConcurrentUps < 0 {
+		maxConcurrentUps = 0
 	}
 
 	// Number of 1MB chunks fetched ahead of the read cursor while streaming.
@@ -113,6 +129,8 @@ func Load() (*Config, error) {
 		APIID:            apiID,
 		APIHash:          apiHash,
 		UploadThreads:    uploadThreads,
+		MaxParallelParts: maxParallelParts,
+		MaxConcurrentUps: maxConcurrentUps,
 		DownloadPrefetch: downloadPrefetch,
 		DatabaseDriver:   strings.ToLower(getEnv("DATABASE_DRIVER", "sqlite")),
 		DatabasePath:     getEnv("DATABASE_PATH", "database.db"),

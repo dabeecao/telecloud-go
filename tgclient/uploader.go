@@ -655,7 +655,13 @@ func uploadPartsCore(
 			}
 
 			if uploadErr != nil {
-				cancelParallel()
+				// Do NOT cancel parallelCtx here. Cancelling it aborted every
+				// sibling part mid-flight, so a single transient network drop
+				// threw away gigabytes of already-uploaded parts and the whole
+				// file failed. Each part owns its own 15-attempt budget; let the
+				// others finish and report failure through resultsChan instead.
+				// The caller aborts the file once it sees any part error.
+				log.Printf("[Upload] Part %d gave up after all attempts: %v", partIdx+1, uploadErr)
 				resultsChan <- partResult{partIndex: partIdx, err: uploadErr}
 				return
 			}

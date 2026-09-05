@@ -721,18 +721,6 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 
 	UpdateTaskWithFile(taskID, "telegram", 0, "waiting_slot", filename, owner, fileSize, 0)
 
-	// Wait for a slot in the upload queue
-	select {
-	case uploadSemaphore <- struct{}{}:
-		staggerUpload(ctx, fileSize)
-		defer func() { <-uploadSemaphore }()
-	case <-ctx.Done():
-		UpdateTaskWithFile(taskID, "error", 0, "upload_cancelled_waiting", filename, owner, fileSize, 0)
-		return
-	}
-
-	UpdateTaskWithFile(taskID, "telegram", 0, "", filename, owner, fileSize, 0)
-
 	// Handle overwriting: identify old record to be replaced later
 	var existingID int
 	var existingThumb *string
@@ -740,6 +728,13 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = FALSE AND owner = ?", path, filename, owner).Scan(&existingID, &existingThumb)
 	}
 
+	// Insert the files row BEFORE waiting for an upload slot. WebDAV/S3 clients
+	// stat the object right after PUT returns; while this goroutine sits in the
+	// semaphore queue (uploadCount slots, often 1) the row did not exist yet, so
+	// the client got 404/500 and treated the upload as failed or corrupted.
+	// Listings still hide the row until message_id is set, so nothing shows up
+	// early in the UI — only direct lookups by path succeed.
+	//
 	// Serialize filename uniqueness check + DB insert to prevent TOCTOU
 	// duplicate-filename races, especially on MySQL (no partial unique index).
 	unlockInsert := database.AcquireFileInsertLock(owner, path)

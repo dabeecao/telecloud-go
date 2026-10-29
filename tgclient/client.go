@@ -595,6 +595,12 @@ func VerifyLogGroup(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
+// forgetLogGroupPeer drops the cached log-group peer of api so it is resolved
+// again on the next use.
+func forgetLogGroupPeer(api *tg.Client, logGroupIDStr string) {
+	botPeers.Delete(fmt.Sprintf("%p_%s", api, logGroupIDStr))
+}
+
 func resolveLogGroup(ctx context.Context, api *tg.Client, logGroupIDStr string) (tg.InputPeerClass, error) {
 	cacheKey := fmt.Sprintf("%p_%s", api, logGroupIDStr)
 	if val, ok := botPeers.Load(cacheKey); ok {

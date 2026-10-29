@@ -224,7 +224,7 @@ func InitDB(driver, dbPath, dbDSN string) error {
 			return fmt.Errorf("failed to create unique index: %v", err)
 		}
 	}
-	return nil
+	return EnsureUploadSessionTables()
 }
 
 const sqliteSchema = `

@@ -93,6 +93,10 @@ curl -X POST http://localhost:8091/api/upload-api/remote \
 - `GET /tasks/<TASK_ID>`: Get async task progress.
 - `DELETE /tasks/<TASK_ID>`: Cancel an active task.
 
+#### Large files / Cloudflare Tunnel
+
+Files above ~80 MB should use the resumable session API (`POST /api/uploads`, `PUT /api/uploads/:id/chunks/:index`, `POST /api/uploads/:id/finalize`, `GET`/`DELETE /api/uploads/:id`) so that no request exceeds a proxy's body limit. See [ChunkedUploads.md](ChunkedUploads.md).
+
 ### 3. cURL Examples
 
 **Async Upload with Status Check:**

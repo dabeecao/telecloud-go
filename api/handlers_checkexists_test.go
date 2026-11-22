@@ -19,11 +19,27 @@ import (
 // would prompt the user about a file they cannot open.
 func TestCheckExistsIgnoresInvisibleRows(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	if err := database.InitDB("sqlite", t.TempDir()+"/t.db", ""); err != nil {
-		t.Fatal(err)
+	// Runs on SQLite by default; set TC_TEST_DRIVER/TC_TEST_DSN to exercise the
+	// same handler against MySQL or PostgreSQL.
+	driver, dsn := testDriverEnv()
+	if driver == "sqlite" {
+		if err := database.InitDB("sqlite", t.TempDir()+"/t.db", ""); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := database.InitDB(driver, "", dsn); err != nil {
+		t.Fatalf("InitDB(%s): %v", driver, err)
 	}
 	defer database.RWDB.Close()
 	defer database.RODB.Close()
+	if driver != "sqlite" {
+		// Shared server: clear whatever the previous run left, then clean up.
+		database.DB.Exec("DELETE FROM file_parts")
+		database.DB.Exec("DELETE FROM files")
+		defer func() {
+			database.DB.Exec("DELETE FROM file_parts")
+			database.DB.Exec("DELETE FROM files")
+		}()
+	}
 
 	const user = "alice"
 	const dir = "/alice/docs"

@@ -169,6 +169,15 @@ func setupCheckMiddleware() gin.HandlerFunc {
 
 		// If admin exists but Telegram system is not ready, handle accordingly
 		if !tgclient.IsSystemReady() {
+			// Programmatic upload clients must never be handed an HTML page or a
+			// redirect (a "200 OK" here would be mistaken for an acknowledged
+			// chunk). Answer with an explicit, retryable error instead.
+			if strings.HasPrefix(path, "/api/uploads") {
+				c.Header("Retry-After", "3")
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "telegram_not_ready"})
+				return
+			}
+
 			// If the system is currently initializing, show a loading message instead of redirecting to setup
 			if tgclient.IsRunning() && !tgclient.IsInitializationDone() {
 				fmt.Println("[TeleCloud] Telegram client is initializing. Serving 'TeleCloud is starting up' page to:", c.Request.URL.Path)

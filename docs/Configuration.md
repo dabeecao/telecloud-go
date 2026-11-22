@@ -163,6 +163,23 @@ Copy `env.example` to `.env` in the binary directory and fill in your details:
 
 **Priority Note**: Variables in `.env` **override** any settings in the database.
 
+### Chunked upload
+
+<a id="chunked-upload"></a>Resumable uploads through proxies with a request-size limit (Cloudflare Tunnel). Protocol: [ChunkedUploads.md](ChunkedUploads.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHUNKED_UPLOAD_ENABLED` | `true` | Set `false` to disable the `/api/uploads` API. Existing uploads are unaffected. |
+| `CHUNKED_UPLOAD_THRESHOLD_MB` | `80` | Files above this size should use the chunked protocol (advertised to clients). |
+| `CHUNKED_UPLOAD_CHUNK_SIZE_MB` | `32` | Ceiling for the request body size (default 32). Clamped to 1–50 MiB (hard maximum). Clients auto-size below it from a speed probe; see [ChunkedUploads.md](ChunkedUploads.md#choosing-the-chunk-size-auto-sizing). |
+| `CHUNKED_UPLOAD_MAX_PARALLEL` | `4` | Concurrent chunk requests per session (max 16). |
+| `CHUNKED_UPLOAD_MAX_INFLIGHT` | `8` | Concurrent chunk requests for the whole server (max 64). Excess requests get `429` + `Retry-After`. |
+| `CHUNKED_UPLOAD_STAGED_PARTS` | `2` | Telegram parts staged on disk per session. Disk use ≤ this × part size. |
+| `CHUNKED_UPLOAD_PART_MB` | `0` | Optionally lower the Telegram storage part size (0 = account limit). |
+| `CHUNKED_UPLOAD_MAX_RETRIES` | `6` | Telegram upload attempts per part per round (exponential backoff + jitter; flood-wait honoured). |
+| `CHUNKED_UPLOAD_SESSION_TTL_HOURS` | `48` | Idle time after which an unfinished session is discarded. |
+| `CHUNKED_UPLOAD_DIR` | `<TEMP_DIR>/../upload_sessions` | Staging directory. Must be writable and **not** inside `TEMP_DIR`. |
+
 ### 2. Tuning `TG_DOWNLOAD_PREFETCH`
 
 When streaming video or downloading a file, TeleCloud reads ahead a number of 1MB chunks past the read cursor instead of waiting for the current chunk to finish before requesting the next one. `TG_DOWNLOAD_PREFETCH` controls how many.

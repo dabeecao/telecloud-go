@@ -191,6 +191,16 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.GET("/upload/check/:task_id", h.handleGetUploadCheck)
 		api.POST("/upload/check-exists", h.handlePostCheckExists)
 
+		// Resumable chunked upload sessions
+		api.GET("/uploads/config", h.handleGetUploadsConfig)
+		api.POST("/uploads/probe", h.handlePostUploadProbe)
+		api.GET("/uploads", h.handleListUploads)
+		api.POST("/uploads", h.handleCreateUpload)
+		api.GET("/uploads/:id", h.handleGetUpload)
+		api.PUT("/uploads/:id/chunks/:index", h.handlePutUploadChunk)
+		api.POST("/uploads/:id/finalize", h.handleFinalizeUpload)
+		api.DELETE("/uploads/:id", h.handleCancelUploadSession)
+
 		// YT-DLP
 		api.GET("/ytdlp/status", h.handleGetYTDLPStatus)
 		api.GET("/ytdlp/cookies/status", h.handleGetYTDLPCookiesStatus)

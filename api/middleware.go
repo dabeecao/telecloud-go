@@ -337,8 +337,8 @@ func gzipMiddleware() gin.HandlerFunc {
 
 		// Avoid compressing stream, download, WebDAV, S3, WebSocket, and large comic/epub page binary data
 		path := c.Request.URL.Path
-		if strings.Contains(path, "/stream") || 
-			strings.Contains(path, "/dl") || 
+		if strings.Contains(path, "/stream") ||
+			strings.Contains(path, "/dl") ||
 			strings.Contains(path, "/download/") ||
 			strings.Contains(path, "/cbz/page") ||
 			strings.Contains(path, "/epub/resource") ||
@@ -358,7 +358,7 @@ func gzipMiddleware() gin.HandlerFunc {
 
 		c.Header("Content-Encoding", "gzip")
 		c.Header("Vary", "Accept-Encoding")
-		
+
 		c.Writer = &gzipResponseWriter{c.Writer, gz}
 		c.Next()
 	}

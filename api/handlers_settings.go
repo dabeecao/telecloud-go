@@ -210,7 +210,7 @@ func (h *Handler) handleGetBotUserSettings(c *gin.Context) {
 		botPoolUploadFolder = "TelegramUpload"
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"telegram_user_id":         telegramUserID,
+		"telegram_user_id":       telegramUserID,
 		"bot_pool_upload_folder": botPoolUploadFolder,
 	})
 }

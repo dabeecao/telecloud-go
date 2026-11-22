@@ -41,6 +41,11 @@ Thumbs.db
 # Go dependencies
 vendor/
 
+# Test artifacts
+coverage.out
+coverage.html
+*.test
+
 # Tailwind & Frontend
 tailwindcss
 static/css/tailwind.css

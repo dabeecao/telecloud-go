@@ -92,10 +92,10 @@ func NewHandler(cfg *config.Config) http.Handler {
 		//
 		// If you require strict security, uncomment the block below:
 		/*
-		if err := verifyS3Signature(r, authHeader, accessKey, secretKey); err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+			if err := verifyS3Signature(r, authHeader, accessKey, secretKey); err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
 		*/
 
 		// Verify signatures against the external URI clients sign. The rewrite

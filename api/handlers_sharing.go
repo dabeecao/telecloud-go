@@ -494,5 +494,3 @@ func (h *Handler) handleGetShares(c *gin.Context) {
 		"files": files,
 	})
 }
-
-

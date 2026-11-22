@@ -364,7 +364,7 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 			case "downloading":
 				progress = (float64(fu) / float64(fs)) * 50
 			case "telegram":
-				progress = 50 + (float64(fu) / float64(fs)) * 50
+				progress = 50 + (float64(fu)/float64(fs))*50
 			case "done":
 				progress = 100
 			}
@@ -1996,7 +1996,7 @@ func ResolveTelegramPeer(ctx context.Context, api *tg.Client, username string, c
 		if err != nil {
 			return nil, fmt.Errorf("resolve username failed: %w", err)
 		}
-		
+
 		switch p := res.Peer.(type) {
 		case *tg.PeerChannel:
 			var accessHash int64
@@ -2058,7 +2058,7 @@ func FetchTelegramMessage(ctx context.Context, api *tg.Client, peer tg.InputPeer
 		if err != nil {
 			return nil, fmt.Errorf("channels.getMessages failed: %w", err)
 		}
-		
+
 		switch m := res.(type) {
 		case *tg.MessagesMessages:
 			msgs = m.Messages
@@ -2072,7 +2072,7 @@ func FetchTelegramMessage(ctx context.Context, api *tg.Client, peer tg.InputPeer
 		if err != nil {
 			return nil, fmt.Errorf("messages.getMessages failed: %w", err)
 		}
-		
+
 		switch m := res.(type) {
 		case *tg.MessagesMessages:
 			msgs = m.Messages
@@ -2113,7 +2113,7 @@ func ExtractTelegramMediaInfo(msg *tg.Message) (*TelegramMediaInfo, error) {
 		if !ok {
 			return nil, fmt.Errorf("document media is empty")
 		}
-		
+
 		filename := "file"
 		for _, attr := range doc.Attributes {
 			if fAttr, ok := attr.(*tg.DocumentAttributeFilename); ok {
@@ -2275,7 +2275,7 @@ func downloadTelegramFileToFile(ctx context.Context, api *tg.Client, loc tg.Inpu
 			if err == nil {
 				break
 			}
-			
+
 			// Extract wait time from FLOOD_WAIT if possible
 			errStr := err.Error()
 			if strings.Contains(errStr, "FLOOD_WAIT") {
@@ -2286,7 +2286,7 @@ func downloadTelegramFileToFile(ctx context.Context, api *tg.Client, loc tg.Inpu
 						waitSec = sec
 					}
 				}
-				
+
 				if updateProgress != nil {
 					updateProgress(offset, fmt.Sprintf("flood_wait_retry_in|seconds=%d", waitSec))
 				}

@@ -65,9 +65,9 @@ var (
 	// processing of messages sequentially on a per-bot basis.
 	botMutexes sync.Map
 
-	AppConfig *config.Config
+	AppConfig            *config.Config
 	UserbotCooldownUntil time.Time
-	initializationDone int32
+	initializationDone   int32
 )
 
 func IsAuthorized() bool {
@@ -1315,7 +1315,7 @@ func sendDebouncedConfirmation(key confirmKey) {
 	} else {
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("✅ <b>Successfully received %d files:</b>\n", len(filenames)))
-		
+
 		maxShow := 15
 		for i, name := range filenames {
 			if i >= maxShow {
@@ -1324,7 +1324,7 @@ func sendDebouncedConfirmation(key confirmKey) {
 			}
 			sb.WriteString(fmt.Sprintf("• <code>%s</code>\n", name))
 		}
-		
+
 		sb.WriteString(fmt.Sprintf("\n📂 <b>Folder:</b> <code>/%s</code>\n☁️ <b>TeleCloud upload completed!</b>", folder))
 		confirmText = sb.String()
 	}

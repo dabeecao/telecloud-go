@@ -55,7 +55,34 @@ Mã nguồn frontend nằm ở repo: [**dabeecao/telecloud-frontend**](https://g
 2. Tạo tệp mới (VD: `fr.json`) và dịch từ `en.json`.
 3. Thêm ngôn ngữ vào `availableLangs` trong `static/js/common.js`.
 4. Gửi Pull Request vào repository frontend.
-### 3. Lưu ý về phát triển Cơ sở dữ liệu (SQL) & Khóa mã hóa
+
+### 3. Quy trình kiểm tra trước khi gửi Pull Request
+
+Mọi Pull Request vào `main` đều được kiểm tra tự động bởi workflow [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). Hãy chạy các bước tương tự ở máy cục bộ trước khi push để tránh CI thất bại:
+
+```bash
+make check      # gofmt-check + go vet + go test  (cổng kiểm tra đầy đủ)
+```
+
+Các lệnh chi tiết:
+
+| Lệnh | Mô tả |
+|---|---|
+| `make fmt` | Định dạng toàn bộ mã Go bằng `gofmt -w` |
+| `make fmt-check` | Chỉ kiểm tra định dạng, không ghi file (dùng trong CI) |
+| `make vet` | Chạy `go vet` trên tất cả package |
+| `make test` | Chạy toàn bộ unit test |
+| `make test-race` | Chạy test kèm race detector (CI chạy trên Linux/Windows/macOS) |
+| `make cover` | Xuất báo cáo độ phủ ra `coverage.out` |
+
+**Yêu cầu bắt buộc:**
+
+- Mã Go phải được định dạng bằng `gofmt` — CI sẽ **thất bại** nếu còn file chưa định dạng.
+- `go vet ./...` phải sạch (không có cảnh báo).
+- Không được giảm độ phủ test hiện có. Khi thêm logic mới (đặc biệt trong `database/`, `s3/`, `webdav/`), hãy thêm unit test đi kèm.
+- Test phải chạy được trên cả Linux, Windows và macOS (tránh phụ thuộc đường dẫn tuyệt đối kiểu `/tmp` hay `C:\`, dùng `t.TempDir()`).
+
+### 4. Lưu ý về phát triển Cơ sở dữ liệu (SQL) & Khóa mã hóa
 
 #### Khóa mã hóa (`master.key`):
 - Để tránh xung đột đường dẫn lưu trữ khóa `master.key` khi thư mục `data` được tạo sau lúc ứng dụng khởi động, toàn bộ mã nguồn sử dụng hàm `utils.GetMasterKeyFilePath()` để xác định vị trí tệp khóa chủ.
@@ -100,8 +127,33 @@ Frontend source: [**dabeecao/telecloud-frontend**](https://github.com/dabeecao/t
 2. Add the language to `availableLangs` in `static/js/common.js`.
 3. Submit a Pull Request.
 
+### 3. Pre-Pull-Request Checks
 
-### 3. Database Development & Master Key Guidelines
+Every Pull Request targeting `main` is validated automatically by [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). Run the same checks locally before pushing to avoid CI failures:
+
+```bash
+make check      # gofmt-check + go vet + go test  (the full gate)
+```
+
+Individual targets:
+
+| Command | Description |
+|---|---|
+| `make fmt` | Format all Go source with `gofmt -w` |
+| `make fmt-check` | Verify formatting without writing (what CI runs) |
+| `make vet` | Run `go vet` across all packages |
+| `make test` | Run the full unit test suite |
+| `make test-race` | Run tests with the race detector (CI runs Linux/Windows/macOS) |
+| `make cover` | Write a coverage profile to `coverage.out` |
+
+**Requirements:**
+
+- All Go files must be `gofmt`-formatted — CI **fails** on any unformatted file.
+- `go vet ./...` must be clean (no findings).
+- Do not lower existing test coverage. When adding logic — especially in `database/`, `s3/`, or `webdav/` — add accompanying unit tests.
+- Tests must pass on Linux, Windows and macOS alike (avoid absolute paths such as `/tmp` or `C:\`; use `t.TempDir()` instead).
+
+### 4. Database Development & Master Key Guidelines
 
 #### Encryption Key (`master.key`):
 - To prevent key path conflicts when the `data` directory is created dynamically during runtime, always use `utils.GetMasterKeyFilePath()` to resolve the persistent key path.

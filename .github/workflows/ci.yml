@@ -120,6 +120,20 @@ jobs:
           ./build-frontend.sh
         shell: bash
 
+      - name: Debug font layout (temporary)
+        run: |
+          echo "--- node_modules fontawesome version ---"
+          cat web/node_modules/@fortawesome/fontawesome-free/package.json 2>/dev/null | grep '"version"' || echo "package.json not found"
+          echo "--- node_modules webfonts dir ---"
+          ls -la web/node_modules/@fortawesome/fontawesome-free/webfonts/ 2>&1 | head -10 || echo "no webfonts in node_modules"
+          echo "--- static dir listing ---"
+          ls -la web/static/ 2>&1 | head -20
+          echo "--- static/css listing ---"
+          ls -la web/static/css/ 2>&1 | head -20
+          echo "--- url() refs in built css ---"
+          grep -o 'url([^)]*woff[^)]*)' web/static/css/style.min.css 2>/dev/null | head -5 || echo "no woff refs in css"
+        shell: bash
+
       - name: Verify go:embed prerequisites
         run: |
           missing=0

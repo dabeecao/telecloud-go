@@ -62,6 +62,27 @@ jobs:
           chmod +x build-frontend.sh
           ./build-frontend.sh
 
+      - name: Verify go:embed prerequisites
+        run: |
+          missing=0
+          for p in web/static/css/*.min.css web/static/css/tailwind.css \
+                   web/static/js/*.min.js web/static/themes/*.min.css \
+                   web/static/locales/*.min.json web/static/fonts web/static/webfonts; do
+            if ! ls -d $p >/dev/null 2>&1; then
+              echo "::error::go:embed prerequisite missing after frontend build: $p"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo ""
+            echo "main.go embeds these paths. A common cause is a dependency"
+            echo "upgrade that changed its file layout (Font Awesome dropping"
+            echo "webfonts/). Check web/bun.lock is committed and used."
+            exit 1
+          fi
+          echo "All go:embed prerequisites present."
+        shell: bash
+
       - name: go vet
         run: go vet ./...
 
@@ -97,6 +118,27 @@ jobs:
           cd web
           chmod +x build-frontend.sh
           ./build-frontend.sh
+        shell: bash
+
+      - name: Verify go:embed prerequisites
+        run: |
+          missing=0
+          for p in web/static/css/*.min.css web/static/css/tailwind.css \
+                   web/static/js/*.min.js web/static/themes/*.min.css \
+                   web/static/locales/*.min.json web/static/fonts web/static/webfonts; do
+            if ! ls -d $p >/dev/null 2>&1; then
+              echo "::error::go:embed prerequisite missing after frontend build: $p"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo ""
+            echo "main.go embeds these paths. A common cause is a dependency"
+            echo "upgrade that changed its file layout (Font Awesome dropping"
+            echo "webfonts/). Check web/bun.lock is committed and used."
+            exit 1
+          fi
+          echo "All go:embed prerequisites present."
         shell: bash
 
       - name: Download modules
@@ -135,6 +177,26 @@ jobs:
           cd web
           chmod +x build-frontend.sh
           ./build-frontend.sh
+
+      - name: Verify go:embed prerequisites
+        run: |
+          missing=0
+          for p in web/static/css/*.min.css web/static/css/tailwind.css \
+                   web/static/js/*.min.js web/static/themes/*.min.css \
+                   web/static/locales/*.min.json web/static/fonts web/static/webfonts; do
+            if ! ls -d $p >/dev/null 2>&1; then
+              echo "::error::go:embed prerequisite missing after frontend build: $p"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo ""
+            echo "main.go embeds these paths. A common cause is a dependency"
+            echo "upgrade that changed its file layout (Font Awesome dropping"
+            echo "webfonts/). Check web/bun.lock is committed and used."
+            exit 1
+          fi
+          echo "All go:embed prerequisites present."
 
       - name: Generate coverage profile
         run: go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...

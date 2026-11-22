@@ -1264,7 +1264,12 @@ func (h *Handler) handlePostCheckExists(c *gin.Context) {
 	existing := make([]string, 0)
 	for _, fn := range filenames {
 		var count int
-		err := database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND is_folder = FALSE AND owner = ?", dbPath, fn, username)
+		// Mirror the visibility rule used by every listing: a row only counts as
+		// an existing file once it references stored Telegram content. Without
+		// these filters an in-flight upload (row inserted, no message_id yet) or
+		// an item sitting in the trash would pop the collision dialog for a file
+		// the user cannot open.
+		err := database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND is_folder = FALSE AND owner = ? AND message_id IS NOT NULL AND deleted_at IS NULL", dbPath, fn, username)
 		if err == nil && count > 0 {
 			existing = append(existing, fn)
 		}

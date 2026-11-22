@@ -187,6 +187,7 @@ func main() {
 	startCleanupTask(cfg)
 	startTrashCleanupTask(cfg)
 	startSessionCleanupTask()
+	startAbandonedFileRowCleanupTask()
 	// cancelCtx is used to signal the Telegram client to stop
 	appCtx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
@@ -449,6 +450,31 @@ func startSessionCleanupTask() {
 			}
 			if a := database.CleanupExpiredAudit(); a > 0 {
 				log.Printf("[Audit] purged %d audit row(s) older than retention horizon", a)
+			}
+		}
+		runOnce()
+		for range ticker.C {
+			runOnce()
+		}
+	}()
+}
+
+// startAbandonedFileRowCleanupTask purges placeholder `files` rows left behind
+// by a process that died before storing a file's first Telegram part. Such rows
+// are hidden from every listing but still occupy the filename, which silently
+// pushes the next upload of the same name to "name (1)". See
+// database.CleanupAbandonedFileRows.
+func startAbandonedFileRowCleanupTask() {
+	go func() {
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		// Run once on boot: the rows this is meant to catch are precisely the
+		// ones left over from the previous run.
+		runOnce := func() {
+			if n, err := database.CleanupAbandonedFileRows(database.AbandonedFileRowAge); err != nil {
+				log.Printf("[Files] abandoned-row cleanup failed: %v", err)
+			} else if n > 0 {
+				log.Printf("[Files] purged %d abandoned placeholder row(s) with no Telegram content", n)
 			}
 		}
 		runOnce()

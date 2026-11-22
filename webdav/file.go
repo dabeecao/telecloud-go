@@ -2,6 +2,7 @@ package webdav
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -35,6 +36,24 @@ func (fi *telecloudFileInfo) ModTime() time.Time { return fi.mtime }
 func (fi *telecloudFileInfo) IsDir() bool        { return fi.isDir }
 func (fi *telecloudFileInfo) Sys() interface{}   { return nil }
 
+// ContentType satisfies the optional interface x/net/webdav looks for when
+// answering PROPFIND. Without it the library falls back to opening the file to
+// sniff its type — which, for a file whose Telegram upload has not finished,
+// hits the "no message_id and no parts yet" branch in OpenFile and fails the
+// whole PROPFIND with a 500. Clients then treat the just-completed PUT as
+// failed and re-upload the entire file. Deriving the type from the extension
+// keeps PROPFIND correct for in-flight uploads and spares every other PROPFIND
+// a pointless round trip to Telegram.
+func (fi *telecloudFileInfo) ContentType(ctx context.Context) (string, error) {
+	if fi.isDir {
+		return "httpd/unix-directory", nil
+	}
+	if ct := mime.TypeByExtension(filepath.Ext(fi.name)); ct != "" {
+		return ct, nil
+	}
+	return "application/octet-stream", nil
+}
+
 type telecloudFile struct {
 	isDir bool
 	path  string
@@ -48,11 +67,23 @@ type telecloudFile struct {
 	isAdmin  bool
 	username string
 	fs       *telecloudFS
+
+	// notReady marks a row whose Telegram upload has not stored any part yet.
+	// Metadata (Stat) is valid; the bytes are not retrievable.
+	notReady bool
 }
+
+// errUploadInProgress is returned when a client tries to read a file whose
+// Telegram upload has not finished. The file exists and its metadata is
+// correct, so PROPFIND must succeed — only the content is unavailable.
+var errUploadInProgress = errors.New("file is still uploading to Telegram")
 
 func (f *telecloudFile) Read(p []byte) (int, error) {
 	if f.isDir {
 		return 0, io.ErrUnexpectedEOF
+	}
+	if f.notReady {
+		return 0, errUploadInProgress
 	}
 	if f.rs == nil {
 		return 0, io.EOF
@@ -63,6 +94,9 @@ func (f *telecloudFile) Read(p []byte) (int, error) {
 func (f *telecloudFile) Seek(offset int64, whence int) (int64, error) {
 	if f.isDir {
 		return 0, io.ErrUnexpectedEOF
+	}
+	if f.notReady {
+		return 0, errUploadInProgress
 	}
 	if f.rs == nil {
 		return 0, io.EOF
@@ -197,6 +231,11 @@ func (w *fileWriter) Write(p []byte) (int, error) {
 	return w.file.Write(p)
 }
 
+// rowVisibleTimeout bounds how long Close blocks waiting for the files row to
+// become queryable. Generous enough to cover a busy upload queue, short enough
+// that a genuinely stuck upload does not hold the PUT open.
+const rowVisibleTimeout = 20 * time.Second
+
 func (w *fileWriter) Close() error {
 	if w.file != nil {
 		w.file.Close()
@@ -214,6 +253,29 @@ func (w *fileWriter) Close() error {
 
 			tgclient.ProcessCompleteUpload(context.Background(), w.tempPath, w.filename, w.dir, mimeType, w.taskID, w.cfg, w.overwrite, w.owner)
 		}()
+
+		// WebDAV clients stat the object as soon as PUT returns; rclone does so
+		// within a millisecond. Returning before the goroutine above has
+		// inserted the files row made that PROPFIND 404 (surfacing as a 500),
+		// so the client declared the upload failed and re-PUT the whole file —
+		// gigabytes at a time, each retry adding a "name (n)" duplicate row.
+		// Block until the row is queryable so the PUT response is truthful.
+		deadline := time.Now().Add(rowVisibleTimeout)
+		for {
+			var n int
+			err := database.RODB.Get(&n,
+				"SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND owner = ? AND deleted_at IS NULL",
+				w.dir, w.filename, w.owner)
+			if err == nil && n > 0 {
+				break
+			}
+			if !time.Now().Before(deadline) {
+				// Fall through rather than fail: the upload itself is still
+				// running, and a slow stat beats losing the transferred data.
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
 	}
 	return nil
 }

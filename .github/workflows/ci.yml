@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -45,6 +47,21 @@ jobs:
           fi
           echo "All Go files are gofmt-formatted."
 
+      # go vet (and go build) must type-check main.go, which go:embed's the
+      # frontend build output (web/static/**/*.min.*). Those files are
+      # gitignored, so they only exist after a frontend build — without this
+      # step the embed directive fails with "no matching files found".
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build frontend assets (required by go:embed)
+        run: |
+          cd web
+          chmod +x build-frontend.sh
+          ./build-frontend.sh
+
       - name: go vet
         run: go vet ./...
 
@@ -58,12 +75,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.2'
           cache: true
+
+      # main.go go:embed's the frontend build output, so it must exist before
+      # anything compiles. The embedded assets are platform-independent, so
+      # building them on Linux once per job is enough.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build frontend assets (required by go:embed)
+        run: |
+          cd web
+          chmod +x build-frontend.sh
+          ./build-frontend.sh
+        shell: bash
 
       - name: Download modules
         run: go mod download
@@ -74,6 +108,7 @@ jobs:
 
       - name: Run tests
         run: go test -race -count=1 ./...
+        shell: bash
 
   coverage:
     name: Coverage
@@ -81,12 +116,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.2'
           cache: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build frontend assets (required by go:embed)
+        run: |
+          cd web
+          chmod +x build-frontend.sh
+          ./build-frontend.sh
 
       - name: Generate coverage profile
         run: go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...

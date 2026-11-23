@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -40,9 +40,15 @@ func NewTelecloudFS(cfg *config.Config) webdav.FileSystem {
 	}
 }
 
-// cleanPath ensures paths start with / and don't end with /
+// cleanPath normalises a virtual path to the form stored in the database.
+// It must stay POSIX (`/`) on every OS: on Windows filepath.Clean rewrites `/`
+// to `\`, and the resulting `WHERE path = '\\'` matches nothing that was
+// written as `/` (including rows replicated from a Linux master).
 func cleanPath(p string) string {
-	p = filepath.Clean(p)
+	// path.Clean only treats `/` as a separator, so a Windows client that sent
+	// `\` would pass through unchanged. The database never stores those.
+	p = strings.ReplaceAll(p, "\\", "/")
+	p = path.Clean(p)
 	if p == "." || p == "" {
 		return "/"
 	}
@@ -55,13 +61,11 @@ func splitPath(p string) (string, string) {
 	if p == "/" {
 		return "/", ""
 	}
-	dir := filepath.Dir(p)
-	base := filepath.Base(p)
-	return dir, base
+	return path.Dir(p), path.Base(p)
 }
 
 func mapPath(userPath, username string, isAdmin bool) string {
-	cleanPath := filepath.Clean("/" + userPath)
+	cleanPath := cleanPath("/" + userPath)
 	if isAdmin {
 		return cleanPath
 	}
@@ -69,20 +73,6 @@ func mapPath(userPath, username string, isAdmin bool) string {
 		return "/" + username
 	}
 	return "/" + username + cleanPath
-}
-
-func unmapPath(dbPath, username string, isAdmin bool) string {
-	if isAdmin {
-		return dbPath
-	}
-	prefix := "/" + username
-	if dbPath == prefix {
-		return "/"
-	}
-	if strings.HasPrefix(dbPath, prefix+"/") {
-		return strings.TrimPrefix(dbPath, prefix)
-	}
-	return dbPath
 }
 
 func getUserInfo(ctx context.Context) (string, bool) {

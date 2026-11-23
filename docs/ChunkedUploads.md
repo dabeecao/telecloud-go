@@ -15,7 +15,7 @@ client ──PUT 32 MiB chunk──▶ staging file ──all chunks of a part p
 ```
 
 * **Transport chunks** (HTTP) and **storage parts** (Telegram) are separate. A storage part is the largest multiple of the chunk size that fits the account limit (e.g. 59 × 32 MiB = 1888 MiB for a 1900 MiB limit), so a chunk never straddles two parts.
-* A part is sent to Telegram as soon as its chunks arrive, then its staging file is removed. Local disk use is therefore bounded by `CHUNKED_UPLOAD_STAGED_PARTS × part size`, **independent of the file size**. Memory use is bounded by a small copy buffer per in-flight chunk request.
+* A part is sent to Telegram as soon as its chunks arrive, then its staging file is removed. At most `CHUNKED_UPLOAD_STAGED_PARTS` parts **that already hold data** may be on disk per session, so disk use is bounded by `CHUNKED_UPLOAD_STAGED_PARTS × part size`, **independent of the file size**. A chunk is accepted whenever it does not put data on one more part than that, even if an earlier part is still incomplete; it is refused with `staging_window_full` only once that many parts already hold data. Memory use is bounded by a small copy buffer per in-flight chunk request.
 * Chunk progress, part state and the running whole-file SHA-256 state are persisted. After a restart `Resume` continues without repeating completed work.
 * The file appears in the file browser **only** after every part is stored and the size and SHA-256 match.
 
@@ -47,7 +47,7 @@ All endpoints are under `/api`, use the normal session cookie (+ CSRF header) **
 | 409 `chunk_in_progress` + `Retry-After` | A previous attempt for this chunk is still being received (typical after a proxy gave up on a slow request). | Wait, retry — not a failure. |
 | 409 `chunk_conflict` | Index already stored with different content. | Abort/restart the session. |
 | 422 `chunk_checksum_mismatch` | Body does not match `X-Chunk-SHA256` (corruption in transit). | Re-send. |
-| 429 + `Retry-After` | Backpressure (`server_busy`, `too_many_parallel_chunks`, `staging_window_full`). | Wait, retry. |
+| 429 + `Retry-After` | Backpressure. `server_busy` and `too_many_parallel_chunks` are brief: wait `Retry-After` and retry the same chunk. `staging_window_full` means this chunk belongs to a part past the few parts the server keeps on disk; retrying it immediately never succeeds. Send chunks in order and wait until earlier parts have been stored before continuing. |
 | 503 + `Retry-After` | Telegram not ready (e.g. starting up). | Wait, retry. |
 | 409 `incomplete_upload` | Finalize with missing chunks (lists the first missing). | Upload them, finalize again. |
 | 202 (finalize) | Last parts are still being stored. | Poll `GET /uploads/:id` or call finalize again until `finalized` (HTTP 200). |

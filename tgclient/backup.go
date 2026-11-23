@@ -286,59 +286,6 @@ func zipBackupBundle(dbPath, thumbsDir, targetZip string) error {
 	return nil
 }
 
-func zipDirectory(source, target string) error {
-	zipfile, err := os.Create(target)
-	if err != nil {
-		return err
-	}
-	defer zipfile.Close()
-
-	archive := zip.NewWriter(zipfile)
-	defer archive.Close()
-
-	info, err := os.Stat(source)
-	if err != nil {
-		return nil // Source doesn't exist, skip
-	}
-
-	var baseDir string
-	if info.IsDir() {
-		baseDir = filepath.Base(source)
-	}
-
-	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return err
-		}
-
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
-		}
-
-		if baseDir != "" {
-			header.Name = filepath.Join(baseDir, strings.TrimPrefix(path, source))
-		}
-
-		header.Method = zip.Deflate
-
-		writer, err := archive.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		_, err = io.Copy(writer, file)
-		return err
-	})
-
-	return err
-}
-
 func copyFile(src, dst string) error {
 	sourceFile, err := os.Open(src)
 	if err != nil {

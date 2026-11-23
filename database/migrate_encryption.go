@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"telecloud/utils"
 )
@@ -151,18 +150,4 @@ func IsEncryptionMigrationNeeded() bool {
 		return true
 	}
 	return v < encryptionSchemaVersion
-}
-
-// migrationSafeSplit splits a SQL blob on ';' for batched DDL. Exposed so
-// other migrations can reuse the same logic. Currently unused outside this
-// file but kept for future migrations.
-func migrationSafeSplit(blob string) []string {
-	parts := strings.Split(blob, ";")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if strings.TrimSpace(p) != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }

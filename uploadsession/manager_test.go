@@ -431,11 +431,17 @@ func TestBackpressureWindowAndParallelLimit(t *testing.T) {
 	data := randBytes(6 * mib) // parts of 2 chunks
 	v := create(t, m, data)
 
-	// Part 1 is outside the 1-part staging window while part 0 is incomplete.
-	_, err := put(m, v.ID, 2, data, mib)
+	// Part 0 holds nothing yet, so a chunk of part 1 is the only part on disk and
+	// fits the window. It used to be refused purely because of its index.
+	if _, err := put(m, v.ID, 2, data, mib); err != nil {
+		t.Fatal(err)
+	}
+	// Part 1 now holds data, so a second part does not fit the 1-part window.
+	_, err := put(m, v.ID, 4, data, mib)
 	wantCode(t, err, http.StatusTooManyRequests, "staging_window_full")
 
-	// Per-session parallelism: hold one chunk request open, a second is refused.
+	// Per-session parallelism: hold one chunk request open, a second for the
+	// same part is refused.
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
@@ -456,6 +462,36 @@ func TestBackpressureWindowAndParallelLimit(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+	close(br.gate)
+}
+
+// Chunks arrive out of order because clients upload several at once. The window
+// must still accept a chunk of the next part while the earliest part is missing
+// chunks: refusing it stalls the upload for as long as that part is busy.
+func TestWindowAllowsNextPartBeforeEarlierPartCompletes(t *testing.T) {
+	initDB(t)
+	cfg := testCfg(t)
+	cfg.ChunkedUpload.StagedParts = 2
+	br := newFakeBridge()
+	br.gate = make(chan struct{}) // hold every Telegram upload so nothing finishes
+	m := New(cfg, br)
+	defer m.Close()
+	data := randBytes(8 * mib) // 4 parts of 2 chunks
+	v := create(t, m, data)
+
+	// The old check refused anything at or past "lowest open part + StagedParts",
+	// so with part 0 still incomplete a chunk of part 2 was rejected even though
+	// only two parts would be on disk. Clients that ran ahead then retried those
+	// chunks forever and the earliest part never filled.
+	if _, err := put(m, v.ID, 0, data, mib); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := put(m, v.ID, 4, data, mib); err != nil {
+		t.Fatalf("chunk of part 2 refused while only 2 parts are unfinished: %v", err)
+	}
+	// A third unfinished part is still too many.
+	_, err := put(m, v.ID, 6, data, mib)
+	wantCode(t, err, http.StatusTooManyRequests, "staging_window_full")
 	close(br.gate)
 }
 

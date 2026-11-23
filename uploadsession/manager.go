@@ -447,23 +447,46 @@ func (m *Manager) duplicate(c *Chunk, sum string) (*ChunkResult, error) {
 }
 
 // checkWindow applies backpressure: only a few Telegram parts may be staged on
-// disk at once. A chunk beyond the window is deferred (429) until earlier
-// parts have been stored in Telegram and released.
+// disk at once. A chunk is admitted while accepting it leaves at most
+// StagedParts parts with data on disk.
+//
+// Only parts that already hold data count. Every part row is created up front
+// in state "pending", so counting pending rows would treat parts the client has
+// not touched yet as occupying a slot and refuse almost everything.
+//
+// The bound is a count of occupied parts, not "lowest open index +
+// StagedParts". Clients upload chunks concurrently and out of order, so a
+// chunk of a later part can arrive before the earliest part is complete. As
+// long as that chunk does not put data on one part too many, accepting it
+// cannot grow disk use past the limit, and refusing it stalls the upload: the
+// earliest part can stay unfinished for as long as Telegram is retrying it.
 func (m *Manager) checkWindow(s *Session, partIdx int64) error {
-	var firstOpen struct {
-		V *int64 `db:"v"`
-	}
-	if err := database.RODB.Get(&firstOpen, "SELECT MIN(part_index) AS v FROM upload_session_parts WHERE session_id = ? AND state <> ?", s.ID, partUploaded); err != nil {
+	idx, err := chunkIndexes(s.ID)
+	if err != nil {
 		return err
 	}
-	lowest := s.TotalParts
-	if firstOpen.V != nil {
-		lowest = *firstOpen.V
+	chunksPerPart := s.PartSize / s.ChunkSize
+	if chunksPerPart < 1 {
+		chunksPerPart = 1
 	}
-	if s.HashedParts < lowest {
-		lowest = s.HashedParts
+	// Parts that already hold a confirmed chunk, plus the part this request
+	// writes. Parts with no chunk yet have no staging file, so they take no
+	// disk and must not count — every part row exists from the start. Parts
+	// already stored in Telegram no longer have a staging file either (it is
+	// removed once the part is hashed, which happens before the upload), and a
+	// repeat of one of their chunks is answered without writing.
+	occupied := map[int64]bool{}
+	for _, c := range idx {
+		if p := c / chunksPerPart; p < s.HashedParts {
+			continue
+		} else if p <= partIdx {
+			occupied[p] = true
+		}
 	}
-	if partIdx >= lowest+int64(m.cfg.ChunkedUpload.StagedParts) {
+	if partIdx >= s.HashedParts {
+		occupied[partIdx] = true
+	}
+	if int64(len(occupied)) > int64(m.cfg.ChunkedUpload.StagedParts) {
 		return busyErr("staging_window_full")
 	}
 	return nil

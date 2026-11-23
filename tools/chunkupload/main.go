@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -29,6 +30,11 @@ import (
 
 // waitBudget bounds how long a chunk may be deferred by server backpressure.
 const waitBudget = 45 * time.Minute
+
+// errWindowFull is returned when the server refuses a chunk because it is past
+// the staging window. Unlike other 429s it is not retried per chunk: every
+// higher index would be refused too, so the caller waits for earlier parts.
+var errWindowFull = errors.New("staging window full")
 
 type session struct {
 	ID              string     `json:"id"`
@@ -180,71 +186,106 @@ func main() {
 		}
 	}
 
-	have := make(map[int64]bool)
-	for _, r := range s.ConfirmedRanges {
-		for i := r[0]; i <= r[1]; i++ {
-			have[i] = true
-		}
-	}
-	todo := make(chan int64)
 	var sent, confirmed int64
-	var failed atomic.Value
 	var corruptOnce sync.Once
-	var wg sync.WaitGroup
-	for w := 0; w < *parallel; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range todo {
-				if failed.Load() != nil {
-					continue
-				}
-				off := idx * s.ChunkSize
-				n := s.ChunkSize
-				if off+n > size {
-					n = size - off
-				}
-				sum, err := fileSHA(f, off, n)
-				if err != nil {
-					failed.Store(err)
-					continue
-				}
-				times := 1
-				if *dupes {
-					times = 2
-				}
-				for rep := 0; rep < times; rep++ {
-					bad := false
-					if idx == *corrupt {
-						corruptOnce.Do(func() { bad = true })
-					}
-					if err := c.sendChunk(s.ID, idx, func() io.Reader { return io.NewSectionReader(f, off, n) }, n, sum, bad, *retries); err != nil {
-						failed.Store(err)
-						break
-					}
-				}
-				atomic.AddInt64(&sent, n)
-				done := atomic.AddInt64(&confirmed, 1)
-				if *killAfter > 0 && int(done) >= *killAfter {
-					fmt.Printf("TEST: simulating client crash after %d chunks\n", done)
-					os.Exit(3)
-				}
-				el := time.Since(start).Seconds()
-				fmt.Printf("\rchunk %d/%d  %.1f MiB/s  rss=%dMiB   ", idx+1, s.TotalChunks, float64(atomic.LoadInt64(&sent))/(1<<20)/el, rssMiB())
-			}
-		}()
-	}
 	t0 := time.Now()
-	for i := int64(0); i < s.TotalChunks; i++ {
-		if !have[i] {
-			todo <- i
+	for {
+		have := make(map[int64]bool)
+		for _, r := range s.ConfirmedRanges {
+			for i := r[0]; i <= r[1]; i++ {
+				have[i] = true
+			}
 		}
-	}
-	close(todo)
-	wg.Wait()
-	if e := failed.Load(); e != nil {
-		fmt.Println()
-		check(e.(error))
+		// Workers pull the lowest missing index instead of a pre-filled channel,
+		// so chunks arrive in part order. The server only stages a few Telegram
+		// parts at once and answers 429 staging_window_full beyond that; handing
+		// out high indexes first would pin every worker on chunks it must refuse.
+		var cursor int64
+		var cursorMu sync.Mutex
+		nextIndex := func() int64 {
+			cursorMu.Lock()
+			defer cursorMu.Unlock()
+			for cursor < s.TotalChunks && have[cursor] {
+				cursor++
+			}
+			if cursor >= s.TotalChunks {
+				return -1
+			}
+			idx := cursor
+			cursor++
+			return idx
+		}
+		var failed atomic.Value
+		var windowFull atomic.Bool
+		var wg sync.WaitGroup
+		for w := 0; w < *parallel; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					if failed.Load() != nil || windowFull.Load() {
+						return
+					}
+					idx := nextIndex()
+					if idx < 0 {
+						return
+					}
+					off := idx * s.ChunkSize
+					n := s.ChunkSize
+					if off+n > size {
+						n = size - off
+					}
+					sum, err := fileSHA(f, off, n)
+					if err != nil {
+						failed.Store(err)
+						return
+					}
+					times := 1
+					if *dupes {
+						times = 2
+					}
+					for rep := 0; rep < times; rep++ {
+						bad := false
+						if idx == *corrupt {
+							corruptOnce.Do(func() { bad = true })
+						}
+						if err := c.sendChunk(s.ID, idx, func() io.Reader { return io.NewSectionReader(f, off, n) }, n, sum, bad, *retries); err != nil {
+							if err == errWindowFull {
+								// This chunk is past the staging window, so every
+								// higher index is too. Stop and let the server drain.
+								windowFull.Store(true)
+								return
+							}
+							failed.Store(err)
+							return
+						}
+					}
+					atomic.AddInt64(&sent, n)
+					done := atomic.AddInt64(&confirmed, 1)
+					if *killAfter > 0 && int(done) >= *killAfter {
+						fmt.Printf("TEST: simulating client crash after %d chunks\n", done)
+						os.Exit(3)
+					}
+					el := time.Since(start).Seconds()
+					fmt.Printf("\rchunk %d/%d  %.1f MiB/s  rss=%dMiB   ", idx+1, s.TotalChunks, float64(atomic.LoadInt64(&sent))/(1<<20)/el, rssMiB())
+				}
+			}()
+		}
+		wg.Wait()
+		if e := failed.Load(); e != nil {
+			fmt.Println()
+			check(e.(error))
+		}
+		if !windowFull.Load() {
+			break
+		}
+		// The window fills long before a large file is done. Re-read what the
+		// server kept and continue once earlier parts have been stored.
+		fmt.Printf("\nstaging window full; waiting for earlier parts to reach Telegram\n")
+		time.Sleep(5 * time.Second)
+		if _, err := c.json("GET", "/api/uploads/"+s.ID, nil, &s); err != nil {
+			check(err)
+		}
 	}
 	fmt.Printf("\nuploaded %d chunks in %.1fs\n", confirmed, time.Since(t0).Seconds())
 
@@ -322,6 +363,9 @@ func (c *client) sendChunk(id string, idx int64, open func() io.Reader, n int64,
 				}
 				err = fmt.Errorf("HTTP 200 without a chunk acknowledgement")
 				goto retry
+			}
+			if resp.StatusCode == 429 && bytes.Contains(raw, []byte(`"staging_window_full"`)) {
+				return errWindowFull
 			}
 			if s, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil {
 				retryAfter = time.Duration(s) * time.Second

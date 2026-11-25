@@ -444,6 +444,18 @@ func GetTask(taskID string) *UploadStatus {
 	return nil
 }
 
+// ResetTerminalTask drops a finished (done/error/cancelled) entry so a new run
+// reusing the same task ID — the web UI derives it from file metadata — is not
+// stuck behind the terminal-status guard in UpdateTaskWithFile.
+func ResetTerminalTask(taskID, owner string) {
+	taskMutex.Lock()
+	defer taskMutex.Unlock()
+	if t, ok := UploadTasks[taskID]; ok && t.Owner == owner &&
+		(t.Status == "done" || t.Status == "error" || t.Status == "cancelled") {
+		delete(UploadTasks, taskID)
+	}
+}
+
 func CancelTask(taskID string, username string) bool {
 	taskMutex.Lock()
 

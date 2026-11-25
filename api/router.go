@@ -161,6 +161,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 
 		// Files & Folders
 		api.GET("/files", h.handleGetFiles)
+		api.GET("/files/:id", h.handleGetFile)
 		api.POST("/folders", h.handlePostFolders)
 		api.POST("/upload", h.handlePostUpload)
 		api.POST("/remote-upload", h.handlePostRemoteUpload)

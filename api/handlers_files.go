@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +27,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
+
+var errUploadTaskForbidden = errors.New("upload task belongs to another user")
+
+// processCompleteUpload is swapped out in tests.
+var processCompleteUpload = tgclient.ProcessCompleteUpload
 
 var chunkBufPool = sync.Pool{
 	New: func() interface{} {
@@ -203,18 +210,7 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 	}
 
 	for i := range files {
-		files[i].Path = unmapPath(files[i].Path, username, isAdmin)
-		if files[i].ShareToken != nil && !files[i].IsFolder {
-			files[i].DirectToken = utils.GenerateDirectToken(*files[i].ShareToken)
-		}
-		if files[i].ThumbPath != nil {
-			if _, err := os.Stat(*files[i].ThumbPath); err == nil {
-				files[i].HasThumb = true
-			}
-		}
-		if files[i].SharePassword != nil && *files[i].SharePassword != "" {
-			files[i].HasSharePassword = true
-		}
+		decorateFileForResponse(&files[i], username, isAdmin)
 	}
 	var storageUsed int64
 	if isAdmin {
@@ -228,6 +224,44 @@ func (h *Handler) handleGetFiles(c *gin.Context) {
 		"files":        files,
 		"storage_used": storageUsed,
 	})
+}
+
+// decorateFileForResponse fills the display-only fields of a file row: the
+// user-facing path, the direct token, thumbnail presence, and whether a share
+// password is set. It is shared by every endpoint that returns file rows.
+func decorateFileForResponse(f *database.File, username string, isAdmin bool) {
+	f.Path = unmapPath(f.Path, username, isAdmin)
+	if f.ShareToken != nil && !f.IsFolder {
+		f.DirectToken = utils.GenerateDirectToken(*f.ShareToken)
+	}
+	if f.ThumbPath != nil {
+		if _, err := os.Stat(*f.ThumbPath); err == nil {
+			f.HasThumb = true
+		}
+	}
+	if f.SharePassword != nil && *f.SharePassword != "" {
+		f.HasSharePassword = true
+	}
+}
+
+// handleGetFile returns one file row in the same shape as the listing, so a
+// client can read its share_token without listing the whole folder.
+func (h *Handler) handleGetFile(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	username := c.GetString("username")
+	isAdmin := c.GetBool("is_admin")
+
+	var item database.File
+	if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ? AND deleted_at IS NULL AND (is_folder = TRUE OR message_id IS NOT NULL)", id, username); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	decorateFileForResponse(&item, username, isAdmin)
+	c.JSON(http.StatusOK, item)
 }
 
 func (h *Handler) handlePostFolders(c *gin.Context) {
@@ -269,6 +303,10 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 	defer file.Close()
 
 	filename := filepath.Base(c.PostForm("filename"))
+	if filename == "." || filename == ".." || filename == "/" || filename == string(filepath.Separator) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_filename"})
+		return
+	}
 	path := c.PostForm("path")
 	username := c.GetString("username")
 	isAdmin := c.GetBool("is_admin")
@@ -310,137 +348,293 @@ func (h *Handler) handlePostUpload(c *gin.Context) {
 		return
 	}
 
-	tempDir := h.cfg.TempDir
-	os.MkdirAll(tempDir, os.ModePerm)
-	safeFilename := filepath.Base(filename)
-	tempFilePath := filepath.Join(tempDir, taskID+"_"+safeFilename)
+	chunkSize, err := strconv.ParseInt(c.PostForm("chunk_size"), 10, 64)
+	if err != nil || chunkSize <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chunk_size"})
+		return
+	}
+	totalSize, err := strconv.ParseInt(c.PostForm("total_size"), 10, 64)
+	if err != nil || totalSize < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_total_size"})
+		return
+	}
+	// The chunk grid must describe the file exactly: every chunk but the last
+	// is chunkSize bytes and the last one is non-empty. Otherwise offsets and
+	// the Truncate size disagree and the assembled file is corrupt.
+	expectedChunks := int64(1)
+	if totalSize > 0 {
+		expectedChunks = (totalSize + chunkSize - 1) / chunkSize
+	}
+	if expectedChunks != int64(totalChunks) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chunk_layout_mismatch"})
+		return
+	}
+	offset := int64(chunkIndex) * chunkSize
+	expectedLen := chunkSize
+	if remaining := totalSize - offset; remaining < expectedLen {
+		expectedLen = remaining
+	}
+	if header.Size >= 0 && header.Size != expectedLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chunk_size_mismatch"})
+		return
+	}
 
+	tempDir := h.cfg.TempDir
+	if err := os.MkdirAll(tempDir, os.ModePerm); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_open_temp_file"})
+		return
+	}
+	tempFilePath := filepath.Join(tempDir, taskID+"_"+filename)
 	rel, err := filepath.Rel(tempDir, tempFilePath)
 	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_path"})
 		return
 	}
 
-	chunkSize, err := strconv.ParseInt(c.PostForm("chunk_size"), 10, 64)
-	if err != nil || chunkSize <= 0 {
-		chunkSize = 50 * 1024 * 1024 // Default fallback
-	}
-	offset := int64(chunkIndex) * int64(chunkSize)
-
-	totalSize, _ := strconv.ParseInt(c.PostForm("total_size"), 10, 64)
-	if totalSize <= 0 {
-		totalSize = int64(totalChunks) * int64(chunkSize) // Fallback estimation
-	}
-
-	val, loaded := chunkTrackerSync.LoadOrStore(taskID, &chunkState{
-		received: make(map[int]bool),
-	})
-	state := val.(*chunkState)
-
-	if !loaded {
-		// Task first loaded in memory in this session (e.g. after server restart or resume)
-		// Load existing chunks from DB to synchronise the state.
-		var dbChunks []int
-		err := database.RODB.Select(&dbChunks, "SELECT chunk_index FROM upload_chunks WHERE task_id = ?", taskID)
-		if err == nil {
-			state.Lock()
-			for _, chIdx := range dbChunks {
-				state.received[chIdx] = true
+	// A chunk for a task that was already handed to Telegram or cancelled is a
+	// retry whose response got lost, or a straggler after cancel. It must not
+	// start a new task (fresh temp file, resume rows nobody cleans up).
+	if v, ok := closedTasks.Load(taskID); ok {
+		if ct := v.(*closedTask); ct.owner == username {
+			if ct.cancelled {
+				c.JSON(http.StatusConflict, gin.H{"error": "upload_cancelled"})
+			} else {
+				c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "pushing_to_tg"})
 			}
-			state.Unlock()
+			return
 		}
 	}
 
-	// Update temporary file path with taskID and safe filename
-	tempFilePath = filepath.Join(tempDir, taskID+"_"+safeFilename)
+	var state *chunkState
+	for attempt := 0; ; attempt++ {
+		val, _ := chunkTrackerSync.LoadOrStore(taskID, &chunkState{received: make(map[int]bool)})
+		state = val.(*chunkState)
 
-	out, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY, 0644)
+		// Initialise exactly once per in-memory task. Concurrent first chunks used
+		// to race here: whoever lost LoadOrStore skipped the DB resync and wrote
+		// into a file the winner was about to Truncate.
+		state.initOnce.Do(func() {
+			var task struct {
+				Owner string `db:"owner"`
+			}
+			dbErr := database.RODB.Get(&task, "SELECT owner FROM upload_tasks WHERE id = ?", taskID)
+			if dbErr == nil && task.Owner != username {
+				// Record the real owner so the owner's own concurrent request
+				// can tell it lost this race and initialise a fresh state.
+				state.owner = task.Owner
+				state.initErr = errUploadTaskForbidden
+				return
+			}
+			tgclient.ResetTerminalTask(taskID, username)
+			state.owner = username
+			state.filename = filename
+			state.totalSize = totalSize
+			state.chunkSize = chunkSize
+			state.totalChunks = totalChunks
+
+			resumed := false
+			if dbErr == nil {
+				var dbChunks []int
+				if err := database.RODB.Select(&dbChunks, "SELECT chunk_index FROM upload_chunks WHERE task_id = ?", taskID); err == nil {
+					for _, idx := range dbChunks {
+						if idx >= 0 && idx < totalChunks {
+							state.received[idx] = true
+						}
+					}
+				}
+				if fi, err := os.Stat(tempFilePath); err == nil && fi.Size() == totalSize {
+					resumed = true
+					state.dbCreated = true
+				} else {
+					// Resume rows without a matching temp file (cleanup sweep,
+					// crash, different layout) would mark chunks as received that
+					// are no longer on disk.
+					state.received = make(map[int]bool)
+					purgeUploadTaskRows(taskID)
+				}
+			}
+			if !resumed {
+				f, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+				if err != nil {
+					state.initErr = err
+					return
+				}
+				err = f.Truncate(totalSize)
+				f.Close()
+				if err != nil {
+					os.Remove(tempFilePath)
+					state.initErr = err
+				}
+			}
+		})
+
+		state.Lock()
+		lostRace := state.initErr == errUploadTaskForbidden && state.owner == username
+		state.Unlock()
+		if !lostRace || attempt > 0 {
+			break
+		}
+		chunkTrackerSync.CompareAndDelete(taskID, state)
+	}
+
+	state.Lock()
+	initErr := state.initErr
+	ownerOK := state.owner == username
+	layoutOK := state.filename == filename && state.totalSize == totalSize && state.chunkSize == chunkSize && state.totalChunks == totalChunks
+	started, cancelled := state.uploadStarted, state.cancelled
+	state.Unlock()
+
+	if initErr != nil {
+		chunkTrackerSync.CompareAndDelete(taskID, state)
+		if initErr == errUploadTaskForbidden {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
+		log.Printf("UPLOAD ERROR: Failed to prepare temp file %s: %v", tempFilePath, initErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_open_temp_file"})
+		return
+	}
+	if !ownerOK {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	if !layoutOK {
+		c.JSON(http.StatusConflict, gin.H{"error": "chunk_layout_mismatch"})
+		return
+	}
+	if cancelled {
+		c.JSON(http.StatusConflict, gin.H{"error": "upload_cancelled"})
+		return
+	}
+	if started {
+		c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "pushing_to_tg"})
+		return
+	}
+
+	out, err := os.OpenFile(tempFilePath, os.O_WRONLY, 0644)
+	if errors.Is(err, os.ErrNotExist) {
+		// Temp file swept (24h cleanup) or removed by a cancel while this task
+		// was still in memory: its received set no longer matches the disk.
+		state.Lock()
+		drained := state.closeDBLocked()
+		state.Unlock()
+		chunkTrackerSync.CompareAndDelete(taskID, state)
+		purgeAfter(drained, taskID)
+		c.JSON(http.StatusConflict, gin.H{"error": "upload_state_lost"})
+		return
+	}
 	if err != nil {
 		log.Printf("UPLOAD ERROR: Failed to open temp file %s: %v", tempFilePath, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_open_temp_file"})
 		return
 	}
-	if !loaded && totalSize > 0 {
-		_ = out.Truncate(totalSize)
-	}
-	if _, err := out.Seek(offset, io.SeekStart); err != nil {
-		out.Close()
-		log.Printf("UPLOAD ERROR: Failed to seek temp file %s: %v", tempFilePath, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_seek_temp_file"})
-		return
-	}
-
 	bufPtr := chunkBufPool.Get().(*[]byte)
-	_, err = io.CopyBuffer(out, file, *bufPtr)
+	// OffsetWriter keeps the write inside this chunk's slot; a body longer
+	// than declared is rejected instead of overwriting the next chunk.
+	written, err := io.CopyBuffer(io.NewOffsetWriter(out, offset), io.LimitReader(file, expectedLen+1), *bufPtr)
 	chunkBufPool.Put(bufPtr)
-	out.Close()
+	closeErr := out.Close()
+	if err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		log.Printf("UPLOAD ERROR: Failed to write chunk to %s: %v", tempFilePath, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_write_chunk"})
+		return
+	}
+	if written != expectedLen {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chunk_size_mismatch"})
 		return
 	}
 
 	overwriteFlag := c.PostForm("overwrite") == "true"
 
 	state.Lock()
-	if !state.dbCreated {
-		state.dbCreated = true
-		go func() {
-			database.DB.Exec(database.InsertIgnoreSQL("upload_tasks", "id, filename, owner, overwrite", "?, ?, ?, ?"), taskID, safeFilename, username, overwriteFlag)
-		}()
+	if state.cancelled {
+		state.Unlock()
+		c.JSON(http.StatusConflict, gin.H{"error": "upload_cancelled"})
+		return
 	}
-	state.received[chunkIndex] = true
-	go func() {
-		database.DB.Exec(database.InsertIgnoreSQL("upload_chunks", "task_id, chunk_index", "?, ?"), taskID, chunkIndex)
-	}()
-
-	actualReceived := len(state.received)
-	uploadedBytes := int64(actualReceived) * int64(chunkSize)
-	if uploadedBytes > totalSize {
-		uploadedBytes = totalSize
-	}
-	serverPercent := int((float64(actualReceived) / float64(totalChunks)) * 100)
-	tgclient.UpdateTaskWithFile(taskID, "uploading_to_server", serverPercent, "pushing_to_server", "", username, totalSize, uploadedBytes)
-
-	isDone := actualReceived == totalChunks && !state.uploadStarted
-	if isDone {
-		state.uploadStarted = true
-		chunkTrackerSync.Delete(taskID)
-		go func() {
-			database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskID)
-			database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskID)
-		}()
-	}
-	state.Unlock()
-
-	if isDone {
-		tgclient.UpdateTask(taskID, "uploading_to_server", 100, "", username)
-
-		mimeType := header.Header.Get("Content-Type")
-		// Browsers often send wrong or generic MIME types; fallback using extension.
-		if mimeType == "" || mimeType == "application/octet-stream" {
-			if ext := filepath.Ext(filename); ext != "" {
-				if detected := mime.TypeByExtension(ext); detected != "" {
-					mimeType = detected
-				}
-			}
-		}
-		if mimeType == "" {
-			mimeType = "application/octet-stream"
-		}
-
-		// Capture overwriteFlag from this request directly.
-		ov := overwriteFlag
-		go func() {
-			defer os.Remove(tempFilePath)
-			tgclient.ProcessCompleteUpload(context.Background(), tempFilePath, filename, dbPath, mimeType, taskID, h.cfg, ov, username)
-		}()
-
+	if state.uploadStarted {
+		state.Unlock()
 		c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "pushing_to_tg"})
 		return
 	}
+	if !state.dbCreated {
+		state.dbCreated = true
+		state.enqueueDBLocked(func() {
+			database.DB.Exec(database.InsertIgnoreSQL("upload_tasks", "id, filename, owner, overwrite", "?, ?, ?, ?"), taskID, filename, username, overwriteFlag)
+		})
+	}
+	if !state.received[chunkIndex] {
+		state.received[chunkIndex] = true
+		idx := chunkIndex
+		state.enqueueDBLocked(func() {
+			database.DB.Exec(database.InsertIgnoreSQL("upload_chunks", "task_id, chunk_index", "?, ?"), taskID, idx)
+		})
+	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "chunk_received", "chunk": chunkIndex})
+	actualReceived := len(state.received)
+	uploadedBytes := int64(actualReceived) * chunkSize
+	if uploadedBytes > totalSize {
+		uploadedBytes = totalSize
+	}
+	serverPercent := actualReceived * 100 / totalChunks
+
+	isDone := actualReceived == totalChunks
+	var drained <-chan struct{}
+	processPath := tempFilePath
+	if isDone {
+		state.uploadStarted = true
+		drained = state.closeDBLocked()
+		// Move the assembled file out of the task's slot before handing it
+		// off. A new run of the same file (same deterministic task_id, e.g.
+		// after a page reload) would otherwise O_TRUNC the very file
+		// ProcessCompleteUpload is still streaming to Telegram. The new name
+		// keeps the "<taskID>_" prefix (cancel/sweep) and the extension
+		// (thumbnail detection).
+		handoff := filepath.Join(tempDir, taskID+"_tg"+strings.ReplaceAll(uuid.NewString(), "-", "")[:8]+"_"+filename)
+		if err := os.Rename(tempFilePath, handoff); err == nil {
+			processPath = handoff
+		} else {
+			log.Printf("UPLOAD WARN: could not move %s for hand-off: %v", tempFilePath, err)
+		}
+		markTaskClosed(taskID, &closedTask{owner: username})
+		chunkTrackerSync.CompareAndDelete(taskID, state)
+	}
+	state.Unlock()
+
+	if !isDone {
+		tgclient.UpdateTaskWithFile(taskID, "uploading_to_server", serverPercent, "pushing_to_server", filename, username, totalSize, uploadedBytes)
+		c.JSON(http.StatusOK, gin.H{"status": "chunk_received", "chunk": chunkIndex})
+		return
+	}
+
+	tgclient.UpdateTaskWithFile(taskID, "uploading_to_server", 100, "", filename, username, totalSize, totalSize)
+
+	mimeType := header.Header.Get("Content-Type")
+	// Browsers often send wrong or generic MIME types; fallback using extension.
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		if ext := filepath.Ext(filename); ext != "" {
+			if detected := mime.TypeByExtension(ext); detected != "" {
+				mimeType = detected
+			}
+		}
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	// Synchronous so a new run of this task_id cannot have its fresh resume
+	// rows deleted by this purge afterwards.
+	purgeAfter(drained, taskID)
+
+	go func() {
+		defer os.Remove(processPath)
+		processCompleteUpload(context.Background(), processPath, filename, dbPath, mimeType, taskID, h.cfg, overwriteFlag, username)
+	}()
+
+	c.JSON(http.StatusOK, gin.H{"status": "processing_telegram", "message": "pushing_to_tg"})
 }
 
 func (h *Handler) handlePostRemoteUpload(c *gin.Context) {
@@ -634,9 +828,39 @@ func (h *Handler) handleCancelUpload(c *gin.Context) {
 			return
 		}
 
+		// Mark first so a chunk arriving from now on is rejected instead of
+		// starting a new task after the in-memory state is looked up below.
+		marker := &closedTask{owner: username, cancelled: true}
+		markTaskClosed(taskID, marker)
+
+		var state *chunkState
+		if val, ok := chunkTrackerSync.Load(taskID); ok {
+			state = val.(*chunkState)
+			state.Lock()
+			foreign := state.owner != "" && state.owner != username
+			state.Unlock()
+			if foreign {
+				closedTasks.CompareAndDelete(taskID, marker)
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+		}
+
 		if !tgclient.CancelTask(taskID, username) {
+			closedTasks.CompareAndDelete(taskID, marker)
 			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
+		}
+
+		// Stop accepting chunks before the temp file goes away, so an in-flight
+		// chunk cannot recreate the task's resume rows after this purge.
+		var drained <-chan struct{}
+		if state != nil {
+			state.Lock()
+			state.cancelled = true
+			drained = state.closeDBLocked()
+			state.Unlock()
+			chunkTrackerSync.CompareAndDelete(taskID, state)
 		}
 
 		// Cleanup files/folders starting with taskID_, ytdlp_taskID_, or torrent_taskID_
@@ -655,9 +879,7 @@ func (h *Handler) handleCancelUpload(c *gin.Context) {
 			}
 		}
 
-		chunkTrackerSync.Delete(taskID)
-		database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskID)
-		database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskID)
+		purgeAfter(drained, taskID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
@@ -1227,24 +1449,45 @@ func (h *Handler) handleGetUploadCheck(c *gin.Context) {
 		state := val.(*chunkState)
 		state.Lock()
 		chunks := make([]int, 0, len(state.received))
-		for chIdx := range state.received {
-			chunks = append(chunks, chIdx)
+		if state.owner == username && !state.uploadStarted && !state.cancelled {
+			for chIdx := range state.received {
+				chunks = append(chunks, chIdx)
+			}
 		}
 		state.Unlock()
+		sort.Ints(chunks)
 		c.JSON(http.StatusOK, gin.H{"chunks": chunks})
 		return
 	}
 
-	var task struct {
-		ID string `db:"id"`
-	}
-	err := database.RODB.Get(&task, "SELECT id FROM upload_tasks WHERE id = ? AND owner = ?", taskID, username)
-	if err != nil {
+	// The client is starting a new run of a finished/cancelled task.
+	if v, ok := closedTasks.Load(taskID); ok && v.(*closedTask).owner == username {
+		closedTasks.CompareAndDelete(taskID, v)
 		c.JSON(http.StatusOK, gin.H{"chunks": []int{}})
 		return
 	}
 
-	var chunks []int
+	var task struct {
+		ID       string `db:"id"`
+		Filename string `db:"filename"`
+	}
+	err := database.RODB.Get(&task, "SELECT id, filename FROM upload_tasks WHERE id = ? AND owner = ?", taskID, username)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"chunks": []int{}})
+		return
+	}
+	// Chunks are only resumable while their temp file is still on disk.
+	if strings.Contains(taskID, "..") || strings.ContainsAny(taskID, "/\\") {
+		c.JSON(http.StatusOK, gin.H{"chunks": []int{}})
+		return
+	}
+	if _, err := os.Stat(filepath.Join(h.cfg.TempDir, taskID+"_"+filepath.Base(task.Filename))); err != nil {
+		purgeUploadTaskRows(taskID)
+		c.JSON(http.StatusOK, gin.H{"chunks": []int{}})
+		return
+	}
+
+	chunks := []int{}
 	database.RODB.Select(&chunks, "SELECT chunk_index FROM upload_chunks WHERE task_id = ? ORDER BY chunk_index ASC", taskID)
 	c.JSON(http.StatusOK, gin.H{"chunks": chunks})
 }

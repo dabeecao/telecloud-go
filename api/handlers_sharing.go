@@ -476,23 +476,10 @@ func (h *Handler) handleGetShares(c *gin.Context) {
 	}
 
 	for i := range files {
-		files[i].Path = unmapPath(files[i].Path, username, isAdmin)
-		if files[i].ShareToken != nil && !files[i].IsFolder {
-			files[i].DirectToken = utils.GenerateDirectToken(*files[i].ShareToken)
-		}
-		if files[i].ThumbPath != nil {
-			if _, err := os.Stat(*files[i].ThumbPath); err == nil {
-				files[i].HasThumb = true
-			}
-		}
-		if files[i].SharePassword != nil && *files[i].SharePassword != "" {
-			files[i].HasSharePassword = true
-		}
+		decorateFileForResponse(&files[i], username, isAdmin)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"files": files,
 	})
 }
-
-

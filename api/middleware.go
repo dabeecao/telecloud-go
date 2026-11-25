@@ -20,12 +20,112 @@ import (
 
 type chunkState struct {
 	sync.Mutex
+	initOnce sync.Once
+	initErr  error
+
+	owner       string
+	filename    string
+	totalSize   int64
+	chunkSize   int64
+	totalChunks int
+
 	received      map[int]bool
 	uploadStarted bool // guards against double-trigger in concurrent chunk finalization
 	dbCreated     bool // guards against duplicate DB inserts for upload_tasks
+	cancelled     bool
+
+	// Async upload_tasks/upload_chunks writes of one task run in submission
+	// order. Unordered fire-and-forget goroutines could run an INSERT after the
+	// final DELETE, leaving orphan rows that a later upload of the same file
+	// (the task_id is deterministic) would trust as already-received chunks.
+	// The worker exits when the queue is empty, so abandoned uploads do not
+	// pin a goroutine.
+	dbPending []func()
+	dbWorker  bool
+	dbClosed  bool
+	dbDrained chan struct{}
+}
+
+// enqueueDBLocked runs op asynchronously, in submission order. Caller holds s.Mutex.
+func (s *chunkState) enqueueDBLocked(op func()) {
+	if s.dbClosed {
+		return
+	}
+	s.dbPending = append(s.dbPending, op)
+	if !s.dbWorker {
+		s.dbWorker = true
+		go s.runDBQueue()
+	}
+}
+
+func (s *chunkState) runDBQueue() {
+	for {
+		s.Lock()
+		if len(s.dbPending) == 0 {
+			s.dbWorker = false
+			if s.dbDrained != nil {
+				close(s.dbDrained)
+				s.dbDrained = nil
+			}
+			s.Unlock()
+			return
+		}
+		op := s.dbPending[0]
+		s.dbPending[0] = nil
+		s.dbPending = s.dbPending[1:]
+		s.Unlock()
+		op()
+	}
+}
+
+// closeDBLocked stops accepting writes and returns a channel closed once every
+// queued write has run, or nil if none is pending. Caller holds s.Mutex and
+// must wait on the channel only after releasing it.
+func (s *chunkState) closeDBLocked() <-chan struct{} {
+	s.dbClosed = true
+	if !s.dbWorker {
+		return nil
+	}
+	if s.dbDrained == nil {
+		s.dbDrained = make(chan struct{})
+	}
+	return s.dbDrained
+}
+
+// purgeAfter deletes the task's resume rows once drained (if non-nil) has
+// closed, so no queued INSERT can land after the DELETE.
+func purgeAfter(drained <-chan struct{}, taskID string) {
+	if drained != nil {
+		<-drained
+	}
+	purgeUploadTaskRows(taskID)
+}
+
+func purgeUploadTaskRows(taskID string) {
+	database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskID)
+	database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskID)
+}
+
+// closedTask remembers a legacy upload that was handed to Telegram or
+// cancelled. Without it a retried final chunk (its response lost) or a late
+// chunk after cancel silently started a brand-new task with its own temp file
+// and resume rows. The marker is dropped when the client starts a new run of
+// the same task_id (the web UI always calls /api/upload/check first) or after
+// closedTaskTTL.
+type closedTask struct {
+	owner     string
+	cancelled bool
+}
+
+const closedTaskTTL = time.Hour
+
+func markTaskClosed(taskID string, ct *closedTask) {
+	closedTasks.Store(taskID, ct)
+	time.AfterFunc(closedTaskTTL, func() { closedTasks.CompareAndDelete(taskID, ct) })
 }
 
 var (
+	closedTasks      sync.Map // map[string]*closedTask
 	chunkTrackerSync sync.Map // map[string]*chunkState
 	loginAttempts    sync.Map
 )
@@ -346,8 +446,8 @@ func gzipMiddleware() gin.HandlerFunc {
 
 		// Avoid compressing stream, download, WebDAV, S3, WebSocket, and large comic/epub page binary data
 		path := c.Request.URL.Path
-		if strings.Contains(path, "/stream") || 
-			strings.Contains(path, "/dl") || 
+		if strings.Contains(path, "/stream") ||
+			strings.Contains(path, "/dl") ||
 			strings.Contains(path, "/download/") ||
 			strings.Contains(path, "/cbz/page") ||
 			strings.Contains(path, "/epub/resource") ||
@@ -367,7 +467,7 @@ func gzipMiddleware() gin.HandlerFunc {
 
 		c.Header("Content-Encoding", "gzip")
 		c.Header("Vary", "Accept-Encoding")
-		
+
 		c.Writer = &gzipResponseWriter{c.Writer, gz}
 		c.Next()
 	}

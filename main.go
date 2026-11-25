@@ -88,7 +88,7 @@ func executeRestart() {
 }
 
 var (
-	version = "v3.9.1"
+	version = "v3.9.2"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -499,16 +499,28 @@ func startCleanupTask(cfg *config.Config) {
 				}
 				if now.Sub(info.ModTime()) > 24*time.Hour {
 					os.Remove(path)
-					// Extract taskId from filename (taskId_filename)
-					filename := filepath.Base(path)
-					if idx := strings.Index(filename, "_"); idx != -1 {
-						taskId := filename[:idx]
-						database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", taskId)
-						database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", taskId)
-					}
 				}
 				return nil
 			})
+			// Both task IDs and filenames may contain '_', so the task cannot be
+			// parsed back out of "<taskID>_<filename>". Instead drop resume rows
+			// whose temp file is gone; otherwise a retry of the same file would
+			// skip chunks that no longer exist on disk.
+			var tasks []struct {
+				ID       string `db:"id"`
+				Filename string `db:"filename"`
+			}
+			if err := database.RODB.Select(&tasks, "SELECT id, filename FROM upload_tasks"); err == nil {
+				for _, t := range tasks {
+					if strings.Contains(t.ID, "..") || strings.ContainsAny(t.ID, "/\\") {
+						continue
+					}
+					if _, err := os.Stat(filepath.Join(cfg.TempDir, t.ID+"_"+filepath.Base(t.Filename))); os.IsNotExist(err) {
+						database.DB.Exec("DELETE FROM upload_chunks WHERE task_id = ?", t.ID)
+						database.DB.Exec("DELETE FROM upload_tasks WHERE id = ?", t.ID)
+					}
+				}
+			}
 		}
 	}()
 }
